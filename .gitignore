@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pt
+models/
+data/synthetic/
+data/merged/
+data/raw/frames/
+data/raw/videos/
+data/raw/roboflow/
+*.log
+.DS_Store
