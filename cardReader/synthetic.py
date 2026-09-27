@@ -1,35 +1,28 @@
-"""Step 3: generate a synthetic training set of cards scattered on a table.
+"""Generate synthetic training images of cards scattered on a table.
 
-    python scripts/3_makeSyntheticData.py --n 2000
-
-Card art: if data/raw/cardArt/ holds a png for every face (AS ... KC) plus at
-least one BACK*.png, those are used (made by scripts/2_extractCardArt.py, which
-also writes indexRect.json saying where the corner index sits). Otherwise simple
+Card art: if the card art folder holds a png for every face (AS ... KC) those
+are used, plus any BACK*.png (made by cardArt.py, which also writes
+indexRect.json saying where the corner index sits). Otherwise simple
 placeholder cards are drawn so the pipeline can be exercised before the real
-deck is photographed. --index-rect x,y,w,h overrides the json.
+deck is photographed.
 
-Backgrounds: any images in data/raw/backgrounds are used at random; otherwise a
-noisy felt colour with a lighting gradient is synthesised.
+Backgrounds: any images in the backgrounds folder are used at random;
+otherwise a noisy felt colour with a lighting gradient is synthesised.
 
 Labels: one box per visible corner index (two per face-up card), and one box
 around the whole card for BACK. Indices covered by another card are skipped.
-Output is YOLO format: images/ and labels/ per split plus data.yaml.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import random
-import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import settings  # noqa: E402
-from cardVision.deck import BACK, CLASSES, CLASS_TO_ID, RED_SUITS, SUIT_SYMBOL, rank_of, suit_of  # noqa: E402
+from .deck import BACK, CLASSES, CLASS_TO_ID, RED_SUITS, SUIT_SYMBOL, rank_of, suit_of
 
 CARD_W, CARD_H = 250, 350
 PLACEHOLDER_INDEX_RECT = (0.04, 0.03, 0.20, 0.26)  # x, y, w, h fractions of the card
@@ -98,7 +91,7 @@ def load_card_art(assets: Path):
             j = json.loads(rect_file.read_text())
             rect = (j["x"], j["y"], j["w"], j["h"])
         return art, rect
-    print("no complete card set in data/raw/cardArt, drawing placeholder cards")
+    print(f"no complete card set in {assets}, drawing placeholder cards")
     return {c: [draw_placeholder(c)] for c in CLASSES}, PLACEHOLDER_INDEX_RECT
 
 
@@ -209,59 +202,23 @@ def compose(rng, art, index_rect, bg_pool, W, H, max_cards, glare_p):
     return img, labels
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=500)
-    ap.add_argument("--out", default=settings.SYNTHETIC_DIR)
-    ap.add_argument("--size", default="1280x960")
-    ap.add_argument("--max-cards", type=int, default=12)
-    ap.add_argument("--val-frac", type=float, default=0.1)
-    ap.add_argument("--glare", type=float, default=0.4)
-    ap.add_argument("--index-rect", default=None, help="x,y,w,h fractions for real card art")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--debug", action="store_true", help="also write images with boxes drawn to <out>/debug")
-    args = ap.parse_args()
-
-    W, H = map(int, args.size.lower().split("x"))
-    root = Path(__file__).resolve().parents[1]
-    art, index_rect = load_card_art(root / settings.CARD_ART_DIR)
-    if args.index_rect:
-        index_rect = tuple(map(float, args.index_rect.split(",")))
+def generate(out: Path, n: int, card_art_dir: Path, backgrounds_dir: Path, val_frac: float,
+             size=(1280, 960), max_cards=12, glare=0.4, seed=0):
+    """Write n images and labels into out/images/{train,val} and out/labels/{train,val}."""
+    W, H = size
+    art, index_rect = load_card_art(card_art_dir)
     if index_rect is None:
-        sys.exit("real card art needs indexRect.json (from scripts/2_extractCardArt.py) or --index-rect x,y,w,h")
-    bg_pool = [p for p in (root / settings.BACKGROUNDS_DIR).glob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
+        raise SystemExit(f"real card art needs {card_art_dir}/indexRect.json (made by train.py --extract-art)")
+    bg_pool = [p for p in backgrounds_dir.glob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
 
-    out = Path(args.out)
-    for split in ("train", "val"):
-        (out / "images" / split).mkdir(parents=True, exist_ok=True)
-        (out / "labels" / split).mkdir(parents=True, exist_ok=True)
-    if args.debug:
-        (out / "debug").mkdir(exist_ok=True)
-
-    rng = random.Random(args.seed)
-    for i in range(args.n):
-        img, labels = compose(rng, art, index_rect, bg_pool, W, H, args.max_cards, args.glare)
-        split = "val" if rng.random() < args.val_frac else "train"
+    rng = random.Random(seed)
+    for i in range(n):
+        img, labels = compose(rng, art, index_rect, bg_pool, W, H, max_cards, glare)
+        split = "val" if rng.random() < val_frac else "train"
         stem = f"synth_{i:06d}"
         img.save(out / "images" / split / f"{stem}.jpg", quality=90)
         with open(out / "labels" / split / f"{stem}.txt", "w") as f:
             for cls, x1, y1, x2, y2 in labels:
                 f.write(f"{cls} {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} {(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}\n")
-        if args.debug:
-            dbg = img.copy()
-            d = ImageDraw.Draw(dbg)
-            for cls, x1, y1, x2, y2 in labels:
-                d.rectangle((x1, y1, x2, y2), outline=(0, 255, 0), width=2)
-                d.text((x1, y1 - 12), CLASSES[cls], fill=(0, 255, 0))
-            dbg.save(out / "debug" / f"{stem}.jpg", quality=85)
-        if (i + 1) % 100 == 0:
-            print(f"{i + 1}/{args.n}")
-
-    (out / "data.yaml").write_text(
-        f"path: {out.resolve()}\ntrain: images/train\nval: images/val\nnames:\n"
-        + "".join(f"  {i}: {c}\n" for i, c in enumerate(CLASSES)))
-    print("wrote", out / "data.yaml")
-
-
-if __name__ == "__main__":
-    main()
+        if (i + 1) % 250 == 0:
+            print(f"  synthetic {i + 1}/{n}")

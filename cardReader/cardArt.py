@@ -1,6 +1,6 @@
-"""Step 2: turn photos of your deck into clean card art for the synthetic generator.
+"""Turn photos of your deck into clean card art for the synthetic generator.
 
-    python scripts/2_extractCardArt.py data/raw/roboflow/CroppedPlayingCards
+    python train.py --extract-art data/raw/myDeckExport
 
 Input is a Roboflow export where each photo shows ONE card and has a box around
 the whole card (class "cards") plus, for face cards, a box around the rank and
@@ -9,30 +9,26 @@ is the ten of clubs. Card backs must be named BACK_1, BACK_2 ... (any prefix
 starting with BACK) and need only the card box. Anything else without rank and
 suit boxes (a Joker, say) is skipped.
 
-For each photo this script:
+For each photo this:
   * crops the card and straightens it (finds the card's outline and warps it to
     a flat 500x700 rectangle),
   * rounds the corners so no background leaks in,
-  * saves data/raw/cardArt/<LABEL>.png (backs become BACK_1.png, BACK_2.png ...),
+  * saves <out>/<LABEL>.png (backs become BACK_1.png, BACK_2.png ...),
   * measures where the rank+suit index sits as fractions of the card.
 
-The averaged index position is written to data/raw/cardArt/indexRect.json and
-picked up automatically by scripts/3_makeSyntheticData.py.
+The averaged index position is written to <out>/indexRect.json, which
+synthetic.py uses to place the corner-index boxes.
 """
 from __future__ import annotations
 
-import argparse
 import json
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import settings  # noqa: E402
-from cardVision.deck import CLASSES  # noqa: E402
+from .deck import CLASSES
 
 OUT_W, OUT_H = 500, 700  # standard card aspect 2.5 x 3.5
 CARD_CLASS = "cards"
@@ -92,16 +88,10 @@ def rounded_alpha(w: int, h: int, radius: int) -> np.ndarray:
     return mask
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("export", help="Roboflow export folder with data.yaml and train/")
-    ap.add_argument("--out", default=settings.CARD_ART_DIR)
-    ap.add_argument("--pad", type=float, default=0.04, help="loose-crop margin around the card box")
-    args = ap.parse_args()
-
-    export = Path(args.export)
+def extract_card_art(export: str | Path, out: str | Path, pad: float = 0.04):
+    """pad: loose-crop margin around the card box, as a fraction of its size."""
+    export, out = Path(export), Path(out)
     names = yaml.safe_load((export / "data.yaml").read_text())["names"]
-    out = settings.PROJECT_ROOT / args.out
     out.mkdir(parents=True, exist_ok=True)
 
     index_rects = []
@@ -144,7 +134,7 @@ def main():
 
             # loose crop around the card box, then find the true outline inside it
             x1, y1, x2, y2 = boxes[CARD_CLASS]
-            px, py = (x2 - x1) * args.pad, (y2 - y1) * args.pad
+            px, py = (x2 - x1) * pad, (y2 - y1) * pad
             cx1, cy1 = int(max(0, x1 - px)), int(max(0, y1 - py))
             cx2, cy2 = int(min(W, x2 + px)), int(min(H, y2 + py))
             crop = img[cy1:cy2, cx1:cx2]
@@ -186,7 +176,3 @@ def main():
         (out / "indexRect.json").write_text(json.dumps(rect, indent=2))
         print("index rect (x, y, w, h fractions):", rect["x"], rect["y"], rect["w"], rect["h"],
               " spread:", np.round(r.std(axis=0), 3).tolist())
-
-
-if __name__ == "__main__":
-    main()

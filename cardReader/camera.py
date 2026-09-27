@@ -1,4 +1,4 @@
-"""Stage 1: get frames from a camera, capture card, or video file.
+"""Get frames from a camera, capture card, or video file.
 
 Live devices buffer frames. If detection runs slower than the camera, a plain
 read() loop falls further and further behind. So for live sources a background

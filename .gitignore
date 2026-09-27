@@ -2,11 +2,11 @@
 __pycache__/
 .pytest_cache/
 *.pt
-models/
-data/synthetic/
-data/merged/
-data/raw/frames/
-data/raw/videos/
-data/raw/roboflow/
 *.log
 .DS_Store
+models/
+data/dataset/
+data/raw/labeled/
+data/raw/frames/
+data/merged/
+data/synthetic/
