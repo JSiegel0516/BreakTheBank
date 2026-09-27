@@ -4,7 +4,8 @@
     similar) with a data.yaml. Class ids are remapped by NAME to the order in
     deck.py, so exports with different orderings combine cleanly. An export
     whose class names are mostly not cards (e.g. a rank/suit card-art export)
-    is skipped with a warning.
+    is skipped with a warning, and so is an export whose boxes are whole cards
+    rather than corner indices.
   * Images are hard-linked, not copied, so the dataset takes almost no extra
     disk space. Label files are rewritten with the remapped ids.
   * An export's own train/valid/test split is kept (test counts as val). An
@@ -22,6 +23,7 @@ import yaml
 from . import synthetic
 from .deck import CLASSES, CLASS_TO_ID
 
+WHOLE_CARD_WIDTH = 0.08  # median box width (fraction of image) above this means whole-card boxes
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -55,6 +57,11 @@ def import_export(export: Path, out: Path, prefix: str, val_frac: float):
     remap = {i: CLASS_TO_ID[n] for i, n in enumerate(names) if n in CLASS_TO_ID}
     if len(remap) < len(names) / 2:
         print(f"skip {export.name}: its classes are not card names ({names[:5]} ...)")
+        return
+    widths = [float(line.split()[3]) for lp in export.glob("*/labels/*.txt")
+              for line in lp.read_text().splitlines() if len(line.split()) == 5]
+    if widths and sorted(widths)[len(widths) // 2] > WHOLE_CARD_WIDTH:
+        print(f"skip {export.name}: boxes are whole cards, not corner indices")
         return
     dropped = [n for n in names if n not in CLASS_TO_ID]
     if dropped:
