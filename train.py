@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--synthetic", type=int, default=settings.SYNTHETIC_IMAGES, help="synthetic images to generate")
     ap.add_argument("--base", default=settings.BASE_WEIGHTS, help="pretrained weights to start from")
     ap.add_argument("--epochs", type=int, default=settings.EPOCHS)
+    ap.add_argument("--patience", type=int, default=settings.PATIENCE, help="epochs without improvement before stopping")
     ap.add_argument("--imgsz", type=int, default=settings.TRAIN_INPUT_SIZE)
     ap.add_argument("--batch", type=int, default=settings.BATCH_SIZE)
     ap.add_argument("--extract-art", metavar="EXPORT", help="make card art from a one-card-per-photo export, then stop")
@@ -46,7 +47,7 @@ def main():
     models_dir = ROOT / settings.MODELS_DIR
     base = models_dir / args.base
     model = YOLO(str(base) if base.exists() else args.base)
-    model.train(data=str(data_dir / "data.yaml"), epochs=args.epochs, imgsz=args.imgsz, batch=args.batch,
+    model.train(data=str(data_dir / "data.yaml"), epochs=args.epochs, patience=args.patience, imgsz=args.imgsz, batch=args.batch,
                 device=device, name="cards", project=str(models_dir), exist_ok=True,
                 # Cards are never mirrored, so disable flips; keep rotation and colour jitter.
                 fliplr=0.0, flipud=0.0, degrees=15, hsv_v=0.4)

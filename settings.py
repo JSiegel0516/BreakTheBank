@@ -19,6 +19,7 @@ SYNTHETIC_IMAGES = 2000    # synthetic images added to the dataset. 0 = real dat
 VAL_FRACTION = 0.15        # share of images held out to measure accuracy
 BASE_WEIGHTS = "yolo11n.pt"   # pretrained starting point, downloaded automatically. yolo11s.pt is bigger and slower.
 EPOCHS = 100
+PATIENCE = 20          # stop early after this many epochs with no validation improvement. best.pt is kept either way.
 TRAIN_INPUT_SIZE = 1024
 BATCH_SIZE = 8
 MODELS_DIR = "models"

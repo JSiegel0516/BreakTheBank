@@ -124,7 +124,7 @@ images (`SYNTHETIC_IMAGES` in `settings.py`). Read the first lines it prints:
 ```
   blackjackCorners: train 498, val 152, skipped (no boxes) 0
   playingCards: train 303, val 49, skipped (no boxes) 1
-dataset: train 2502, val 502 -> data/dataset
+dataset: train 2488, val 514 -> data/dataset
 ```
 
 Check that every export you expect is listed with sensible counts. If one says
@@ -166,6 +166,13 @@ Each epoch prints a progress bar for training and then a line of validation scor
 
 `mAP50` is the headline number. Roughly: below 0.5 the reader will be unreliable,
 0.8 is usable, above 0.9 is good.
+
+**Early stopping.** If the validation score (`mAP50-95`) has not improved for
+20 epochs in a row (`PATIENCE` in `settings.py`, or `--patience 30`), training
+stops by itself and prints which epoch was best. This saves hours once the model
+has stopped learning. It does not change which model you get: `best.pt` is
+always the epoch with the best validation score, so later overfitting epochs are
+never kept.
 
 If training stops part way (laptop closed, Ctrl-C), resume from the last epoch:
 
