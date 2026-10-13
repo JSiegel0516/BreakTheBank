@@ -41,9 +41,12 @@ def build(out: Path, labeled_dir: Path, card_art_dir: Path, backgrounds_dir: Pat
     if n_synthetic:
         synthetic.generate(out, n_synthetic, card_art_dir, backgrounds_dir, val_frac)
 
-    (out / "data.yaml").write_text(
-        f"path: {out.resolve()}\ntrain: images/train\nval: images/val\nnames:\n"
-        + "".join(f"  {i}: {c}\n" for i, c in enumerate(CLASSES)))
+    names = "names:\n" + "".join(f"  {i}: {c}\n" for i, c in enumerate(CLASSES))
+    (out / "data.yaml").write_text(f"path: {out.resolve()}\ntrain: images/train\nval: images/val\n{names}")
+    # The same exam without synthetic images, for an honest score: yolo val data=data/dataset/realVal.yaml
+    real_val = sorted(str(p.resolve()) for p in (out / "images" / "val").iterdir() if not p.name.startswith("synth_"))
+    (out / "realVal.txt").write_text("\n".join(real_val) + "\n")
+    (out / "realVal.yaml").write_text(f"path: {out.resolve()}\ntrain: images/train\nval: realVal.txt\n{names}")
     counts = {s: sum(1 for _ in (out / "images" / s).iterdir()) for s in ("train", "val")}
     if not counts["train"]:
         raise SystemExit(f"dataset is empty: put exports in {labeled_dir} or set SYNTHETIC_IMAGES")
