@@ -494,14 +494,14 @@ Download `models/cards/weights/best.pt` back into the same place locally.
 
 ## Reading
 
-`python read.py` opens a window with the live feed and an overlay on top
-(drawn by `cardReader/hud.py`):
+`python read.py` opens a window with the live feed, an overlay on it, and a
+sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 
 | On screen | Meaning |
 |---|---|
 | Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
-| Panel at the top left | one row per seat: its cards in placement order and its blackjack total (`17`, `soft 18`, `BLACKJACK`, `BUST (24)`, `9 +1 hidden`) |
-| Panel at the top right | the Hi-Lo running count, true count, and cards left in the deck |
+| Sidebar, top | the Hi-Lo running count, true count, and cards left in the deck |
+| Sidebar, below | each seat's total (`17`, `soft 18`, `BLACKJACK`, `BUST (24)`, `9 +1 hidden`) and its cards in placement order; cards outside every seat are listed as OTHER |
 | Yellow badge and name on a card | that card's placement number and name |
 | Grey badge and name | a hidden card: covered right now, but still in the hand and in the count |
 | Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |

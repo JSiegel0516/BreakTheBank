@@ -5,8 +5,9 @@
       confirms the card, then a box in the card's colour
     * a tag on each card of the round: its placement number in a yellow badge,
       then its name. A hidden (covered) card keeps a grey tag where it was last seen.
-    * top left: each seat's cards in placement order and its blackjack total
-    * top right: the Hi-Lo running count, true count, and cards left in the deck
+    * a sidebar to the right of the video, so nothing covers the table: the
+      Hi-Lo running count, true count, and cards left, then each seat's total
+      and its cards in placement order
     * bottom bar: the keys, fps, and short messages such as "new round"
 
 Colours follow the cards: red for hearts and diamonds, white for spades and
@@ -35,6 +36,7 @@ GREEN = (90, 220, 90)
 AMBER = (0, 190, 255)
 BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
+SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 KEYS = "[1-7] players    [R] new round    [Shift+R] new shoe    [S] save frame    [Q] quit"
 
 
@@ -76,13 +78,17 @@ class Hud:
             else:
                 cv2.rectangle(view, (x1, y1), (x2, y2), GREY, 1)
 
-        seat_of = {c.order: layout.assign(c.x, c.y) for c in cards}
-        panels = [self._seat_panel(view, cards, seat_of, layout), self._count_panel(view, count)]
         placed: list[tuple] = []
         for c in cards:
-            placed.append(self._card_tag(view, c, None if c.hidden else self._card_box(c, dets), panels, placed))
-        self._bottom_bar(view, fps, capture_mode)
-        return view
+            placed.append(self._card_tag(view, c, None if c.hidden else self._card_box(c, dets), placed))
+
+        side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
+        seat_of = {c.order: layout.assign(c.x, c.y) for c in cards}
+        y = self._count_block(side, count)
+        self._seat_blocks(side, cards, seat_of, layout, y)
+        canvas = np.hstack([view, side])
+        self._bottom_bar(canvas, fps, capture_mode, W)
+        return canvas
 
     # ------------------------------------------------------------ drawing helpers
     def _text(self, img, text, org, scale, colour):
@@ -125,57 +131,53 @@ class Hud:
             self._panel(img, x - self.pad // 2, y - h - self.pad // 2, x + w + self.pad // 2, y + self.pad // 2, 0.6)
             self._text(img, title, (x, y), 0.6, colour)
 
-    def _seat_panel(self, img, cards, seat_of, layout: SeatLayout):
-        """One row per seat: name, its cards in order, its total. Returns the panel's rectangle."""
+    def _count_block(self, side, count: ShoeCount) -> int:
+        """Hi-Lo running count, true count, cards left, at the top of the sidebar. Returns the y below it."""
+        colour = GREEN if count.running > 0 else RED if count.running < 0 else WHITE
+        parts = [("RUNNING", f"{count.running:+d}", colour), ("TRUE", f"{count.true:+.1f}", colour),
+                 ("LEFT", str(count.cards_left), WHITE)]
+        col_w = (side.shape[1] - 2 * self.pad) // len(parts)
+        kh = self._size("RUNNING", 0.5)[1]
+        vh = self._size("+0", 1.1)[1]
+        for i, (k, v, c) in enumerate(parts):
+            x = self.pad + i * col_w
+            self._text(side, k, (x, 2 * self.pad + kh), 0.5, GREY)
+            self._text(side, v, (x, 3 * self.pad + kh + vh), 1.1, c)
+        y = 5 * self.pad + kh + vh
+        cv2.line(side, (self.pad, y - self.pad), (side.shape[1] - self.pad, y - self.pad), DIM, 1)
+        return y
+
+    def _seat_blocks(self, side, cards, seat_of, layout: SeatLayout, y: int):
+        """For each seat: its name and total on one line, its cards in placement order below,
+        wrapping onto more lines for long hands. Cards outside every seat are listed as OTHER."""
+        H, SW = side.shape[:2]
         rows = [(name, [c for c in cards if seat_of[c.order] == name]) for name in layout.names()]
         loose = [c for c in cards if seat_of[c.order] is None]
         if loose:
             rows.append(("OTHER", loose))
-        name_w = max(self._size(seat_title(n), 0.6)[0] for n, _ in rows) + 2 * self.pad
         item_h = 2 * self.r + self.pad
-        widths = []
         for name, hand in rows:
-            w = sum(2 * self.r + self.pad // 2 + self._size(c.label, 0.8)[0] + self.pad for c in hand)
-            total = describe([c.label for c in hand]) if name != "OTHER" else ""
-            widths.append(w + self._size(total, 0.7)[0] + self.pad)
-        x0, y0 = self.pad, self.pad
-        x1, y1 = x0 + 2 * self.pad + name_w + max(widths), y0 + self.pad + len(rows) * item_h
-        self._panel(img, x0, y0, x1, y1)
-        y = y0 + self.pad // 2 + item_h // 2
-        for name, hand in rows:
-            _, nh, _ = self._size(seat_title(name), 0.6)
-            self._text(img, seat_title(name), (x0 + self.pad, y + nh // 2), 0.6,
+            title = seat_title(name)
+            _, th, _ = self._size(title, 0.65)
+            if y + th + item_h > H:
+                self._text(side, "...", (self.pad, H - self.pad), 0.65, GREY)
+                return
+            self._text(side, title, (self.pad, y + th), 0.65,
                        AMBER if name == DEALER else SEAT_LINE if name != "OTHER" else GREY)
-            x = x0 + self.pad + name_w
-            for c in hand:
-                x += self._chip(img, c, x, y) + self.pad
             if name != "OTHER":
                 total = describe([c.label for c in hand])
-                _, th, _ = self._size(total, 0.7)
-                self._text(img, total, (x + self.pad // 2, y + th // 2), 0.7, WHITE if hand else DIM)
-            y += item_h
-        return x0, y0, x1, y1
-
-    def _count_panel(self, img, count: ShoeCount):
-        """Hi-Lo running count, true count, cards left. Returns the panel's rectangle."""
-        W = img.shape[1]
-        colour = GREEN if count.running > 0 else RED if count.running < 0 else WHITE
-        parts = [("RUNNING", f"{count.running:+d}", colour), ("TRUE", f"{count.true:+.1f}", colour),
-                 ("LEFT", str(count.cards_left), WHITE)]
-        gap = 2 * self.pad
-        sizes = [(self._size(k, 0.5), self._size(v, 0.9)) for k, v, _ in parts]
-        inner_w = sum(max(a[0], b[0]) for a, b in sizes) + gap * (len(parts) - 1)
-        kh = max(a[1] for a, _ in sizes)
-        vh = max(b[1] for _, b in sizes)
-        panel_w, panel_h = inner_w + 2 * self.pad, kh + vh + 3 * self.pad
-        x0, y0 = W - self.pad - panel_w, self.pad
-        self._panel(img, x0, y0, x0 + panel_w, y0 + panel_h)
-        x = x0 + self.pad
-        for (k, v, c), (a, b) in zip(parts, sizes):
-            self._text(img, k, (x, y0 + self.pad + kh), 0.5, GREY)
-            self._text(img, v, (x, y0 + 2 * self.pad + kh + vh), 0.9, c)
-            x += max(a[0], b[0]) + gap
-        return x0, y0, x0 + panel_w, y0 + panel_h
+                tw = self._size(total, 0.65)[0]
+                self._text(side, total, (SW - self.pad - tw, y + th), 0.65, WHITE if hand else DIM)
+            y += th + self.pad
+            x = self.pad
+            cy = y + item_h // 2
+            for c in hand:
+                w = 2 * self.r + self.pad // 2 + self._size(c.label, 0.8)[0]
+                if x + w > SW - self.pad and x > self.pad:  # wrap
+                    x, cy, y = self.pad, cy + item_h, y + item_h
+                self._chip(side, c, x, cy)
+                x += w + 2 * self.pad
+            y += item_h + self.pad
 
     @staticmethod
     def _card_box(card: Card, dets: list[Detection]):
@@ -189,10 +191,9 @@ class Hud:
         mine = [d for d in dets if d.label == card.label]
         return min(mine, key=lambda d: d.box[1]).box if mine else None
 
-    def _card_tag(self, img, card: Card, box, panels, tags):
+    def _card_tag(self, img, card: Card, box, tags):
         """Badge + name just above the card's topmost corner index (below it if there is no room).
-        panels: rectangles a tag must not cover; tags: tags already drawn, which it stacks above.
-        Returns the tag's rectangle."""
+        tags: tags already drawn; this one stacks above any it would cover. Returns its rectangle."""
         H, W = img.shape[:2]
         w, h, base = self._size(card.label, 0.8)
         tag_w, tag_h = 2 * self.r + self.pad + w + self.pad, max(2 * self.r, h + base) + self.pad
@@ -202,24 +203,19 @@ class Hud:
         y = int(box[1] - self.pad // 2 - tag_h)
         if y < 0:
             y = int(box[3] + self.pad // 2)
-        def hits(rects, y):
-            return next(((ay1, ay2) for ax1, ay1, ax2, ay2 in rects
-                         if x < ax2 and x + tag_w > ax1 and y < ay2 and y + tag_h > ay1), None)
-
-        for _ in range(len(tags) + 1):  # stack above any tag in the way, as long as there is room
-            hit = hits(tags, y)
-            if hit is None or hit[0] - tag_h - self.pad // 2 < 0:
+        for _ in range(len(tags) + 1):
+            hit = next((ay1 for ax1, ay1, ax2, ay2 in tags
+                        if x < ax2 and x + tag_w > ax1 and y < ay2 and y + tag_h > ay1), None)
+            if hit is None or hit - tag_h - self.pad // 2 < 0:
                 break
-            y = hit[0] - tag_h - self.pad // 2
-        hit = hits(panels, y)
-        if hit is not None:
-            y = hit[1] + self.pad // 2
+            y = hit - tag_h - self.pad // 2
         y = int(min(max(y, 0), H - tag_h))
         self._panel(img, x, y, x + tag_w, y + tag_h, alpha=0.8)
         self._chip(img, card, x + self.pad // 2, y + tag_h // 2)
         return x, y, x + tag_w, y + tag_h
 
-    def _bottom_bar(self, img, fps: float, capture_mode: bool):
+    def _bottom_bar(self, img, fps: float, capture_mode: bool, video_w: int):
+        """Keys and fps across the whole window; messages centred over the video."""
         H, W = img.shape[:2]
         _, kh, base = self._size(KEYS, 0.5)
         bar_h = kh + base + 2 * self.pad
@@ -234,7 +230,7 @@ class Hud:
 
         if self._message and time.time() < self._message_until:
             mw, mh, mb = self._size(self._message, 0.9)
-            x = (W - mw) // 2
+            x = (video_w - mw) // 2
             y2 = H - bar_h - self.pad
             self._panel(img, x - 2 * self.pad, y2 - mh - mb - 2 * self.pad, x + mw + 2 * self.pad, y2, alpha=0.85)
             self._text(img, self._message, (x, y2 - self.pad - mb), 0.9, BADGE)
