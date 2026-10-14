@@ -50,7 +50,7 @@ Blackjack_Project/
 │   ├── camera.py             frames from a camera, capture card, or video file
 │   ├── detector.py           YOLO wrapper: frame -> list of detections
 │   ├── hud.py                the overlay read.py draws on the live feed
-│   ├── seats.py              the dealer and player seat layout, by number of players
+│   ├── seats.py              seat layout by number of players, and the mouse zone editor
 │   ├── blackjack.py          hand totals and the Hi-Lo count
 │   ├── tracker.py            detections -> cards in placement order
 │   ├── deck.py               the 53 class labels (52 faces + BACK)
@@ -59,8 +59,10 @@ Blackjack_Project/
 │   └── cardArt.py            crops photos of your deck into card art       (train.py --extract-art)
 ├── tests/
 │   ├── test_tracker.py       placement order, hidden cards, rounds, shoes
-│   └── test_blackjack.py     hand totals, Hi-Lo, seat layout
+│   ├── test_blackjack.py     hand totals, Hi-Lo, seat layout
+│   └── test_seats.py         zone editing, saving and loading
 ├── data/
+│   ├── seats.json            zones edited with the mouse (key E), if any
 │   ├── raw/                  everything you provide
 │   │   ├── labeled/          YOLO-format exports, one subfolder each
 │   │   │   ├── playingCards/       353 table photos   (Roboflow)
@@ -514,7 +516,8 @@ card that is covered keeps its number and comes back with it.
 
 | Key | Action |
 |---|---|
-| `1` to `7` | number of players; the seat layout snaps to that many seats |
+| `1` to `7` | number of players; the seat layout snaps to the template for that many seats |
+| `E` | edit zones with the mouse; press `E` again to save them and lock |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
 | `S` | save the current frame to `data/raw/frames/` for labelling |
@@ -598,6 +601,22 @@ Each card belongs to the seat its corner index lies in; a card outside every
 seat is listed as OTHER. Point the camera so the dealer's side of the table is
 at the top of the image.
 
+**Adjusting the zones.** If the template does not fit your table, press `E`.
+Every zone gets a white handle on each corner:
+
+| Mouse | Effect |
+|---|---|
+| drag a corner handle | moves that corner anywhere; the other three stay put |
+| drag inside a zone | moves the whole zone, keeping its shape |
+| right-click a zone | resets it to the template shape |
+
+Press `E` again to save the zones to `data/seats.json` and lock them. They are
+loaded the next time the reader starts, with their player count, and work at any
+camera resolution. Pressing `1` to `7` goes back to the template for that player
+count (the saved file is kept until you save again). To start from the template
+at launch, pass `--players`, or delete `data/seats.json`. Cards keep being read
+while you edit, and each card's seat follows the zones as you move them.
+
 **Hands.** Each seat's cards make one hand. Aces count 11 unless that busts,
 then 1. Face-down cards are left out of the total and shown as `+1 hidden`.
 Split hands are not separated yet.
@@ -645,7 +664,7 @@ All of these are in `settings.py`. Change one at a time and watch the effect.
 | A covered card turns grey too quickly | raise `DROP_FRAMES` | it can stay hidden longer before it is marked hidden |
 | The round ends while cards are only covered | raise `ROUND_END_FRAMES` (e.g. 90 to 150) | the table must stay empty longer |
 | The next round starts too slowly after a sweep | lower `ROUND_END_FRAMES` | the empty table is noticed sooner |
-| Cards land in the wrong seat | press `1` to `7` for the right player count, or move the camera so the dealer is at the top | seats are a fixed layout |
+| Cards land in the wrong seat | press `1` to `7` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
 | Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
 | The video is choppy (low fps) | lower `INPUT_SIZE` (e.g. 1280 to 960) | less work per frame |
@@ -669,6 +688,8 @@ frames is one second. If the fps is much lower, scale them down to match.
 | Training stops with an out-of-memory error | batch too large for the GPU | `BATCH_SIZE = 4` in `settings.py` |
 | Training reports `device=cpu` and is very slow | wrong environment, or no GPU support | activate this project's `.venv`; on a Mac check `python -c "import torch; print(torch.backends.mps.is_available())"` |
 | An export says `skip ... boxes are whole cards` | it is labelled around whole cards, not corners | relabel the corners in Roboflow and export again |
+| Zones in odd places after starting | an old `data/seats.json` was loaded | press `1` to `7` for the template, or delete `data/seats.json` |
+| Dragging misses the handles after resizing the window | the window is scaled | make the window its original size, or grab slightly inside the handle |
 | `yolo val` results end up in `runs/detect/` | relative `project=` path | use `project="$PWD/models"` as in the commands above |
 
 ## Known limitations

@@ -13,6 +13,9 @@ models/cards/*
 models/cards/weights/*
 !models/cards/weights/best.pt
 
+# Zones edited for one camera setup
+data/seats.json
+
 # Generated or downloaded data (rebuilt by train.py, labeled exports live in Roboflow)
 data/dataset/
 data/raw/labeled/

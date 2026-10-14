@@ -38,3 +38,4 @@ ROUND_END_FRAMES = 90      # no card visible for this many frames (about 3 s at 
 
 # ---------------------------------------------------------------- table
 PLAYERS = 4                # player seats in the arc layout; change live with keys 1-7 in read.py
+SEATS_FILE = "data/seats.json"  # zones edited with the mouse (key E in read.py); delete it to go back to the template

@@ -11,8 +11,8 @@ Every event (placed, hidden, returned, round over) is printed as it happens, and
 appended to --log as CSV if given. Without a trained model it runs in capture
 mode: it shows the live feed and lets you press 's' to save frames for labelling.
 
-Keys: 1-7 number of players | r new round | Shift+R new shoe (count back to 0)
-      s save frame to data/raw/frames | q quit
+Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
+      r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames | q quit
 The overlay is drawn by cardReader/hud.py, the seat layout by cardReader/seats.py.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ import settings
 from cardReader.blackjack import shoe_count
 from cardReader.camera import Camera, parse_source, snapshot_cameras
 from cardReader.hud import Hud
-from cardReader.seats import MAX_PLAYERS, SeatLayout
+from cardReader.seats import MAX_PLAYERS, SeatLayout, ZoneEditor
 from cardReader.tracker import CardTracker
 
 WINDOW = "card reader"
@@ -74,7 +74,8 @@ def main():
     ap.add_argument("--device", default=None, help="mps, cuda, or cpu (auto if omitted)")
     ap.add_argument("--width", type=int, default=settings.CAMERA_WIDTH)
     ap.add_argument("--height", type=int, default=settings.CAMERA_HEIGHT)
-    ap.add_argument("--players", type=int, default=settings.PLAYERS, help=f"player seats, 1 to {MAX_PLAYERS}")
+    ap.add_argument("--players", type=int, default=None,
+                    help=f"player seats, 1 to {MAX_PLAYERS} (default: the saved zones, else PLAYERS in settings.py)")
     ap.add_argument("--log", default=None, help="append every event to this CSV file")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--list-cameras", action="store_true", help="show a snapshot from every camera, then exit")
@@ -95,7 +96,13 @@ def main():
     print(f"source {args.source} at {W}x{H}")
     tracker = CardTracker(settings.CONFIRM_FRAMES, settings.DROP_FRAMES, settings.MATCH_DISTANCE * W,
                           settings.ROUND_END_FRAMES)
-    layout = SeatLayout(args.players, W, H)
+    seats_file = settings.PROJECT_ROOT / settings.SEATS_FILE
+    layout = SeatLayout.load(seats_file, W, H)  # zones edited earlier, if any
+    if layout is None or (args.players is not None and args.players != layout.players):
+        layout = SeatLayout(args.players or settings.PLAYERS, W, H)
+    else:
+        print(f"loaded edited zones from {settings.SEATS_FILE} ({layout.players} players)")
+    editor = ZoneEditor(layout)
     frames_dir = settings.PROJECT_ROOT / settings.FRAMES_DIR
     frames_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,6 +117,7 @@ def main():
     hud = Hud()
     if not args.no_display:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)  # resizable, so a 4K feed fits on a laptop screen
+        cv2.setMouseCallback(WINDOW, editor.on_mouse)
     t_last, fps = time.time(), 0.0
     try:
         while True:
@@ -120,7 +128,7 @@ def main():
                 time.sleep(0.01)
                 continue
             if frame.shape[1] != layout.width or frame.shape[0] != layout.height:
-                layout = SeatLayout(layout.players, frame.shape[1], frame.shape[0])
+                layout = editor.layout = layout.resized(frame.shape[1], frame.shape[0])
 
             dets = detector(frame) if detector else []
             events = tracker.update(dets)
@@ -142,13 +150,23 @@ def main():
             if args.no_display:
                 continue
             cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.round, fps, layout, count,
-                                        capture_mode=detector is None))
+                                        capture_mode=detector is None, editor=editor))
             k = cv2.waitKey(1) & 0xFF
             if k == ord("q"):
                 break
             elif ord("1") <= k <= ord(str(MAX_PLAYERS)):
-                layout = SeatLayout(k - ord("0"), frame.shape[1], frame.shape[0])
-                hud.flash(f"{layout.players} player{'s' if layout.players > 1 else ''}")
+                layout = editor.layout = SeatLayout(k - ord("0"), frame.shape[1], frame.shape[0])
+                editor.selected = None
+                hud.flash(f"{layout.players} player{'s' if layout.players > 1 else ''}: template layout")
+            elif k == ord("e"):
+                editor.active = not editor.active
+                if editor.active:
+                    hud.flash("edit zones: drag corners or zones", 2.5)
+                else:
+                    layout.save(seats_file)
+                    editor.selected = None
+                    print(f"zones saved to {settings.SEATS_FILE}")
+                    hud.flash("zones saved")
             elif k == ord("r"):
                 tracker.new_round()
                 print("--- new round ---")

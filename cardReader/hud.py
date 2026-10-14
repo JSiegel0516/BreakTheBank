@@ -1,6 +1,8 @@
 """Draw the reader's overlay on top of the camera feed.
 
-    * seat outlines: the dealer strip and the player arc, with their names
+    * seat outlines: the dealer strip and the player arc, with their names. In
+      edit mode (key E) every corner gets a handle, the zone last clicked is
+      tinted, and the bottom of the sidebar explains the mouse controls.
     * every corner index the detector sees: thin grey box until the tracker
       confirms the card, then a box in the card's colour
     * a tag on each card of the round: its placement number in a yellow badge,
@@ -23,7 +25,7 @@ import numpy as np
 
 from .blackjack import ShoeCount, describe
 from .deck import BACK, RED_SUITS, suit_of
-from .seats import DEALER, SeatLayout
+from .seats import DEALER, SeatLayout, ZoneEditor
 from .tracker import Card, Detection
 
 FONT = cv2.FONT_HERSHEY_DUPLEX
@@ -37,7 +39,7 @@ AMBER = (0, 190, 255)
 BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
-KEYS = "[1-7] players    [R] new round    [Shift+R] new shoe    [S] save frame    [Q] quit"
+KEYS = "[1-7] players    [E] edit zones    [R] new round    [Shift+R] new shoe    [S] save frame    [Q] quit"
 
 
 def card_colour(label: str):
@@ -60,8 +62,10 @@ class Hud:
         self._message, self._message_until = text, time.time() + seconds
 
     def draw(self, frame: np.ndarray, dets: list[Detection], cards: list[Card], fps: float,
-             layout: SeatLayout, count: ShoeCount, capture_mode: bool = False) -> np.ndarray:
-        """cards: every card of the round, hidden ones included, in placement order."""
+             layout: SeatLayout, count: ShoeCount, capture_mode: bool = False,
+             editor: ZoneEditor | None = None) -> np.ndarray:
+        """cards: every card of the round, hidden ones included, in placement order.
+        editor: the zone editor, drawn with handles while it is active."""
         view = frame.copy()
         W = view.shape[1]
         self.s = min(max(W / 1600, 0.6), 2.5)  # 1.2 at 1080p, 2.4 at 4K
@@ -69,7 +73,8 @@ class Hud:
         self.pad = round(10 * self.s)
         self.r = round(15 * self.s)
 
-        self._seat_outlines(view, layout)
+        editing = editor is not None and editor.active
+        self._seat_outlines(view, layout, editor if editing else None)
         visible = {c.label for c in cards if not c.hidden}
         for d in dets:
             x1, y1, x2, y2 = map(int, d.box)
@@ -86,6 +91,8 @@ class Hud:
         seat_of = {c.order: layout.assign(c.x, c.y) for c in cards}
         y = self._count_block(side, count)
         self._seat_blocks(side, cards, seat_of, layout, y)
+        if editing:
+            self._edit_help(side)
         canvas = np.hstack([view, side])
         self._bottom_bar(canvas, fps, capture_mode, W)
         return canvas
@@ -120,16 +127,41 @@ class Hud:
         return 2 * self.r + self.pad // 2 + w
 
     # ------------------------------------------------------------ pieces
-    def _seat_outlines(self, img, layout: SeatLayout):
-        for seat in layout.seats:
+    def _seat_outlines(self, img, layout: SeatLayout, editor: ZoneEditor | None):
+        for i, seat in enumerate(layout.seats):
             colour = AMBER if seat.name == DEALER else SEAT_LINE
-            cv2.polylines(img, [seat.polygon], True, colour, max(1, self.thick // 2), cv2.LINE_AA)
+            if editor is not None and editor.selected == i:
+                tint = img.copy()
+                cv2.fillPoly(tint, [seat.polygon], BADGE)
+                cv2.addWeighted(tint, 0.18, img, 0.82, 0, dst=img)
+                colour = BADGE
+            line = self.thick if editor is not None else max(1, self.thick // 2)
+            cv2.polylines(img, [seat.polygon], True, colour, line, cv2.LINE_AA)
             title = seat_title(seat.name)
             w, h, _ = self._size(title, 0.6)
             top = seat.polygon[np.argmin(seat.polygon[:, 1])]
             x, y = top[0] - w // 2, top[1] + h + self.pad
             self._panel(img, x - self.pad // 2, y - h - self.pad // 2, x + w + self.pad // 2, y + self.pad // 2, 0.6)
             self._text(img, title, (x, y), 0.6, colour)
+        if editor is None:
+            return
+        r = max(6, editor.handle_radius() * 2 // 3)
+        for seat in layout.seats:
+            for cx, cy in seat.polygon:
+                cv2.circle(img, (int(cx), int(cy)), r, (0, 0, 0), -1, cv2.LINE_AA)
+                cv2.circle(img, (int(cx), int(cy)), r - 2, WHITE, -1, cv2.LINE_AA)
+
+    def _edit_help(self, side):
+        """Mouse controls for edit mode, at the bottom of the sidebar so no handle is ever covered."""
+        lines = [("EDIT ZONES", BADGE), ("drag a corner: reshape", WHITE), ("drag inside: move the zone", WHITE),
+                 ("right-click: reset the zone", WHITE), ("E: save and lock", WHITE)]
+        lh = self._size("Ag", 0.6)[1] + self.pad
+        bar = self._size(KEYS, 0.5)[1] + self._size(KEYS, 0.5)[2] + 2 * self.pad
+        y = side.shape[0] - bar - self.pad - len(lines) * lh
+        cv2.rectangle(side, (0, y - self.pad), (side.shape[1], side.shape[0] - bar), (60, 50, 0), -1)
+        for text, colour in lines:
+            y += lh
+            self._text(side, text, (self.pad, y - self.pad // 2), 0.6, colour)
 
     def _count_block(self, side, count: ShoeCount) -> int:
         """Hi-Lo running count, true count, cards left, at the top of the sidebar. Returns the y below it."""
