@@ -566,8 +566,10 @@ terminal or VS Code. Grant it under System Settings > Privacy & Security > Camer
 2. On the iPhone: Settings > General > AirPlay & Continuity > Continuity Camera on.
 3. Mount the phone with the rear camera facing the table, lock its screen, and
    keep it still and near the Mac. It switches into webcam mode on its own.
-4. Run `python read.py --source 0`. OpenCV usually numbers the iPhone 0 and the
-   built-in camera 1; if the wrong one opens, try the other number. Then set
+4. Run `python read.py --list-cameras` to see a snapshot from every camera with
+   its number, then `python read.py --source <number>`. OpenCV usually numbers the
+   iPhone 0 and the built-in camera 1, but this can change when the phone
+   disconnects (unlocked, picked up, or idle) and reconnects. Then set
    `CAMERA_SOURCE` in `settings.py` so plain `python read.py` uses it.
 5. Keep the phone on a charger. If the wireless feed stutters, plug it into the
    Mac with a cable; it works the same way.
@@ -657,7 +659,8 @@ frames is one second. If the fps is much lower, scale them down to match.
 |---|---|---|
 | `ModuleNotFoundError: No module named 'cv2'` | another virtual environment is active | `deactivate`, then `source .venv/bin/activate` inside `Blackjack_Project`; check `which python` |
 | Reader window is black | camera permission not granted | System Settings > Privacy & Security > Camera, allow Terminal or VS Code, restart it |
-| Wrong camera opens | camera numbers differ from what you expected | try `--source 0`, `1`, `2` |
+| Wrong camera opens | camera numbers change when an iPhone connects or disconnects | `python read.py --list-cameras` shows a snapshot from each number |
+| The phone's view is plain grey | it points at a plain surface, the lens is blocked, or it is too close to focus | aim it at the table from 50 cm or more; `--list-cameras` marks such a camera as nearly blank |
 | `Could not open video source` | the camera is in use or not connected | close other apps using it (FaceTime, Zoom, Photo Booth); wake the iPhone camera |
 | Bottom bar says CAPTURE MODE | no model at `MODEL_PATH` | check `models/cards/weights/best.pt` exists, or train one |
 | Cards on screen but none get a number | detections too weak, or the camera is too far | see [Tuning the reader](#tuning-the-reader); move the camera closer |

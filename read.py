@@ -3,6 +3,7 @@
     python read.py                                   # camera and model from settings.py
     python read.py --source 1                        # another camera or a capture card
     python read.py --source round1.mp4 --log round1.csv --no-display
+    python read.py --list-cameras                    # which number is which camera?
 
 Per frame:  camera -> detector -> tracker -> seats, hand totals, Hi-Lo count -> overlay
 
@@ -22,15 +23,46 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 import settings
 from cardReader.blackjack import shoe_count
-from cardReader.camera import Camera, parse_source
+from cardReader.camera import Camera, parse_source, snapshot_cameras
 from cardReader.hud import Hud
 from cardReader.seats import MAX_PLAYERS, SeatLayout
 from cardReader.tracker import CardTracker
 
 WINDOW = "card reader"
+
+
+def list_cameras():
+    """Print every camera number and show one window with a labelled snapshot from each."""
+    found = snapshot_cameras()
+    if not found:
+        print("no cameras found (check System Settings > Privacy & Security > Camera)")
+        return
+    tiles = []
+    for i, frame in found:
+        if frame is None:
+            print(f"--source {i}: opened but sent no picture (permission, or the device is asleep)")
+            frame = np.zeros((360, 640, 3), np.uint8)
+            note = "no picture"
+        else:
+            h, w = frame.shape[:2]
+            # almost no edges: lens blocked, out of focus, or pointing at a plain wall or ceiling
+            blank = cv2.Laplacian(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var() < 20
+            note = f"{w}x{h}" + ("  nearly blank: lens blocked or no detail in view" if blank else "")
+            print(f"--source {i}: {note}")
+        tile = cv2.resize(frame, (640, round(640 * frame.shape[0] / frame.shape[1])))
+        cv2.rectangle(tile, (0, 0), (640, 44), (25, 25, 25), -1)
+        cv2.putText(tile, f"--source {i}   {note}", (12, 31), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 220, 255), 2, cv2.LINE_AA)
+        tiles.append(tile)
+    height = max(t.shape[0] for t in tiles)
+    sheet = np.hstack([cv2.copyMakeBorder(t, 0, height - t.shape[0], 0, 0, cv2.BORDER_CONSTANT) for t in tiles])
+    cv2.imshow("cameras (press any key to close)", sheet)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    print("then run: python read.py --source <number>   (or set CAMERA_SOURCE in settings.py)")
 
 
 def main():
@@ -45,7 +77,11 @@ def main():
     ap.add_argument("--players", type=int, default=settings.PLAYERS, help=f"player seats, 1 to {MAX_PLAYERS}")
     ap.add_argument("--log", default=None, help="append every event to this CSV file")
     ap.add_argument("--no-display", action="store_true")
+    ap.add_argument("--list-cameras", action="store_true", help="show a snapshot from every camera, then exit")
     args = ap.parse_args()
+    if args.list_cameras:
+        list_cameras()
+        return
 
     detector = None
     if Path(args.model).exists():

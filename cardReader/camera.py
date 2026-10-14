@@ -78,3 +78,26 @@ class Camera:
 def parse_source(text: str) -> int | str:
     """'0' -> 0 (device index); anything else is a path or URL."""
     return int(text) if text.isdigit() else text
+
+
+def snapshot_cameras(max_index: int = 5) -> list[tuple[int, object]]:
+    """Open cameras 0, 1, 2 ... in turn and grab one frame from each.
+
+    Returns [(index, frame or None)] for every index that opened. Camera
+    numbers depend on what is connected (an iPhone joining or leaving can swap
+    them), so this is the quickest way to see which number is which."""
+    found = []
+    for i in range(max_index + 1):
+        cap = cv2.VideoCapture(i)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        frame = None
+        for _ in range(30):  # cameras need a moment to adjust exposure after opening
+            ok, f = cap.read()
+            if ok:
+                frame = f
+            time.sleep(0.03)
+        cap.release()
+        found.append((i, frame))
+    return found
