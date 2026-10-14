@@ -1,17 +1,18 @@
 """The card reader. Point it at the table and it lists cards in the order they are placed.
 
     python read.py                                   # camera and model from settings.py
-    python read.py --source 1                        # a capture card
+    python read.py --source 1                        # another camera or a capture card
     python read.py --source round1.mp4 --log round1.csv --no-display
 
-Per frame:  camera -> detector -> tracker -> ordered list of cards
+Per frame:  camera -> detector -> tracker -> seats, hand totals, Hi-Lo count -> overlay
 
-Every placement and removal is printed as it happens, and appended to --log as
-CSV if given. Without a trained model it runs in capture mode: it shows the live
-feed and lets you press 's' to save frames for labelling.
+Every event (placed, hidden, returned, round over) is printed as it happens, and
+appended to --log as CSV if given. Without a trained model it runs in capture
+mode: it shows the live feed and lets you press 's' to save frames for labelling.
 
-Keys: q quit | s save frame to data/raw/frames | r reset count (numbering restarts at 1)
-The overlay is drawn by cardReader/hud.py.
+Keys: 1-7 number of players | r new round | Shift+R new shoe (count back to 0)
+      s save frame to data/raw/frames | q quit
+The overlay is drawn by cardReader/hud.py, the seat layout by cardReader/seats.py.
 """
 from __future__ import annotations
 
@@ -23,8 +24,10 @@ from pathlib import Path
 import cv2
 
 import settings
+from cardReader.blackjack import shoe_count
 from cardReader.camera import Camera, parse_source
 from cardReader.hud import Hud
+from cardReader.seats import MAX_PLAYERS, SeatLayout
 from cardReader.tracker import CardTracker
 
 WINDOW = "card reader"
@@ -39,7 +42,8 @@ def main():
     ap.add_argument("--device", default=None, help="mps, cuda, or cpu (auto if omitted)")
     ap.add_argument("--width", type=int, default=settings.CAMERA_WIDTH)
     ap.add_argument("--height", type=int, default=settings.CAMERA_HEIGHT)
-    ap.add_argument("--log", default=None, help="append placements and removals to this CSV file")
+    ap.add_argument("--players", type=int, default=settings.PLAYERS, help=f"player seats, 1 to {MAX_PLAYERS}")
+    ap.add_argument("--log", default=None, help="append every event to this CSV file")
     ap.add_argument("--no-display", action="store_true")
     args = ap.parse_args()
 
@@ -53,7 +57,9 @@ def main():
     cam = Camera(parse_source(args.source), args.width, args.height)
     W, H = cam.size
     print(f"source {args.source} at {W}x{H}")
-    tracker = CardTracker(settings.CONFIRM_FRAMES, settings.DROP_FRAMES, settings.MATCH_DISTANCE * W)
+    tracker = CardTracker(settings.CONFIRM_FRAMES, settings.DROP_FRAMES, settings.MATCH_DISTANCE * W,
+                          settings.ROUND_END_FRAMES)
+    layout = SeatLayout(args.players, W, H)
     frames_dir = settings.PROJECT_ROOT / settings.FRAMES_DIR
     frames_dir.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +69,7 @@ def main():
         log_file = open(args.log, "a", newline="")
         log = csv.writer(log_file)
         if new_file:
-            log.writerow(["time", "frame", "event", "order", "card", "x", "y"])
+            log.writerow(["time", "frame", "event", "order", "card", "seat", "running_count", "x", "y"])
 
     hud = Hud()
     if not args.no_display:
@@ -77,13 +83,21 @@ def main():
                     break
                 time.sleep(0.01)
                 continue
+            if frame.shape[1] != layout.width or frame.shape[0] != layout.height:
+                layout = SeatLayout(layout.players, frame.shape[1], frame.shape[0])
 
             dets = detector(frame) if detector else []
-            for e in tracker.update(dets):
-                print(e)
+            events = tracker.update(dets)
+            count = shoe_count(tracker.shoe_seen)
+            for e in events:
+                seat = layout.assign(e.card.x, e.card.y) if e.card else None
+                print(e, f"({seat})" if seat else "", f"count {count.running:+d}" if e.kind == "placed" else "")
+                if e.kind == "round_over":
+                    hud.flash("round over: table cleared")
                 if log:
-                    log.writerow([f"{time.time():.3f}", e.frame, e.kind, e.card.order, e.card.label,
-                                  round(e.card.x), round(e.card.y)])
+                    c = e.card
+                    log.writerow([f"{time.time():.3f}", e.frame, e.kind, c.order if c else "", c.label if c else "",
+                                  seat or "", count.running, round(c.x) if c else "", round(c.y) if c else ""])
 
             now = time.time()
             fps = 0.9 * fps + 0.1 / max(now - t_last, 1e-6)
@@ -91,25 +105,35 @@ def main():
 
             if args.no_display:
                 continue
-            cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.table(), fps, capture_mode=detector is None))
+            cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.round, fps, layout, count,
+                                        capture_mode=detector is None))
             k = cv2.waitKey(1) & 0xFF
             if k == ord("q"):
                 break
+            elif ord("1") <= k <= ord(str(MAX_PLAYERS)):
+                layout = SeatLayout(k - ord("0"), frame.shape[1], frame.shape[0])
+                hud.flash(f"{layout.players} player{'s' if layout.players > 1 else ''}")
+            elif k == ord("r"):
+                tracker.new_round()
+                print("--- new round ---")
+                hud.flash("new round: numbering restarts at 1")
+            elif k == ord("R"):
+                tracker.new_shoe()
+                print("--- new shoe: count reset ---")
+                hud.flash("new shoe: count reset to 0")
             elif k == ord("s"):
                 p = frames_dir / f"frame_{int(time.time() * 1000)}.jpg"
                 cv2.imwrite(str(p), frame)
                 print("saved", p)
                 hud.flash(f"frame saved: {p.name}")
-            elif k == ord("r"):
-                tracker.reset()
-                print("--- count reset ---")
-                hud.flash("count reset: numbering restarts at 1")
     finally:
         cam.release()
         cv2.destroyAllWindows()
         if log:
             log_file.close()
-        print("placed in order:", " ".join(c.label for c in tracker.history) or "-")
+        count = shoe_count(tracker.shoe_seen)
+        print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
+        print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,8 @@ works straight after setup. Training is only needed to improve it.
 1. Set up the environment (see [Setup](#setup)).
 2. Point a camera straight down at the table (see [Setting up the camera](#setting-up-the-camera)).
 3. Run `python read.py` and place cards one at a time. Each gets a number in the order placed.
-4. Press `R` to reset the count between rounds, `Q` to quit.
+4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared;
+   press `Shift+R` after a reshuffle to reset the count, `Q` to quit.
 
 ## How it works
 
@@ -49,13 +50,16 @@ Blackjack_Project/
 │   ├── camera.py             frames from a camera, capture card, or video file
 │   ├── detector.py           YOLO wrapper: frame -> list of detections
 │   ├── hud.py                the overlay read.py draws on the live feed
+│   ├── seats.py              the dealer and player seat layout, by number of players
+│   ├── blackjack.py          hand totals and the Hi-Lo count
 │   ├── tracker.py            detections -> cards in placement order
 │   ├── deck.py               the 53 class labels (52 faces + BACK)
 │   ├── dataset.py            combines data/raw into data/dataset          (used by train.py)
 │   ├── synthetic.py          renders card art onto tables as extra data    (used by train.py)
 │   └── cardArt.py            crops photos of your deck into card art       (train.py --extract-art)
 ├── tests/
-│   └── test_tracker.py
+│   ├── test_tracker.py       placement order, hidden cards, rounds, shoes
+│   └── test_blackjack.py     hand totals, Hi-Lo, seat layout
 ├── data/
 │   ├── raw/                  everything you provide
 │   │   ├── labeled/          YOLO-format exports, one subfolder each
@@ -495,37 +499,46 @@ Download `models/cards/weights/best.pt` back into the same place locally.
 
 | On screen | Meaning |
 |---|---|
-| Panel at the top left | every card on the table, in the order placed: `1 KH  2 7D  3 BACK` |
-| Yellow badge and name above a card | that card's placement number and name |
+| Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
+| Panel at the top left | one row per seat: its cards in placement order and its blackjack total (`17`, `soft 18`, `BLACKJACK`, `BUST (24)`, `9 +1 hidden`) |
+| Panel at the top right | the Hi-Lo running count, true count, and cards left in the deck |
+| Yellow badge and name on a card | that card's placement number and name |
+| Grey badge and name | a hidden card: covered right now, but still in the hand and in the count |
 | Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |
 | Thin grey boxes | detections the tracker has not confirmed yet (a card still moving, or a one-frame misread) |
 | Bottom bar | the keys, and frames per second |
 
-The number is the placement order: 1 is the first card confirmed (seen for 8
-frames in a row), 2 the next, and so on. Numbers are never reused: a removed
-card leaves a gap, and a card put back gets a new number.
+The number is the placement order within the round: 1 is the first card
+confirmed (seen for `CONFIRM_FRAMES` frames in a row), 2 the next, and so on. A
+card that is covered keeps its number and comes back with it.
 
 | Key | Action |
 |---|---|
-| `R` | reset the count: forget the table, numbering restarts at 1 |
+| `1` to `7` | number of players; the seat layout snaps to that many seats |
+| `R` | new round: forget the table, numbering restarts at 1, the count is kept |
+| `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
 | `S` | save the current frame to `data/raw/frames/` for labelling |
 | `Q` | quit (or Ctrl+C in the terminal) |
 
 Keys work when the reader window is selected. The window can be resized.
-Every placement and removal is also printed in the terminal:
+Every event is also printed in the terminal, with the seat and the count:
 
 ```
-[   412] placed  #1   KH
-[   530] placed  #2   7D
+[   412] placed   #1   10H (P1) count -1
+[   530] placed   #2   6C  (P2) count +0
+[   901] hidden   #2   6C  (P2)
+[   966] returned #2   6C  (P2)
+[  2210] round_over
 ```
 
-and on quitting the full sequence is printed: `placed in order: KH 7D`.
+and on quitting: `counted this shoe: 10H 6C ...` with the final running and true count.
 
 - `--source 0` picks the camera. With an iPhone as a Continuity Camera, OpenCV
   usually numbers it 0 and the built-in camera 1; try the other number if the
   wrong one opens.
 - `--source round1.mp4` reads a recorded video instead.
-- `--log round.csv` appends every event to a CSV.
+- `--players 5` sets the starting number of seats (`PLAYERS` in `settings.py`).
+- `--log round.csv` appends every event to a CSV, with its seat and the running count.
 - `--no-display` runs without the window; stop it with Ctrl+C.
 
 macOS asks for camera permission the first time OpenCV opens a camera from a
@@ -574,11 +587,46 @@ under System Settings > Privacy & Security > Camera, then restart the terminal.
 - At 4K over a whole table, raise `INPUT_SIZE` to 1600 or more so the corner
   indices stay readable. It is slower; check the fps in the bottom bar.
 
+### Seats, hands, and the Hi-Lo count
+
+**Seats.** The layout is fixed and only depends on the number of players: the
+dealer strip across the top of the image and the player seats on an arc below
+it, P1 on the left. Press `1` to `7` to change the number of seats at any time.
+Each card belongs to the seat its corner index lies in; a card outside every
+seat is listed as OTHER. Point the camera so the dealer's side of the table is
+at the top of the image.
+
+**Hands.** Each seat's cards make one hand. Aces count 11 unless that busts,
+then 1. Face-down cards are left out of the total and shown as `+1 hidden`.
+Split hands are not separated yet.
+
+**Hi-Lo count.** Every face card adds to the running count once per shoe:
+
+| Cards | Value |
+|---|---|
+| 2, 3, 4, 5, 6 | +1 |
+| 7, 8, 9 | 0 |
+| 10, J, Q, K, A | -1 |
+
+The true count is the running count divided by the decks not yet seen. With one
+deck that is `(52 - cards seen) / 52`, so a running count of +4 with half the
+deck left is a true count of +8. A positive true count means the remaining cards
+are rich in tens and aces. Face-down cards are counted when they are turned up.
+
 ### Rules the tracker assumes
 
-- One deck: two sightings of the same face are the same card. This merges a
-  card's corner indices and stops a stray misread from adding a duplicate.
-- Every face-down card (BACK) is a separate card.
+- **One deck.** Two sightings of the same face are the same card. This merges a
+  card's corner indices, stops a stray misread from adding a duplicate, and means
+  a card is counted once per shoe even if it leaves and comes back.
+- **Covered is not removed.** A card that disappears for `DROP_FRAMES` frames
+  becomes hidden: it keeps its number, stays in its hand, and is not counted again
+  when it reappears. A face card is recognised by its name anywhere on the table,
+  a face-down card by reappearing near where it was.
+- **The round ends when the table is cleared.** If no card is visible for
+  `ROUND_END_FRAMES` frames (about 3 seconds), the round is over and numbering
+  restarts. A hand briefly covering the whole table does not end it. `R` ends a
+  round immediately.
+- **Every face-down card is a separate card.**
 - A card turned face up in place (a dealer's hole card) keeps its BACK label
   for a while, because the label is a vote over every frame it has been seen.
 
@@ -592,13 +640,15 @@ All of these are in `settings.py`. Change one at a time and watch the effect.
 | Wrong or phantom cards appear | raise `CONFIDENCE` (e.g. 0.4 to 0.5) | only confident boxes count |
 | A card appears while it is still being slid into place | raise `CONFIRM_FRAMES` (e.g. 8 to 12) | it must be seen steady for longer |
 | Cards take too long to get their number | lower `CONFIRM_FRAMES` (e.g. 8 to 5) | confirms sooner, with more risk of flicker |
-| A hand passing over removes cards | raise `DROP_FRAMES` (e.g. 30 to 60) | a card can stay hidden longer before it counts as removed |
-| Picking a card up takes too long to register | lower `DROP_FRAMES` | removal is noticed sooner |
+| A covered card turns grey too quickly | raise `DROP_FRAMES` | it can stay hidden longer before it is marked hidden |
+| The round ends while cards are only covered | raise `ROUND_END_FRAMES` (e.g. 90 to 150) | the table must stay empty longer |
+| The next round starts too slowly after a sweep | lower `ROUND_END_FRAMES` | the empty table is noticed sooner |
+| Cards land in the wrong seat | press `1` to `7` for the right player count, or move the camera so the dealer is at the top | seats are a fixed layout |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
 | Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
 | The video is choppy (low fps) | lower `INPUT_SIZE` (e.g. 1280 to 960) | less work per frame |
 
-`CONFIRM_FRAMES` and `DROP_FRAMES` are counted in frames, so at 30 fps, 30
+`CONFIRM_FRAMES`, `DROP_FRAMES`, and `ROUND_END_FRAMES` are counted in frames, so at 30 fps, 30
 frames is one second. If the fps is much lower, scale them down to match.
 
 ## Troubleshooting
@@ -621,7 +671,11 @@ frames is one second. If the fps is much lower, scale them down to match.
 ## Known limitations
 
 - **One deck.** Two sightings of the same face are treated as one card, so a
-  shoe with several decks would merge real duplicates.
+  shoe with several decks would merge real duplicates, and its count would be wrong.
+- **A misread at placement stays in the count.** If a card is first confirmed
+  under the wrong name (a 9H read as 6H), that name is counted; the corrected name
+  is then counted as a second card.
+- **Splits** are shown as one hand per seat.
 - **Face-down cards.** All `BACK` training examples are synthetic, drawn with a
   placeholder design. Photograph your deck's back (see
   [Using your own deck](#using-your-own-deck-for-synthetic-images)) before relying on it.

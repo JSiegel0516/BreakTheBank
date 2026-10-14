@@ -30,7 +30,11 @@ CAMERA_SOURCE = "0"        # "0" = first camera. A capture card is often "1". A 
 CAMERA_WIDTH = None        # e.g. 3840. None = whatever the camera gives.
 CAMERA_HEIGHT = None       # e.g. 2160
 INPUT_SIZE = 1280          # frame is resized to this width before detection. Bigger = reads smaller indices, slower.
-CONFIDENCE = 0.4           # detections below this score are ignored
-CONFIRM_FRAMES = 8         # a card must be seen this many frames before it counts
-DROP_FRAMES = 30           # a card must be missing this many frames in a row before it is removed
+CONFIDENCE = 0.5           # detections below this score are ignored
+CONFIRM_FRAMES = 15         # a card must be seen this many frames before it counts
+DROP_FRAMES = 30           # a card missing this many frames in a row becomes hidden (kept, shown greyed out)
 MATCH_DISTANCE = 0.03      # fraction of frame width; detections closer than this are the same corner
+ROUND_END_FRAMES = 90      # no card visible for this many frames (about 3 s at 30 fps) ends the round
+
+# ---------------------------------------------------------------- table
+PLAYERS = 4                # player seats in the arc layout; change live with keys 1-7 in read.py
