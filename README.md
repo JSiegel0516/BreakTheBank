@@ -38,6 +38,7 @@ Blackjack_Project/
 ├── cardReader/               the library
 │   ├── camera.py             frames from a camera, capture card, or video file
 │   ├── detector.py           YOLO wrapper: frame -> list of detections
+│   ├── hud.py                the overlay read.py draws on the live feed
 │   ├── tracker.py            detections -> cards in placement order
 │   ├── deck.py               the 53 class labels (52 faces + BACK)
 │   ├── dataset.py            combines data/raw into data/dataset          (used by train.py)
@@ -418,17 +419,43 @@ Download `models/cards/weights/best.pt` back into the same place locally.
 
 ## Reading
 
-`python read.py` shows the feed with each card numbered in placement order,
-and prints every placement and removal:
+`python read.py` opens a window with the live feed and an overlay on top
+(drawn by `cardReader/hud.py`):
+
+| On screen | Meaning |
+|---|---|
+| Panel at the top left | every card on the table, in the order placed: `1 KH  2 7D  3 BACK` |
+| Yellow badge and name above a card | that card's placement number and name |
+| Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |
+| Thin grey boxes | detections the tracker has not confirmed yet (a card still moving, or a one-frame misread) |
+| Bottom bar | the keys, and frames per second |
+
+The number is the placement order: 1 is the first card confirmed (seen for 8
+frames in a row), 2 the next, and so on. Numbers are never reused: a removed
+card leaves a gap, and a card put back gets a new number.
+
+| Key | Action |
+|---|---|
+| `R` | reset the count: forget the table, numbering restarts at 1 |
+| `S` | save the current frame to `data/raw/frames/` for labelling |
+| `Q` | quit (or Ctrl+C in the terminal) |
+
+Keys work when the reader window is selected. The window can be resized.
+Every placement and removal is also printed in the terminal:
 
 ```
 [   412] placed  #1   KH
 [   530] placed  #2   7D
 ```
 
-- `--source 1` for a capture card, or a video file path.
+and on quitting the full sequence is printed: `placed in order: KH 7D`.
+
+- `--source 0` picks the camera. With an iPhone as a Continuity Camera, OpenCV
+  usually numbers it 0 and the built-in camera 1; try the other number if the
+  wrong one opens.
+- `--source round1.mp4` reads a recorded video instead.
 - `--log round.csv` appends every event to a CSV.
-- Keys: `q` quit, `s` save the frame to `data/raw/frames`, `r` new round (numbering restarts).
+- `--no-display` runs without the window; stop it with Ctrl+C.
 
 macOS asks for camera permission the first time OpenCV opens a camera from a
 terminal or VS Code. Grant it under System Settings > Privacy & Security > Camera.

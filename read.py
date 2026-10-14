@@ -10,7 +10,8 @@ Every placement and removal is printed as it happens, and appended to --log as
 CSV if given. Without a trained model it runs in capture mode: it shows the live
 feed and lets you press 's' to save frames for labelling.
 
-Keys: q quit | s save frame to data/raw/frames | r new round (restart numbering)
+Keys: q quit | s save frame to data/raw/frames | r reset count (numbering restarts at 1)
+The overlay is drawn by cardReader/hud.py.
 """
 from __future__ import annotations
 
@@ -23,8 +24,10 @@ import cv2
 
 import settings
 from cardReader.camera import Camera, parse_source
-from cardReader.deck import display
+from cardReader.hud import Hud
 from cardReader.tracker import CardTracker
+
+WINDOW = "card reader"
 
 
 def main():
@@ -62,6 +65,9 @@ def main():
         if new_file:
             log.writerow(["time", "frame", "event", "order", "card", "x", "y"])
 
+    hud = Hud()
+    if not args.no_display:
+        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)  # resizable, so a 4K feed fits on a laptop screen
     t_last, fps = time.time(), 0.0
     try:
         while True:
@@ -85,20 +91,7 @@ def main():
 
             if args.no_display:
                 continue
-            view = frame.copy()
-            for d in dets:  # raw detections, thin grey
-                x1, y1, x2, y2 = map(int, d.box)
-                cv2.rectangle(view, (x1, y1), (x2, y2), (160, 160, 160), 1)
-            cards = tracker.table()
-            for c in cards:  # confirmed cards, numbered in placement order
-                cv2.circle(view, (int(c.x), int(c.y)), 8, (0, 255, 0), 2)
-                cv2.putText(view, f"{c.order} {display(c.label)}", (int(c.x) + 10, int(c.y) - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            order = "  ".join(f"{c.order}:{display(c.label)}" for c in cards) or "-"
-            cv2.putText(view, order, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(view, f"{fps:4.1f} fps", (view.shape[1] - 120, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.imshow("card reader", view)
+            cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.table(), fps, capture_mode=detector is None))
             k = cv2.waitKey(1) & 0xFF
             if k == ord("q"):
                 break
@@ -106,9 +99,11 @@ def main():
                 p = frames_dir / f"frame_{int(time.time() * 1000)}.jpg"
                 cv2.imwrite(str(p), frame)
                 print("saved", p)
+                hud.flash(f"frame saved: {p.name}")
             elif k == ord("r"):
                 tracker.reset()
-                print("--- new round ---")
+                print("--- count reset ---")
+                hud.flash("count reset: numbering restarts at 1")
     finally:
         cam.release()
         cv2.destroyAllWindows()
