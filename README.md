@@ -363,7 +363,7 @@ To score any trained model on the validation set again, for example after
 adding data or to compare two runs:
 
 ```bash
-yolo val model=models/cards/weights/best.pt data=data/dataset/data.yaml imgsz=1024 project=models name=val
+yolo val model=models/cards/weights/best.pt data=data/dataset/data.yaml imgsz=1024 project="$PWD/models" name=val
 ```
 
 It prints the same P, R, and mAP table, with a row for every card, and writes
@@ -374,10 +374,12 @@ To score it on **real photos only** (the 201 real validation images, no
 synthetic ones), which is the number to report:
 
 ```bash
-yolo val model=models/cards/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project=models name=valReal
+yolo val model=models/cards/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=valReal
 ```
 
-`realVal.yaml` is written by `train.py --rebuild` next to `data.yaml`. Add
+`project="$PWD/models"` must be a full path: with a relative one, Ultralytics
+writes into `runs/detect/models/` instead. `realVal.yaml` is written by
+`train.py --rebuild` next to `data.yaml`. Add
 `device=cpu` to run it while a training run is using the GPU.
 
 ### 6. Try it
