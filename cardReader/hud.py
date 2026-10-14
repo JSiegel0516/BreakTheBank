@@ -10,6 +10,7 @@
     * a sidebar to the right of the video, so nothing covers the table: the
       Hi-Lo running count, true count, and cards left, then each seat's total
       and its cards in placement order
+    * a legend at the bottom of the sidebar explaining every colour (key L hides it)
     * bottom bar: the keys, fps, and short messages such as "new round"
 
 Colours follow the cards: red for hearts and diamonds, white for spades and
@@ -39,7 +40,7 @@ AMBER = (0, 190, 255)
 BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
-KEYS = "[1-7] players    [E] edit zones    [R] new round    [Shift+R] new shoe    [S] save frame    [Q] quit"
+KEYS = "[1-7] players    [E] edit zones    [L] legend    [R] new round    [Shift+R] new shoe    [S] save frame    [Q] quit"
 
 
 def card_colour(label: str):
@@ -56,6 +57,7 @@ class Hud:
     def __init__(self):
         self._message = ""
         self._message_until = 0.0
+        self.show_legend = True
 
     def flash(self, text: str, seconds: float = 1.5):
         """Show a short message above the bottom bar."""
@@ -90,9 +92,12 @@ class Hud:
         side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
         seat_of = {c.order: layout.assign(c.x, c.y) for c in cards}
         y = self._count_block(side, count)
-        self._seat_blocks(side, cards, seat_of, layout, y)
+        bottom = side.shape[0] - self._bar_height()
         if editing:
-            self._edit_help(side)
+            bottom = self._edit_help(side, bottom)
+        if self.show_legend:
+            bottom = self._legend(side, bottom)
+        self._seat_blocks(side, cards, seat_of, layout, y, bottom)
         canvas = np.hstack([view, side])
         self._bottom_bar(canvas, fps, capture_mode, W)
         return canvas
@@ -151,17 +156,58 @@ class Hud:
                 cv2.circle(img, (int(cx), int(cy)), r, (0, 0, 0), -1, cv2.LINE_AA)
                 cv2.circle(img, (int(cx), int(cy)), r - 2, WHITE, -1, cv2.LINE_AA)
 
-    def _edit_help(self, side):
-        """Mouse controls for edit mode, at the bottom of the sidebar so no handle is ever covered."""
+    def _bar_height(self) -> int:
+        _, kh, base = self._size(KEYS, 0.5)
+        return kh + base + 2 * self.pad
+
+    def _edit_help(self, side, bottom: int) -> int:
+        """Mouse controls for edit mode, in the sidebar so no handle is ever covered. Returns its top."""
         lines = [("EDIT ZONES", BADGE), ("drag a corner: reshape", WHITE), ("drag inside: move the zone", WHITE),
                  ("right-click: reset the zone", WHITE), ("E: save and lock", WHITE)]
         lh = self._size("Ag", 0.6)[1] + self.pad
-        bar = self._size(KEYS, 0.5)[1] + self._size(KEYS, 0.5)[2] + 2 * self.pad
-        y = side.shape[0] - bar - self.pad - len(lines) * lh
-        cv2.rectangle(side, (0, y - self.pad), (side.shape[1], side.shape[0] - bar), (60, 50, 0), -1)
+        top = bottom - len(lines) * lh - self.pad
+        cv2.rectangle(side, (0, top), (side.shape[1], bottom), (60, 50, 0), -1)
+        y = top
         for text, colour in lines:
             y += lh
             self._text(side, text, (self.pad, y - self.pad // 2), 0.6, colour)
+        return top
+
+    def _legend(self, side, bottom: int) -> int:
+        """What every colour means, in two columns above `bottom`. Returns its top."""
+        entries = [("box", RED, "hearts, diamonds"), ("box", WHITE, "spades, clubs"),
+                   ("box", AMBER, "face down"), ("thin", GREY, "not confirmed yet"),
+                   ("badge", BADGE, "placement number"), ("badge", DIM, "covered, still counted"),
+                   ("line", AMBER, "dealer zone"), ("line", SEAT_LINE, "player zone"),
+                   ("count", GREEN, "count favours player"), ("count", RED, "count favours dealer")]
+        scale = 0.45
+        _, th, _ = self._size("Ag", scale)
+        row_h = max(th, 2 * self.r // 2) + self.pad
+        rows = (len(entries) + 1) // 2
+        header_h = self._size("LEGEND", 0.5)[1] + self.pad
+        top = bottom - self.pad - header_h - rows * row_h
+        cv2.line(side, (self.pad, top), (side.shape[1] - self.pad, top), DIM, 1)
+        self._text(side, "LEGEND", (self.pad, top + header_h), 0.5, GREY)
+        hide = "L hides"
+        self._text(side, hide, (side.shape[1] - self.pad - self._size(hide, 0.45)[0], top + header_h), 0.45, DIM)
+        col_w = (side.shape[1] - 2 * self.pad) // 2
+        sw = round(22 * self.s)  # swatch width
+        for i, (kind, colour, text) in enumerate(entries):
+            x = self.pad + (i % 2) * col_w
+            cy = top + header_h + self.pad // 2 + (i // 2) * row_h + row_h // 2
+            if kind == "box":
+                cv2.rectangle(side, (x, cy - th // 2 - 2), (x + sw, cy + th // 2 + 2), colour, self.thick)
+            elif kind == "thin":
+                cv2.rectangle(side, (x, cy - th // 2 - 2), (x + sw, cy + th // 2 + 2), colour, 1)
+            elif kind == "badge":
+                cv2.circle(side, (x + sw // 2, cy), sw // 2, colour, -1, cv2.LINE_AA)
+            elif kind == "line":
+                cv2.line(side, (x, cy), (x + sw, cy), colour, self.thick, cv2.LINE_AA)
+            else:
+                sign = "+" if colour == GREEN else "-"
+                self._text(side, sign, (x + sw // 4, cy + th // 2), 0.6, colour)
+            self._text(side, text, (x + sw + self.pad, cy + th // 2), scale, WHITE)
+        return top - self.pad
 
     def _count_block(self, side, count: ShoeCount) -> int:
         """Hi-Lo running count, true count, cards left, at the top of the sidebar. Returns the y below it."""
@@ -179,7 +225,7 @@ class Hud:
         cv2.line(side, (self.pad, y - self.pad), (side.shape[1] - self.pad, y - self.pad), DIM, 1)
         return y
 
-    def _seat_blocks(self, side, cards, seat_of, layout: SeatLayout, y: int):
+    def _seat_blocks(self, side, cards, seat_of, layout: SeatLayout, y: int, bottom: int):
         """For each seat: its name and total on one line, its cards in placement order below,
         wrapping onto more lines for long hands. Cards outside every seat are listed as OTHER."""
         H, SW = side.shape[:2]
@@ -191,8 +237,8 @@ class Hud:
         for name, hand in rows:
             title = seat_title(name)
             _, th, _ = self._size(title, 0.65)
-            if y + th + item_h > H:
-                self._text(side, "...", (self.pad, H - self.pad), 0.65, GREY)
+            if y + th + item_h > bottom:
+                self._text(side, "...", (self.pad, bottom - self.pad), 0.65, GREY)
                 return
             self._text(side, title, (self.pad, y + th), 0.65,
                        AMBER if name == DEALER else SEAT_LINE if name != "OTHER" else GREY)

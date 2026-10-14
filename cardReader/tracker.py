@@ -6,8 +6,16 @@ The tracker smooths that out and remembers the order cards arrived in:
 
   * Each box is matched to the nearest existing track (one physical corner
     index followed across frames), or starts a new track.
-  * A track must be seen for CONFIRM_FRAMES frames before it counts. This kills
-    flicker and cards still in motion.
+  * A track must pass every confirmation check before it counts as a card:
+      - seen steadily: in at least CONFIRM_FRAMES of the last CONFIRM_WINDOW
+        frames, so a detection that flickers on and off never builds up enough
+      - name agreement: its most common name has at least CONFIRM_AGREEMENT of
+        all its reads, so a card read half as 6H and half as 9H waits
+      - confidence: the model's average confidence over those frames is at
+        least CONFIRM_CONFIDENCE, so borderline detections never count
+      - held still: the corner has moved less than STILL_DISTANCE over those
+        frames, so a card being slid across the table is counted where it lands
+    A track that passes once stays confirmed.
   * A track is only dropped after DROP_FRAMES consecutive misses, so a hand
     passing over the table does not erase a card straight away.
   * A track's label is a running vote, so one misread frame does not flip it.
@@ -32,7 +40,7 @@ Memory, so a card is never counted twice:
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass, field
 
 from .deck import BACK
@@ -53,6 +61,7 @@ class Track:
     cx: float
     cy: float
     votes: Counter = field(default_factory=Counter)
+    hits: deque = field(default_factory=lambda: deque(maxlen=200))  # (frame, conf, x, y) of recent sightings
     seen: int = 0
     missed: int = 0
     confirmed: bool = False
@@ -90,10 +99,17 @@ class Event:
 
 
 class CardTracker:
-    def __init__(self, confirm_frames=8, drop_frames=30, match_dist=40.0, round_end_frames=90):
+    def __init__(self, confirm_frames=8, drop_frames=30, match_dist=40.0, round_end_frames=90,
+                 confirm_window=None, confirm_agreement=0.0, confirm_confidence=0.0, still_distance=None):
         """match_dist: pixels; a detection closer than this to a track is that track.
-        round_end_frames: frames with no card visible before the round is over."""
+        round_end_frames: frames with no card visible before the round is over.
+        The confirmation checks (see the module docstring) default to off:
+        confirm_window None = any frames count, still_distance None = movement allowed."""
         self.confirm_frames = confirm_frames
+        self.confirm_window = confirm_window
+        self.confirm_agreement = confirm_agreement
+        self.confirm_confidence = confirm_confidence
+        self.still_distance = still_distance
         self.drop_frames = drop_frames
         self.match_dist = match_dist
         self.round_end_frames = round_end_frames
@@ -116,6 +132,9 @@ class CardTracker:
     def update(self, detections: list[Detection]) -> list[Event]:
         self.frame += 1
         self._match(detections)
+        for t in self.tracks.values():
+            if not t.confirmed and self._passes_checks(t):
+                t.confirmed = True
 
         # Group confirmed tracks into cards. Track ids grow with first sighting,
         # so sorting by id puts cards that appeared earlier first.
@@ -209,7 +228,23 @@ class CardTracker:
             t.cx = 0.7 * t.cx + 0.3 * d.cx  # light smoothing against jitter
             t.cy = 0.7 * t.cy + 0.3 * d.cy
         t.votes[d.label] += 1
+        t.hits.append((self.frame, d.conf, d.cx, d.cy))
         t.seen += 1
         t.missed = 0
-        if t.seen >= self.confirm_frames:
-            t.confirmed = True
+
+    def _passes_checks(self, t: Track) -> bool:
+        """Has this track earned confirmation? See the module docstring for the checks."""
+        window = self.confirm_window
+        recent = [h for h in t.hits if window is None or h[0] > self.frame - window]
+        if len(recent) < self.confirm_frames:
+            return False  # not seen enough, or not steadily enough
+        if t.votes[t.label] < self.confirm_agreement * sum(t.votes.values()):
+            return False  # the reads disagree on which card this is
+        if sum(h[1] for h in recent) / len(recent) < self.confirm_confidence:
+            return False  # the model is not sure enough
+        if self.still_distance is not None:
+            xs, ys = [h[2] for h in recent], [h[3] for h in recent]
+            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+            if max(((x - mx) ** 2 + (y - my) ** 2) ** 0.5 for x, y in zip(xs, ys)) > self.still_distance:
+                return False  # still moving
+        return True

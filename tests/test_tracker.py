@@ -185,3 +185,50 @@ def test_face_down_cards_are_not_counted():
     tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
     run(tr, [det("BACK", 50, 50), det("9S", 300, 50)], 3)
     assert tr.shoe_seen == ["9S"]
+
+
+# ------------------------------------------------------------ confirmation checks
+
+
+def test_flickering_detection_is_not_confirmed_when_seen_steadily_is_required():
+    tr = CardTracker(confirm_frames=6, drop_frames=30, confirm_window=8)
+    for _ in range(12):                 # seen every other frame: 12 sightings over 24 frames
+        tr.update([det("KS", 50, 200)])
+        tr.update([])
+    assert tr.round == []
+    run(tr, [det("KS", 50, 200)], 6)    # now seen steadily
+    assert labels(tr) == ["KS"]
+
+
+def test_disputed_name_waits_for_agreement():
+    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_agreement=0.8)
+    for label in ["6H", "9H"] * 4:      # 50/50 split
+        tr.update([det(label, 50, 200)])
+    assert tr.round == []
+    run(tr, [det("6H", 50, 200)], 12)   # 16 of 20 reads say 6H
+    assert labels(tr) == ["6H"]
+
+
+def test_low_average_confidence_is_not_confirmed():
+    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_window=4, confirm_confidence=0.7)
+    run(tr, [det("QD", 50, 200, conf=0.55)], 10)
+    assert tr.round == []
+    run(tr, [det("QD", 50, 200, conf=0.9)], 4)
+    assert labels(tr) == ["QD"]
+
+
+def test_moving_card_is_confirmed_only_once_it_stops():
+    tr = CardTracker(confirm_frames=5, drop_frames=30, match_dist=40, confirm_window=5, still_distance=6)
+    for i in range(12):                 # slid 15 px a frame across the table
+        tr.update([det("8C", 50 + 15 * i, 200)])
+    assert tr.round == []
+    run(tr, [det("8C", 50 + 15 * 12, 200)], 5)
+    assert labels(tr) == ["8C"]
+    assert abs(tr.round[0].x - (50 + 15 * 12)) < 20  # counted where it landed
+
+
+def test_small_jitter_still_counts_as_held_still():
+    tr = CardTracker(confirm_frames=5, drop_frames=30, confirm_window=5, still_distance=6)
+    for dx, dy in [(0, 0), (2, -1), (-2, 1), (1, 2), (-1, -2)]:
+        tr.update([det("2H", 300 + dx, 200 + dy)])
+    assert labels(tr) == ["2H"]

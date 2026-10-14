@@ -11,7 +11,7 @@ Every event (placed, hidden, returned, round over) is printed as it happens, and
 appended to --log as CSV if given. Without a trained model it runs in capture
 mode: it shows the live feed and lets you press 's' to save frames for labelling.
 
-Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
+Keys: 1-7 number of players | e edit zones with the mouse (e again saves them) | l legend
       r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames | q quit
 The overlay is drawn by cardReader/hud.py, the seat layout by cardReader/seats.py.
 """
@@ -95,7 +95,10 @@ def main():
     W, H = cam.size
     print(f"source {args.source} at {W}x{H}")
     tracker = CardTracker(settings.CONFIRM_FRAMES, settings.DROP_FRAMES, settings.MATCH_DISTANCE * W,
-                          settings.ROUND_END_FRAMES)
+                          settings.ROUND_END_FRAMES, confirm_window=settings.CONFIRM_WINDOW,
+                          confirm_agreement=settings.CONFIRM_AGREEMENT,
+                          confirm_confidence=settings.CONFIRM_CONFIDENCE,
+                          still_distance=settings.STILL_DISTANCE * W)
     seats_file = settings.PROJECT_ROOT / settings.SEATS_FILE
     layout = SeatLayout.load(seats_file, W, H)  # zones edited earlier, if any
     if layout is None or (args.players is not None and args.players != layout.players):
@@ -167,6 +170,8 @@ def main():
                     editor.selected = None
                     print(f"zones saved to {settings.SEATS_FILE}")
                     hud.flash("zones saved")
+            elif k == ord("l"):
+                hud.show_legend = not hud.show_legend
             elif k == ord("r"):
                 tracker.new_round()
                 print("--- new round ---")

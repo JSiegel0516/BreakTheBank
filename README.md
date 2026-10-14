@@ -508,16 +508,37 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | Grey badge and name | a hidden card: covered right now, but still in the hand and in the count |
 | Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |
 | Thin grey boxes | detections the tracker has not confirmed yet (a card still moving, or a one-frame misread) |
+| Sidebar, bottom | the colour legend (`L` hides it) |
 | Bottom bar | the keys, and frames per second |
 
 The number is the placement order within the round: 1 is the first card
 confirmed (seen for `CONFIRM_FRAMES` frames in a row), 2 the next, and so on. A
 card that is covered keeps its number and comes back with it.
 
+### What the colours mean
+
+The same legend is shown at the bottom of the sidebar.
+
+| Colour | Where | Meaning |
+|---|---|---|
+| Red box or name | corner index, tags, sidebar | a confirmed heart or diamond (the suit colour, not an error) |
+| White box or name | same | a confirmed spade or club |
+| Amber box or name | same | a confirmed face-down card |
+| Thin grey box | corner index | something detected that has not passed the [confirmation checks](#rules-the-tracker-assumes) yet |
+| Yellow badge | tags, sidebar | the card's placement number |
+| Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand and the count |
+| Amber outline | zones | the dealer's zone |
+| Light blue outline | zones | a player's zone |
+| Yellow tint | zones, edit mode | the zone you last clicked |
+| Green or red count | sidebar | a positive (favours the player) or negative (favours the dealer) count |
+
+### Keys
+
 | Key | Action |
 |---|---|
 | `1` to `7` | number of players; the seat layout snaps to the template for that many seats |
 | `E` | edit zones with the mouse; press `E` again to save them and lock |
+| `L` | show or hide the colour legend |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
 | `S` | save the current frame to `data/raw/frames/` for labelling |
@@ -636,6 +657,16 @@ are rich in tens and aces. Face-down cards are counted when they are turned up.
 
 ### Rules the tracker assumes
 
+- **A card is only confirmed when it passes every check** (all in `settings.py`):
+
+  | Check | Setting | Stops |
+  |---|---|---|
+  | seen in `CONFIRM_FRAMES` of the last `CONFIRM_WINDOW` frames | 15 of 20 | flickering detections adding up over time |
+  | its most common name has `CONFIRM_AGREEMENT` of all reads | 80% | a card being counted under a disputed name |
+  | the model's average confidence is at least `CONFIRM_CONFIDENCE` | 0.7 | weak, borderline detections |
+  | the corner moved less than `STILL_DISTANCE` over those frames | 0.6% of the width | a card being counted while it is still being slid |
+
+  With the defaults a real card is confirmed about 0.7 s after it settles.
 - **One deck.** Two sightings of the same face are the same card. This merges a
   card's corner indices, stops a stray misread from adding a duplicate, and means
   a card is counted once per shoe even if it leaves and comes back.
@@ -659,8 +690,11 @@ All of these are in `settings.py`. Change one at a time and watch the effect.
 |---|---|---|
 | Cards are missed or take a long time to appear | lower `CONFIDENCE` (e.g. 0.4 to 0.3) | the model accepts less certain boxes |
 | Wrong or phantom cards appear | raise `CONFIDENCE` (e.g. 0.4 to 0.5) | only confident boxes count |
-| A card appears while it is still being slid into place | raise `CONFIRM_FRAMES` (e.g. 8 to 12) | it must be seen steady for longer |
-| Cards take too long to get their number | lower `CONFIRM_FRAMES` (e.g. 8 to 5) | confirms sooner, with more risk of flicker |
+| Phantom or wrong cards get confirmed | raise `CONFIRM_CONFIDENCE` (0.7 to 0.8) or `CONFIRM_AGREEMENT` (0.8 to 0.9) | only consistent, confident reads count |
+| A flickering detection still gets confirmed | raise `CONFIRM_FRAMES` closer to `CONFIRM_WINDOW` (e.g. 18 of 20) | it must be seen almost every frame |
+| A card is confirmed while still being slid | lower `STILL_DISTANCE` (0.006 to 0.004) | it must be stiller |
+| Real cards never get a number | lower `CONFIRM_CONFIDENCE` (to 0.6) or raise `STILL_DISTANCE` (to 0.01, a shaky camera) | a check is too strict for your setup |
+| Cards take too long to get their number | lower `CONFIRM_FRAMES` and `CONFIRM_WINDOW` together (e.g. 10 of 14) | confirms sooner, with more risk of flicker |
 | A covered card turns grey too quickly | raise `DROP_FRAMES` | it can stay hidden longer before it is marked hidden |
 | The round ends while cards are only covered | raise `ROUND_END_FRAMES` (e.g. 90 to 150) | the table must stay empty longer |
 | The next round starts too slowly after a sweep | lower `ROUND_END_FRAMES` | the empty table is noticed sooner |
