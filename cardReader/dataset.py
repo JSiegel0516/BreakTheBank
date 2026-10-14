@@ -2,7 +2,7 @@
 
   * Every subfolder of the labeled folder is a YOLO-format export (Roboflow or
     similar) with a data.yaml. Class ids are remapped by NAME to the order in
-    deck.py, so exports with different orderings combine cleanly. An export
+    deck.py, ignoring upper/lower case, so exports with different orderings combine cleanly. An export
     whose class names are mostly not cards (e.g. a rank/suit card-art export)
     is skipped with a warning, and so is an export whose boxes are whole cards
     rather than corner indices.
@@ -57,6 +57,7 @@ def import_export(export: Path, out: Path, prefix: str, val_frac: float):
     names = yaml.safe_load((export / "data.yaml").read_text())["names"]
     if isinstance(names, dict):
         names = [names[k] for k in sorted(names)]
+    names = [str(n).upper() for n in names]  # some exports write suits in lower case: 10h, Ks
     remap = {i: CLASS_TO_ID[n] for i, n in enumerate(names) if n in CLASS_TO_ID}
     if len(remap) < len(names) / 2:
         print(f"skip {export.name}: its classes are not card names ({names[:5]} ...)")
