@@ -8,6 +8,16 @@ python train.py     # teach the detector what cards look like, using everything 
 python read.py      # read cards off the table, in placement order
 ```
 
+## Quick start
+
+A trained model is included (`models/cards/weights/best.pt`), so the reader
+works straight after setup. Training is only needed to improve it.
+
+1. Set up the environment (see [Setup](#setup)).
+2. Point a camera straight down at the table (see [Setting up the camera](#setting-up-the-camera)).
+3. Run `python read.py` and place cards one at a time. Each gets a number in the order placed.
+4. Press `R` to reset the count between rounds, `Q` to quit.
+
 ## How it works
 
 ```
@@ -390,6 +400,45 @@ python read.py                          # the default camera
 python read.py --source round1.mp4      # a recorded video
 ```
 
+## Results: first full training run
+
+Trained on 2026-10-13 with the settings in
+[Training settings used](#training-settings-used-for-reports): 100 epochs, 4.5
+hours on an Apple M4 Pro. Early stopping never triggered; the validation score
+kept improving to the end. The model is `models/cards/weights/best.pt`.
+
+| Validation set | Images | Boxes | Precision | Recall | mAP50 | mAP50-95 |
+|---|---|---|---|---|---|---|
+| Full (real + synthetic) | 514 | 6,309 | 0.979 | 0.977 | 0.989 | 0.758 |
+| **Real photos only** | 201 | 2,728 | **0.974** | **0.977** | **0.984** | **0.559** |
+
+The real-photo row is the honest score. mAP50-95 is lower there because it
+rewards pixel-exact boxes, and hand-drawn labels are looser than synthetic ones;
+the card names themselves are right almost every time.
+
+What happened to the 2,728 labelled corner indices in the real validation photos:
+
+| Outcome | Count | Share |
+|---|---|---|
+| Found and named correctly | 2,676 | 98.1% |
+| Found but named wrongly | 35 | 1.3% |
+| Missed | 17 | 0.6% |
+
+The model also drew 84 boxes where no corner was labelled. Some are real
+corners that were missed during labelling rather than true mistakes.
+
+Most wrong names keep the rank and swap the suit for one of the same colour:
+10H read as 10D (4 times), QS as QC (3), and single cases of QD/QH, JS/JC, JD/JH.
+The rest are similar-looking ranks: 9H as 6H (a card seen upside down), 7D as 9D,
+3D as 2D. The weakest cards on real photos are KD, 10D, and 3H (mAP50 about 0.93);
+more labelled photos of red cards would help most.
+
+Speed: about 1.2 ms of model time per 1024-pixel image on the M4 Pro GPU, about
+7 ms including pre- and post-processing.
+
+To reproduce the real-photo numbers, see [Validate a model on its own](#5-validate-a-model-on-its-own).
+The charts are in `models/valReal/` after running it.
+
 ## Improving the model
 
 Real frames from your own table improve the model more than anything else:
@@ -404,6 +453,28 @@ Other levers, in `settings.py` or as flags:
 - `--epochs 150` if the validation scores are still rising at the end.
 - `--base yolo11s.pt` for a bigger model: more accurate, slower.
 - `BATCH_SIZE = 4` if training runs out of memory.
+
+### Using your own deck for synthetic images
+
+The 2,000 synthetic images are made by pasting card pictures from
+`data/raw/cardArt/` onto table backgrounds. The pictures there come from this
+project's deck. To use a different deck, or to add the card back:
+
+1. Photograph each card flat and straight down, one card per photo, on a
+   coloured background (not white, so the card's edge stands out).
+2. In Roboflow, draw one box around the whole card (class `cards`), one around
+   the rank (`A`, `2` ... `K`), and one around the suit (`c`, `d`, `h`, `s`).
+   For card backs, draw only the `cards` box and name the photo `BACK_1`,
+   `BACK_2`, and so on.
+3. Export as YOLOv11 to any folder outside `data/raw/labeled/`, then run:
+   ```bash
+   python train.py --extract-art <export folder>
+   ```
+   It straightens each card into `data/raw/cardArt/<card>.png` and measures where
+   the corner index sits (`indexRect.json`).
+4. Optionally put a few photos of your empty table in `data/raw/backgrounds/`.
+   Without them, plain felt colours are drawn.
+5. `python train.py --rebuild` to make new synthetic images and train.
 
 ### Training on Google Colab
 
@@ -460,13 +531,48 @@ and on quitting the full sequence is printed: `placed in order: KH 7D`.
 macOS asks for camera permission the first time OpenCV opens a camera from a
 terminal or VS Code. Grant it under System Settings > Privacy & Security > Camera.
 
-### Camera notes
+### Setting up the camera
 
-- Mount the camera directly overhead so every card is the same size.
-- Lock exposure, white balance, and focus so the image does not drift.
-- Sony a6700: HDMI capture card, clean HDMI output, manual everything, auto power-off disabled.
-- At 4K over a whole table, raise `INPUT_SIZE` in `settings.py` to 1280 or 1600
-  so the corner indices stay readable.
+**Placement**
+
+- Mount the camera directly overhead, pointing straight down, so every card is
+  the same size and roughly upright. A phone arm, a ring-light stand with a phone
+  clamp, or a tripod with a horizontal arm all work.
+- Fill the frame with the playing area. The corner indices need to be at least
+  about 20 pixels tall in the image; at 1080p that means the camera roughly 50 to
+  80 cm above a small table.
+- Light the table evenly. Avoid a bright lamp reflecting off the cards (glare
+  hides the index) and strong shadows from your hands.
+- Keep the camera still. Bumping it moves every card at once, and the tracker
+  may count them as new cards.
+
+**iPhone as a wireless webcam (Continuity Camera)**
+
+1. iPhone XR or newer on iOS 16+, signed into the same Apple ID as the Mac, with
+   Wi-Fi and Bluetooth on for both.
+2. On the iPhone: Settings > General > AirPlay & Continuity > Continuity Camera on.
+3. Mount the phone with the rear camera facing the table, lock its screen, and
+   keep it still and near the Mac. It switches into webcam mode on its own.
+4. Run `python read.py --source 0`. OpenCV usually numbers the iPhone 0 and the
+   built-in camera 1; if the wrong one opens, try the other number. Then set
+   `CAMERA_SOURCE` in `settings.py` so plain `python read.py` uses it.
+5. Keep the phone on a charger. If the wireless feed stutters, plug it into the
+   Mac with a cable; it works the same way.
+
+**Camera permission (macOS).** The first time, macOS asks whether Terminal or
+VS Code may use the camera. If you missed it, the window stays black: allow it
+under System Settings > Privacy & Security > Camera, then restart the terminal.
+
+**Sony a6700 (for a full table)**
+
+- Connect it through an HDMI capture card. Turn on clean HDMI output (no
+  on-screen menus) and turn off auto power-off.
+- Set exposure, white balance, and focus to manual so the image does not drift
+  when hands move through the frame.
+- Pass the capture card's number as `--source`, and set `CAMERA_WIDTH` and
+  `CAMERA_HEIGHT` in `settings.py` if it does not default to the resolution you want.
+- At 4K over a whole table, raise `INPUT_SIZE` to 1600 or more so the corner
+  indices stay readable. It is slower; check the fps in the bottom bar.
 
 ### Rules the tracker assumes
 
@@ -475,6 +581,57 @@ terminal or VS Code. Grant it under System Settings > Privacy & Security > Camer
 - Every face-down card (BACK) is a separate card.
 - A card turned face up in place (a dealer's hole card) keeps its BACK label
   for a while, because the label is a vote over every frame it has been seen.
+
+## Tuning the reader
+
+All of these are in `settings.py`. Change one at a time and watch the effect.
+
+| If you see this | Change | Why |
+|---|---|---|
+| Cards are missed or take a long time to appear | lower `CONFIDENCE` (e.g. 0.4 to 0.3) | the model accepts less certain boxes |
+| Wrong or phantom cards appear | raise `CONFIDENCE` (e.g. 0.4 to 0.5) | only confident boxes count |
+| A card appears while it is still being slid into place | raise `CONFIRM_FRAMES` (e.g. 8 to 12) | it must be seen steady for longer |
+| Cards take too long to get their number | lower `CONFIRM_FRAMES` (e.g. 8 to 5) | confirms sooner, with more risk of flicker |
+| A hand passing over removes cards | raise `DROP_FRAMES` (e.g. 30 to 60) | a card can stay hidden longer before it counts as removed |
+| Picking a card up takes too long to register | lower `DROP_FRAMES` | removal is noticed sooner |
+| One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
+| Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
+| The video is choppy (low fps) | lower `INPUT_SIZE` (e.g. 1280 to 960) | less work per frame |
+
+`CONFIRM_FRAMES` and `DROP_FRAMES` are counted in frames, so at 30 fps, 30
+frames is one second. If the fps is much lower, scale them down to match.
+
+## Troubleshooting
+
+| Problem | Likely cause | Fix |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'cv2'` | another virtual environment is active | `deactivate`, then `source .venv/bin/activate` inside `Blackjack_Project`; check `which python` |
+| Reader window is black | camera permission not granted | System Settings > Privacy & Security > Camera, allow Terminal or VS Code, restart it |
+| Wrong camera opens | camera numbers differ from what you expected | try `--source 0`, `1`, `2` |
+| `Could not open video source` | the camera is in use or not connected | close other apps using it (FaceTime, Zoom, Photo Booth); wake the iPhone camera |
+| Bottom bar says CAPTURE MODE | no model at `MODEL_PATH` | check `models/cards/weights/best.pt` exists, or train one |
+| Cards on screen but none get a number | detections too weak, or the camera is too far | see [Tuning the reader](#tuning-the-reader); move the camera closer |
+| Keys do nothing | the terminal has focus, not the window | click the reader window first |
+| The window close button does not quit | OpenCV reopens the window | press `Q`, or Ctrl+C in the terminal |
+| Training stops with an out-of-memory error | batch too large for the GPU | `BATCH_SIZE = 4` in `settings.py` |
+| Training reports `device=cpu` and is very slow | wrong environment, or no GPU support | activate this project's `.venv`; on a Mac check `python -c "import torch; print(torch.backends.mps.is_available())"` |
+| An export says `skip ... boxes are whole cards` | it is labelled around whole cards, not corners | relabel the corners in Roboflow and export again |
+| `yolo val` results end up in `runs/detect/` | relative `project=` path | use `project="$PWD/models"` as in the commands above |
+
+## Known limitations
+
+- **One deck.** Two sightings of the same face are treated as one card, so a
+  shoe with several decks would merge real duplicates.
+- **Face-down cards.** All `BACK` training examples are synthetic, drawn with a
+  placeholder design. Photograph your deck's back (see
+  [Using your own deck](#using-your-own-deck-for-synthetic-images)) before relying on it.
+- **A card flipped over in place** (a dealer's hole card) keeps its `BACK` label
+  for a while, because the label is a vote over every frame it has been seen.
+- **Same-colour suits** are the most common confusion (see [Results](#results-first-full-training-run)).
+- **No frame tiling.** A 4K frame is shrunk to `INPUT_SIZE` before detection, so
+  very small indices at a large table may be lost.
+- **The validation set includes synthetic images**, which makes the full score
+  optimistic; report the real-photo score.
 
 ## Glossary
 
