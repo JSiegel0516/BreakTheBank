@@ -1,10 +1,19 @@
 .venv/
 __pycache__/
 .pytest_cache/
-*.pt
 *.log
 .DS_Store
-models/
+
+# Training output: keep only the trained model read.py uses
+*.pt
+models/*
+!models/cards/
+models/cards/*
+!models/cards/weights/
+models/cards/weights/*
+!models/cards/weights/best.pt
+
+# Generated or downloaded data (rebuilt by train.py, labeled exports live in Roboflow)
 data/dataset/
 data/raw/labeled/
 data/raw/frames/
