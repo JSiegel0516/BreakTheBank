@@ -56,7 +56,8 @@ Blackjack_Project/
 │   ├── deck.py               the 53 class labels (52 faces + BACK)
 │   ├── dataset.py            combines data/raw into data/dataset          (used by train.py)
 │   ├── synthetic.py          renders card art onto tables as extra data    (used by train.py)
-│   └── cardArt.py            crops photos of your deck into card art       (train.py --extract-art)
+│   ├── cardArt.py            crops photos of your deck into card art       (train.py --extract-art)
+│   └── autolabel.py          fills in corners an export left unlabelled    (train.py --complete-corners)
 ├── tests/
 │   ├── test_tracker.py       placement order, hidden cards, rounds, shoes
 │   ├── test_blackjack.py     hand totals, Hi-Lo, seat layout
