@@ -19,6 +19,7 @@ data/seats.json
 # Generated or downloaded data (rebuilt by train.py, labeled exports live in Roboflow)
 data/dataset/
 data/raw/labeled/
+data/raw/unused/
 data/raw/frames/
 data/merged/
 data/synthetic/

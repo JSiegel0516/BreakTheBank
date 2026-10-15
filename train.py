@@ -2,10 +2,12 @@
 
     python train.py                        # build data/dataset if missing, then train
     python train.py --rebuild              # rebuild data/dataset first (after adding data)
-    python train.py --epochs 150 --base yolo11s.pt
+    python train.py --epochs 150 --base yolo11s.pt --name s150   # an experiment, kept in models/s150/
     python train.py --extract-art data/raw/myDeckExport   # one-off: photos of your deck -> data/raw/cardArt
+    python train.py --complete-corners data/raw/unused/cards  # add unlabelled corners using the current model
 
-Weights land in models/cards/weights/best.pt, which is what read.py loads.
+Weights land in models/cards/weights/best.pt, which is what read.py loads. Use
+--name to keep an experiment separate, e.g. --name n150 -> models/n150/.
 On a Mac the Apple GPU is used automatically. A Google Colab GPU is a few
 times faster for long runs: upload the project and run the same command there.
 """
@@ -14,7 +16,7 @@ from __future__ import annotations
 import argparse
 
 import settings
-from cardReader import cardArt, dataset
+from cardReader import autolabel, cardArt, dataset
 
 ROOT = settings.PROJECT_ROOT
 
@@ -28,9 +30,15 @@ def main():
     ap.add_argument("--patience", type=int, default=settings.PATIENCE, help="epochs without improvement before stopping")
     ap.add_argument("--imgsz", type=int, default=settings.TRAIN_INPUT_SIZE)
     ap.add_argument("--batch", type=int, default=settings.BATCH_SIZE)
+    ap.add_argument("--name", default="cards", help="run name: output goes to models/<name>/. read.py uses models/cards")
     ap.add_argument("--extract-art", metavar="EXPORT", help="make card art from a one-card-per-photo export, then stop")
+    ap.add_argument("--complete-corners", metavar="EXPORT",
+                    help="label the corners an export left out, using the current model, then stop")
     args = ap.parse_args()
 
+    if args.complete_corners:
+        autolabel.complete_corners(args.complete_corners, ROOT / settings.LABELED_DIR, str(ROOT / settings.MODEL_PATH))
+        return
     if args.extract_art:
         cardArt.extract_card_art(args.extract_art, ROOT / settings.CARD_ART_DIR)
         return
@@ -48,7 +56,7 @@ def main():
     base = models_dir / args.base
     model = YOLO(str(base) if base.exists() else args.base)
     model.train(data=str(data_dir / "data.yaml"), epochs=args.epochs, patience=args.patience, imgsz=args.imgsz, batch=args.batch,
-                device=device, name="cards", project=str(models_dir), exist_ok=True,
+                device=device, name=args.name, project=str(models_dir), exist_ok=True,
                 # Cards are never mirrored, so disable flips; keep rotation and colour jitter.
                 fliplr=0.0, flipud=0.0, degrees=15, hsv_v=0.4)
     print("best weights:", model.trainer.best)
