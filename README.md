@@ -79,11 +79,14 @@ Blackjack_Project/
 │       ├── images/{train,val}/
 │       └── labels/{train,val}/
 └── models/
-    └── cards/                written by train.py
-        ├── weights/best.pt   the model read.py uses
-        ├── weights/last.pt   the latest epoch, for resuming
-        ├── results.csv       one row of scores per epoch
-        └── *.png, *.jpg      charts and example predictions
+    ├── cards/                the live model: what read.py uses (weights/best.pt is in git)
+    │   ├── weights/best.pt   the epoch with the best validation score
+    │   ├── weights/last.pt   the latest epoch, for resuming
+    │   ├── results.csv       one row of scores per epoch
+    │   └── *.png, *.jpg      charts and example predictions
+    ├── model_1_2026-09-17/   one folder per trained model, numbered and dated,
+    ├── model_2_2026-10-13/   each with its charts, logs, and a notes.txt
+    └── yolo11n.pt            pretrained starting weights (yolo11s.pt is downloaded here too)
 ```
 
 ## Setup
@@ -481,21 +484,27 @@ scaled to the export's own box size. Check `preview/` (green = original,
 magenta = added) before training. The original stays in `data/raw/unused/`,
 which is never trained on.
 
-### Comparing two models
+### Comparing models
 
-Give each experiment its own name so it does not overwrite the model `read.py`
-uses, then score every model on the same real-photo exam:
+Every trained model gets its own numbered, dated folder in `models/`, named
+with `--name`, so an experiment never overwrites the live model in
+`models/cards/`. Write a `notes.txt` in it with what was tried and the scores.
 
 ```bash
-caffeinate -i python train.py --rebuild --epochs 150 --name n150
-caffeinate -i python train.py --epochs 150 --base yolo11s.pt --name s150
-yolo val model=models/n150/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=val_n150
-yolo val model=models/s150/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=val_s150
+caffeinate -i python train.py --rebuild --epochs 150 --name model_3_2026-10-15_n150
+caffeinate -i python train.py --epochs 150 --base yolo11s.pt --name model_4_2026-10-16_s150
+```
+
+Then score every model on the same real-photo exam:
+
+```bash
+yolo val model=models/model_2_2026-10-13/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=model_2_2026-10-13/valNew
+yolo val model=models/model_3_2026-10-15_n150/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=model_3_2026-10-15_n150/valReal
 ```
 
 Scores are only comparable on the same validation set, so after `--rebuild`
-re-score the old model on the new `realVal.yaml` too. To use the winner, copy
-its `weights/best.pt` to `models/cards/weights/best.pt`.
+re-score the older models on the new `realVal.yaml` too. To make the winner the
+live model, copy its `weights/best.pt` to `models/cards/weights/best.pt`.
 
 ### Using your own deck for synthetic images
 
