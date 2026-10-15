@@ -412,7 +412,7 @@ python read.py                          # the default camera
 python read.py --source round1.mp4      # a recorded video
 ```
 
-## Results: first full training run
+## Results: first full training run (model 2)
 
 Trained on 2026-10-13 with the settings in
 [Training settings used](#training-settings-used-for-reports): 100 epochs, 4.5
@@ -450,6 +450,30 @@ Speed: about 1.2 ms of model time per 1024-pixel image on the M4 Pro GPU, about
 
 To reproduce the real-photo numbers, see [Validate a model on its own](#5-validate-a-model-on-its-own).
 The charts are in `models/valReal/` after running it.
+
+## Results: second training run (live model)
+
+Model 3 (`models/model_3_2026-10-14_n150`, now `models/cards`): YOLO11n trained
+on 1,854 real photos (the two earlier exports plus 852 composited Roboflow
+photos whose missing corners were filled in with `--complete-corners`) and
+2,000 synthetic images. Early stopping ended it at epoch 110 of 150, best epoch
+90, after 6.1 hours.
+
+Both models scored on the same real-photo validation set (320 images):
+
+| Validation subset | Images | Model 2 (first run) | Model 3 (second run) |
+|---|---|---|---|
+| All real photos | 320 | mAP50 0.969, mAP50-95 0.501, 95.3% corners right | **mAP50 0.981, mAP50-95 0.626, 98.4% right** |
+| Table photos (same 201 as the first run) | 201 | mAP50 0.984, mAP50-95 0.559, 98.1% right | **mAP50 0.986, mAP50-95 0.572, 98.5% right** |
+| Composited photos (new style) | 119 | mAP50 0.845, mAP50-95 0.311, 84.7% right | **mAP50 0.975, mAP50-95 0.842, 98.1% right** |
+
+On the table photos the gain is small but consistent (29 wrong names instead of
+35, 11 missed corners instead of 17). On photos unlike its training data the new
+model is far better, which suggests it copes much better with unfamiliar
+backgrounds and lighting. About a third of the composited corner labels were
+drawn by model 2, so model 3's mAP50-95 on that subset partly measures agreement
+with those boxes. Remaining confusions are mostly same-rank, same-colour suits
+(10H read as 10D) and similar faces (QH as JH). Each model's `notes.txt` has the details.
 
 ## Improving the model
 
