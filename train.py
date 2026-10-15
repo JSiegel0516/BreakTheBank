@@ -14,6 +14,7 @@ times faster for long runs: upload the project and run the same command there.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import settings
 from cardReader import autolabel, cardArt, dataset
@@ -53,8 +54,9 @@ def main():
 
     device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
     models_dir = ROOT / settings.MODELS_DIR
-    base = models_dir / args.base
-    model = YOLO(str(base) if base.exists() else args.base)
+    # A bare name such as yolo11s.pt is downloaded into models/ the first time, not into the current folder.
+    base = Path(args.base) if Path(args.base).parent != Path(".") else models_dir / args.base
+    model = YOLO(str(base))
     model.train(data=str(data_dir / "data.yaml"), epochs=args.epochs, patience=args.patience, imgsz=args.imgsz, batch=args.batch,
                 device=device, name=args.name, project=str(models_dir), exist_ok=True,
                 # Cards are never mirrored, so disable flips; keep rotation and colour jitter.
