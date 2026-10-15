@@ -606,7 +606,7 @@ The same legend is shown at the bottom of the sidebar.
 
 | Key | Action |
 |---|---|
-| `1` to `7` | number of players; the seat layout snaps to the template for that many seats |
+| `1` to `7` | number of players; loads your saved layout for that count, or the template |
 | `E` | edit zones with the mouse; press `E` again to save them and lock |
 | `L` | show or hide the colour legend |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept |
@@ -693,20 +693,28 @@ seat is listed as OTHER. Point the camera so the dealer's side of the table is
 at the top of the image.
 
 **Adjusting the zones.** If the template does not fit your table, press `E`.
-Every zone gets a white handle on each corner:
+Every zone gets a white handle on each corner and a yellow `+` at the middle of
+each edge:
 
 | Mouse | Effect |
 |---|---|
-| drag a corner handle | moves that corner anywhere; the other three stay put |
+| drag a corner handle | moves that corner anywhere; the others stay put |
+| drag a `+` | adds a corner there and moves it, so a zone can follow a curved or angled seat (a click without dragging adds nothing) |
+| right-click a corner | removes it (a zone keeps at least 3 corners) |
 | drag inside a zone | moves the whole zone, keeping its shape |
-| right-click a zone | resets it to the template shape |
+| right-click inside a zone | resets it to the template shape, removing added corners |
 
-Press `E` again to save the zones to `data/seats.json` and lock them. They are
-loaded the next time the reader starts, with their player count, and work at any
-camera resolution. Pressing `1` to `7` goes back to the template for that player
-count (the saved file is kept until you save again). To start from the template
-at launch, pass `--players`, or delete `data/seats.json`. Cards keep being read
-while you edit, and each card's seat follows the zones as you move them.
+Press `E` again to save and lock. Layouts are saved to `data/seats.json`, **one
+per player count**, and work at any camera resolution:
+
+- Pressing `1` to `7` brings back your saved layout for that count, or the
+  template if you never saved one.
+- At start-up the reader opens the player count you saved last, with its layout.
+  `--players 3` starts with 3 players instead (their saved layout, or the template).
+- With nothing saved yet, it starts with `PLAYERS` from `settings.py` (5).
+- Delete `data/seats.json` to forget every saved layout.
+
+Cards keep being read while you edit, and each card's seat follows the zones as you move them.
 
 **Hands.** Each seat's cards make one hand. Aces count 11 unless that busts,
 then 1. Face-down cards are left out of the total and shown as `+1 hidden`.
@@ -792,7 +800,7 @@ frames is one second. If the fps is much lower, scale them down to match.
 | Training stops with an out-of-memory error | batch too large for the GPU | `BATCH_SIZE = 4` in `settings.py` |
 | Training reports `device=cpu` and is very slow | wrong environment, or no GPU support | activate this project's `.venv`; on a Mac check `python -c "import torch; print(torch.backends.mps.is_available())"` |
 | An export says `skip ... boxes are whole cards` | it is labelled around whole cards, not corners | relabel the corners in Roboflow and export again |
-| Zones in odd places after starting | an old `data/seats.json` was loaded | press `1` to `7` for the template, or delete `data/seats.json` |
+| Zones in odd places after starting | a layout saved earlier was loaded | press `E`, then right-click inside each zone to reset it, or delete `data/seats.json` |
 | Dragging misses the handles after resizing the window | the window is scaled | make the window its original size, or grab slightly inside the handle |
 | `yolo val` results end up in `runs/detect/` | relative `project=` path | use `project="$PWD/models"` as in the commands above |
 

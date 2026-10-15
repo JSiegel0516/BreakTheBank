@@ -7,9 +7,11 @@ face the dealer. The layout is rebuilt whenever the player count changes (keys
 1-7 in read.py), so nothing has to be drawn by hand.
 
 Any zone can then be adjusted with the mouse in edit mode (ZoneEditor, key E in
-read.py): drag a corner, drag the whole zone, or right-click it to reset it to
-the template. Edited layouts are saved to data/seats.json as fractions of the
-frame, so they work at any camera resolution.
+read.py): drag a corner, drag a '+' at the middle of an edge to add a corner,
+right-click a corner to remove it, drag inside to move the whole zone, or
+right-click inside to reset it to the template. Edited layouts are saved to
+data/seats.json, one per player count, as fractions of the frame so they work
+at any camera resolution.
 
     +------------------------------------+
     |        [      DEALER      ]        |
@@ -43,7 +45,7 @@ SEAT_WIDTH_MAX = 0.20                   # fraction of frame width, shrinks as pl
 @dataclass
 class Seat:
     name: str
-    polygon: np.ndarray  # pixel corners, int32, shape (4, 2)
+    polygon: np.ndarray  # pixel corners, int32, shape (n, 2); 4 from the template, more once edited
 
 
 class SeatLayout:
@@ -76,22 +78,36 @@ class SeatLayout:
         return SeatLayout(self.players, width, height, [s.polygon * [sx, sy] for s in self.seats])
 
     def save(self, path: str | Path):
+        """Store this layout under its player count, keeping layouts saved for other counts."""
+        path = Path(path)
         W, H = self.width, self.height
-        data = {"players": self.players,
-                "seats": [{"name": s.name, "polygon": [[round(x / W, 5), round(y / H, 5)] for x, y in s.polygon]}
-                          for s in self.seats]}
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps(data, indent=2))
+        data = self._read(path)
+        data["layouts"][str(self.players)] = [
+            {"name": s.name, "polygon": [[round(x / W, 5), round(y / H, 5)] for x, y in s.polygon]}
+            for s in self.seats]
+        data["last"] = self.players
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2))
 
     @classmethod
-    def load(cls, path: str | Path, width: int, height: int) -> "SeatLayout | None":
-        """The layout saved at path, scaled to this frame size, or None if there is none."""
-        path = Path(path)
-        if not path.exists():
+    def load(cls, path: str | Path, width: int, height: int, players: int | None = None) -> "SeatLayout | None":
+        """The layout saved for `players` (default: the count saved last), scaled to this
+        frame size, or None if nothing was saved for that count."""
+        data = cls._read(Path(path))
+        players = players or data.get("last")
+        seats = data["layouts"].get(str(players))
+        if seats is None:
             return None
+        return cls(players, width, height, [[(x * width, y * height) for x, y in s["polygon"]] for s in seats])
+
+    @staticmethod
+    def _read(path: Path) -> dict:
+        if not path.exists():
+            return {"last": None, "layouts": {}}
         data = json.loads(path.read_text())
-        polys = [[(x * width, y * height) for x, y in s["polygon"]] for s in data["seats"]]
-        return cls(data["players"], width, height, polys)
+        if "layouts" not in data:  # the first file format held a single layout
+            data = {"last": data["players"], "layouts": {str(data["players"]): data["seats"]}}
+        return data
 
     def _dealer(self) -> np.ndarray:
         x1, y1, x2, y2 = DEALER_BOX
@@ -121,19 +137,29 @@ class ZoneEditor:
     """Adjust seat zones with the mouse while the reader runs.
 
     Only active while `active` is True (key E in read.py):
-      * left-drag a corner handle: move that corner anywhere, the others stay put
+      * left-drag a corner: move that corner anywhere, the others stay put
+      * left-drag a '+' at the middle of an edge: add a corner there and move it
+        (a click without dragging adds nothing)
       * left-drag inside a zone: move the whole zone
-      * right-click a zone: reset it to the template shape
+      * right-click a corner: remove it (a zone keeps at least 3 corners)
+      * right-click inside a zone: reset it to the template shape
     Pass on_mouse to cv2.setMouseCallback. Clicks beyond the video (on the sidebar) are ignored."""
+
+    MIN_CORNERS = 3
 
     def __init__(self, layout: SeatLayout):
         self.layout = layout
         self.active = False
         self.selected: int | None = None   # index of the zone last clicked, for highlighting
-        self._drag: tuple | None = None    # (seat index, corner index or None, last x, last y)
+        self._drag: tuple | None = None    # (seat index, what, last x, last y); what = corner index, ("mid", edge) or None
 
     def handle_radius(self) -> int:
         return max(12, round(18 * self.layout.width / 1600))
+
+    @staticmethod
+    def midpoints(polygon: np.ndarray) -> np.ndarray:
+        """Middle of each edge; edge i runs from corner i to corner i + 1."""
+        return ((polygon + np.roll(polygon, -1, axis=0)) / 2).astype(np.int32)
 
     def on_mouse(self, event, x, y, flags=0, param=None):
         if not self.active:
@@ -148,34 +174,49 @@ class ZoneEditor:
             self.selected = hit[0] if hit else None
             self._drag = (*hit, x, y) if hit else None
         elif event == cv2.EVENT_MOUSEMOVE and self._drag is not None:
-            seat, corner, lx, ly = self._drag
-            poly = self.layout.seats[seat].polygon
-            if corner is not None:
-                poly[corner] = (x, y)
+            seat_i, what, lx, ly = self._drag
+            seat = self.layout.seats[seat_i]
+            if isinstance(what, tuple):  # first move on a '+': the new corner is born here
+                what = what[1] + 1
+                seat.polygon = np.insert(seat.polygon, what, (x, y), axis=0)
+            if what is not None:
+                seat.polygon[what] = (x, y)
             else:
+                poly = seat.polygon
                 dx = int(np.clip(x - lx, -poly[:, 0].min(), W - 1 - poly[:, 0].max()))
                 dy = int(np.clip(y - ly, -poly[:, 1].min(), H - 1 - poly[:, 1].max()))
                 poly += (dx, dy)
                 x, y = lx + dx, ly + dy
-            self._drag = (seat, corner, x, y)
+            self._drag = (seat_i, what, x, y)
         elif event == cv2.EVENT_LBUTTONUP:
             self._drag = None
         elif event == cv2.EVENT_RBUTTONDOWN:
             hit = self._hit(x, y)
-            if hit:
-                self.layout.seats[hit[0]].polygon = self.layout.template(hit[0])
-                self.selected = hit[0]
+            if hit is None:
+                return
+            seat_i, what = hit
+            seat = self.layout.seats[seat_i]
+            if isinstance(what, int):
+                if len(seat.polygon) > self.MIN_CORNERS:
+                    seat.polygon = np.delete(seat.polygon, what, axis=0)
+            else:
+                seat.polygon = self.layout.template(seat_i)
+            self.selected = seat_i
 
-    def _hit(self, x, y) -> tuple[int, int | None] | None:
-        """(seat index, corner index) for a corner handle under (x, y), else (seat index, None)
-        for a zone containing it, else None. Corners win over zone interiors, and player seats
-        over the dealer, so a handle can always be grabbed."""
+    def _hit(self, x, y):
+        """What is under (x, y): (seat, corner index) for a corner, (seat, ("mid", edge)) for a '+',
+        (seat, None) inside a zone, or None. Corners win over '+' handles, '+' handles over zone
+        interiors, and player seats over the dealer, so a handle can always be grabbed."""
         r = self.handle_radius()
         order = list(range(len(self.layout.seats)))[::-1]
         for i in order:
             d = np.hypot(*(self.layout.seats[i].polygon - (x, y)).T)
             if d.min() <= r:
                 return i, int(d.argmin())
+        for i in order:
+            d = np.hypot(*(self.midpoints(self.layout.seats[i].polygon) - (x, y)).T)
+            if d.min() <= r:
+                return i, ("mid", int(d.argmin()))
         for i in order:
             poly = self.layout.seats[i].polygon.reshape(-1, 1, 2)
             if cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0:

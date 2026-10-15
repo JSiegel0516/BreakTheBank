@@ -107,3 +107,102 @@ def test_resized_scales_every_zone():
     small = layout.resized(W // 2, H // 2)
     for a, b in zip(layout.seats, small.seats):
         assert np.abs(b.polygon * 2 - a.polygon).max() <= 2
+
+
+# ------------------------------------------------------------ adding and removing corners
+
+
+def test_drag_a_midpoint_adds_a_corner_there():
+    e = editor()
+    p1 = e.layout.seats[1]
+    before = p1.polygon.copy()
+    mid = tuple(int(v) for v in ZoneEditor.midpoints(before)[1])  # middle of the edge from corner 1 to 2
+    drag(e, mid, (mid[0] + 80, mid[1] + 20))
+    assert len(p1.polygon) == 5
+    assert tuple(p1.polygon[2]) == (mid[0] + 80, mid[1] + 20)  # the new corner sits between old corners 1 and 2
+    assert np.array_equal(np.delete(p1.polygon, 2, axis=0), before)
+
+
+def test_clicking_a_midpoint_without_dragging_adds_nothing():
+    e = editor()
+    p1 = e.layout.seats[1]
+    mid = tuple(int(v) for v in ZoneEditor.midpoints(p1.polygon)[0])
+    e.on_mouse(DOWN, *mid)
+    e.on_mouse(UP, *mid)
+    assert len(p1.polygon) == 4
+
+
+def test_midpoint_of_the_last_edge_inserts_before_the_first_corner():
+    e = editor()
+    dealer = e.layout.seats[0]
+    mid = tuple(int(v) for v in ZoneEditor.midpoints(dealer.polygon)[3])  # edge from corner 3 back to corner 0
+    drag(e, mid, (mid[0] - 30, mid[1]))
+    assert len(dealer.polygon) == 5 and tuple(dealer.polygon[4]) == (mid[0] - 30, mid[1])
+
+
+def test_right_click_a_corner_removes_it_but_keeps_three():
+    e = editor()
+    p2 = e.layout.seats[2]
+    for expected in (3, 3):  # 4 -> 3, then a 3-corner zone keeps its corners
+        corner = tuple(int(v) for v in p2.polygon[0])
+        e.on_mouse(RIGHT, *corner)
+        assert len(p2.polygon) == expected
+
+
+def test_right_click_inside_resets_added_corners_too():
+    e = editor()
+    p2 = e.layout.seats[2]
+    template = p2.polygon.copy()
+    mid = tuple(int(v) for v in ZoneEditor.midpoints(template)[0])
+    drag(e, mid, (mid[0], mid[1] - 60))
+    assert len(p2.polygon) == 5
+    cx, cy = (int(v) for v in template.mean(axis=0))
+    e.on_mouse(RIGHT, cx, cy)
+    assert np.array_equal(p2.polygon, template)
+
+
+def test_corner_wins_over_a_nearby_midpoint():
+    e = editor()
+    p1 = e.layout.seats[1]
+    corner = tuple(int(v) for v in p1.polygon[0])
+    assert e._hit(*corner) == (1, 0)
+
+
+# ------------------------------------------------------------ one saved layout per player count
+
+
+def test_each_player_count_keeps_its_own_layout(tmp_path):
+    path = tmp_path / "seats.json"
+    five = editor(players=5)
+    c = tuple(int(v) for v in five.layout.seats[1].polygon[0])
+    drag(five, c, (c[0] + 40, c[1]))
+    five.layout.save(path)
+    three = editor(players=3)
+    c = tuple(int(v) for v in three.layout.seats[2].polygon[0])
+    drag(three, c, (c[0], c[1] + 40))
+    three.layout.save(path)
+
+    again5 = SeatLayout.load(path, W, H, players=5)
+    assert np.abs(again5.seats[1].polygon - five.layout.seats[1].polygon).max() <= 1
+    again3 = SeatLayout.load(path, W, H, players=3)
+    assert np.abs(again3.seats[2].polygon - three.layout.seats[2].polygon).max() <= 1
+    assert SeatLayout.load(path, W, H, players=4) is None   # never saved: caller uses the template
+    assert SeatLayout.load(path, W, H).players == 3         # no count given: the one saved last
+
+
+def test_added_corners_survive_save_and_load(tmp_path):
+    e = editor(players=2)
+    mid = tuple(int(v) for v in ZoneEditor.midpoints(e.layout.seats[1].polygon)[2])
+    drag(e, mid, (mid[0] + 25, mid[1] + 25))
+    e.layout.save(tmp_path / "seats.json")
+    loaded = SeatLayout.load(tmp_path / "seats.json", W, H)
+    assert len(loaded.seats[1].polygon) == 5
+
+
+def test_old_single_layout_file_still_loads(tmp_path):
+    path = tmp_path / "seats.json"
+    old = {"players": 4, "seats": [{"name": s.name, "polygon": (s.polygon / [W, H]).tolist()}
+                                   for s in SeatLayout(4, W, H).seats]}
+    path.write_text(__import__("json").dumps(old))
+    loaded = SeatLayout.load(path, W, H)
+    assert loaded.players == 4 and len(loaded.seats) == 5

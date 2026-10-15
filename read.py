@@ -75,7 +75,7 @@ def main():
     ap.add_argument("--width", type=int, default=settings.CAMERA_WIDTH)
     ap.add_argument("--height", type=int, default=settings.CAMERA_HEIGHT)
     ap.add_argument("--players", type=int, default=None,
-                    help=f"player seats, 1 to {MAX_PLAYERS} (default: the saved zones, else PLAYERS in settings.py)")
+                    help=f"player seats, 1 to {MAX_PLAYERS} (default: the count used last, else PLAYERS in settings.py)")
     ap.add_argument("--log", default=None, help="append every event to this CSV file")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--list-cameras", action="store_true", help="show a snapshot from every camera, then exit")
@@ -100,11 +100,16 @@ def main():
                           confirm_confidence=settings.CONFIRM_CONFIDENCE,
                           still_distance=settings.STILL_DISTANCE * W)
     seats_file = settings.PROJECT_ROOT / settings.SEATS_FILE
-    layout = SeatLayout.load(seats_file, W, H)  # zones edited earlier, if any
-    if layout is None or (args.players is not None and args.players != layout.players):
-        layout = SeatLayout(args.players or settings.PLAYERS, W, H)
-    else:
-        print(f"loaded edited zones from {settings.SEATS_FILE} ({layout.players} players)")
+
+    def seats_for(players: int | None, width: int, height: int) -> SeatLayout:
+        """The layout saved for this player count (None: the count used last), else the template."""
+        saved = SeatLayout.load(seats_file, width, height, players)
+        if saved is not None:
+            print(f"loaded your saved {saved.players}-player zones from {settings.SEATS_FILE}")
+            return saved
+        return SeatLayout(players or settings.PLAYERS, width, height)
+
+    layout = seats_for(args.players, W, H)
     editor = ZoneEditor(layout)
     frames_dir = settings.PROJECT_ROOT / settings.FRAMES_DIR
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -158,9 +163,11 @@ def main():
             if k == ord("q"):
                 break
             elif ord("1") <= k <= ord(str(MAX_PLAYERS)):
-                layout = editor.layout = SeatLayout(k - ord("0"), frame.shape[1], frame.shape[0])
+                n = k - ord("0")
+                saved = SeatLayout.load(seats_file, frame.shape[1], frame.shape[0], n)
+                layout = editor.layout = saved or SeatLayout(n, frame.shape[1], frame.shape[0])
                 editor.selected = None
-                hud.flash(f"{layout.players} player{'s' if layout.players > 1 else ''}: template layout")
+                hud.flash(f"{n} player{'s' if n > 1 else ''}: {'your saved layout' if saved else 'template layout'}")
             elif k == ord("e"):
                 editor.active = not editor.active
                 if editor.active:
@@ -168,8 +175,8 @@ def main():
                 else:
                     layout.save(seats_file)
                     editor.selected = None
-                    print(f"zones saved to {settings.SEATS_FILE}")
-                    hud.flash("zones saved")
+                    print(f"{layout.players}-player zones saved to {settings.SEATS_FILE}")
+                    hud.flash(f"{layout.players}-player zones saved")
             elif k == ord("l"):
                 hud.show_legend = not hud.show_legend
             elif k == ord("r"):

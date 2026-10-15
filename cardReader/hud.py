@@ -1,8 +1,9 @@
 """Draw the reader's overlay on top of the camera feed.
 
     * seat outlines: the dealer strip and the player arc, with their names. In
-      edit mode (key E) every corner gets a handle, the zone last clicked is
-      tinted, and the bottom of the sidebar explains the mouse controls.
+      edit mode (key E) every corner gets a white handle, every edge a '+' to add
+      a corner, the zone last clicked is tinted, and the bottom of the sidebar
+      explains the mouse controls.
     * every corner index the detector sees: thin grey box until the tracker
       confirms the card, then a box in the card's colour
     * a tag on each card of the round: its placement number in a yellow badge,
@@ -152,7 +153,12 @@ class Hud:
             return
         r = max(6, editor.handle_radius() * 2 // 3)
         for seat in layout.seats:
-            for cx, cy in seat.polygon:
+            for cx, cy in ZoneEditor.midpoints(seat.polygon):  # '+': drag to add a corner
+                m = max(4, r * 2 // 3)
+                cv2.circle(img, (int(cx), int(cy)), m, (0, 0, 0), -1, cv2.LINE_AA)
+                cv2.line(img, (int(cx) - m + 3, int(cy)), (int(cx) + m - 3, int(cy)), BADGE, 2, cv2.LINE_AA)
+                cv2.line(img, (int(cx), int(cy) - m + 3), (int(cx), int(cy) + m - 3), BADGE, 2, cv2.LINE_AA)
+            for cx, cy in seat.polygon:  # corners: drag to move, right-click to remove
                 cv2.circle(img, (int(cx), int(cy)), r, (0, 0, 0), -1, cv2.LINE_AA)
                 cv2.circle(img, (int(cx), int(cy)), r - 2, WHITE, -1, cv2.LINE_AA)
 
@@ -162,8 +168,9 @@ class Hud:
 
     def _edit_help(self, side, bottom: int) -> int:
         """Mouse controls for edit mode, in the sidebar so no handle is ever covered. Returns its top."""
-        lines = [("EDIT ZONES", BADGE), ("drag a corner: reshape", WHITE), ("drag inside: move the zone", WHITE),
-                 ("right-click: reset the zone", WHITE), ("E: save and lock", WHITE)]
+        lines = [("EDIT ZONES", BADGE), ("drag a corner: reshape", WHITE), ("drag a +: add a corner", WHITE),
+                 ("right-click a corner: remove it", WHITE), ("drag inside: move the zone", WHITE),
+                 ("right-click inside: reset the zone", WHITE), ("E: save and lock", WHITE)]
         lh = self._size("Ag", 0.6)[1] + self.pad
         top = bottom - len(lines) * lh - self.pad
         cv2.rectangle(side, (0, top), (side.shape[1], bottom), (60, 50, 0), -1)
@@ -226,36 +233,40 @@ class Hud:
         return y
 
     def _seat_blocks(self, side, cards, seat_of, layout: SeatLayout, y: int, bottom: int):
-        """For each seat: its name and total on one line, its cards in placement order below,
-        wrapping onto more lines for long hands. Cards outside every seat are listed as OTHER."""
-        H, SW = side.shape[:2]
+        """One line per seat: its name, its cards in placement order, and its total on the right.
+        A long hand wraps onto more lines. Cards outside every seat are listed as OTHER."""
+        SW = side.shape[1]
         rows = [(name, [c for c in cards if seat_of[c.order] == name]) for name in layout.names()]
         loose = [c for c in cards if seat_of[c.order] is None]
         if loose:
             rows.append(("OTHER", loose))
-        item_h = 2 * self.r + self.pad
+        name_w = max(self._size(seat_title(n), 0.65)[0] for n, _ in rows) + 2 * self.pad
+        line_h = 2 * self.r + self.pad
         for name, hand in rows:
-            title = seat_title(name)
-            _, th, _ = self._size(title, 0.65)
-            if y + th + item_h > bottom:
-                self._text(side, "...", (self.pad, bottom - self.pad), 0.65, GREY)
-                return
-            self._text(side, title, (self.pad, y + th), 0.65,
-                       AMBER if name == DEALER else SEAT_LINE if name != "OTHER" else GREY)
-            if name != "OTHER":
-                total = describe([c.label for c in hand])
-                tw = self._size(total, 0.65)[0]
-                self._text(side, total, (SW - self.pad - tw, y + th), 0.65, WHITE if hand else DIM)
-            y += th + self.pad
-            x = self.pad
-            cy = y + item_h // 2
+            total = describe([c.label for c in hand]) if name != "OTHER" else ""
+            tw, th, _ = self._size(total, 0.65) if total else (0, 0, 0)
+            # lay the cards out first, so a hand that does not fit can be cut off cleanly
+            x0, right = self.pad + name_w, SW - self.pad - (tw + 2 * self.pad if total else 0)
+            spots, x, line = [], x0, 0
             for c in hand:
                 w = 2 * self.r + self.pad // 2 + self._size(c.label, 0.8)[0]
-                if x + w > SW - self.pad and x > self.pad:  # wrap
-                    x, cy, y = self.pad, cy + item_h, y + item_h
-                self._chip(side, c, x, cy)
+                if x + w > right and x > x0:  # wrap; later lines may use the full width
+                    x, line, right = x0, line + 1, SW - self.pad
+                spots.append((c, x, line))
                 x += w + 2 * self.pad
-            y += item_h + self.pad
+            height = (line + 1) * line_h
+            if y + height > bottom:
+                self._text(side, "...", (self.pad, bottom - self.pad), 0.65, GREY)
+                return
+            cy = y + line_h // 2
+            _, nh, _ = self._size(seat_title(name), 0.65)
+            self._text(side, seat_title(name), (self.pad, cy + nh // 2), 0.65,
+                       AMBER if name == DEALER else SEAT_LINE if name != "OTHER" else GREY)
+            if total:
+                self._text(side, total, (SW - self.pad - tw, cy + th // 2), 0.65, WHITE if hand else DIM)
+            for c, cx, ln in spots:
+                self._chip(side, c, cx, cy + ln * line_h)
+            y += height
 
     @staticmethod
     def _card_box(card: Card, dets: list[Detection]):

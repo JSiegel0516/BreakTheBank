@@ -41,5 +41,5 @@ MATCH_DISTANCE = 0.03      # fraction of frame width; detections closer than thi
 ROUND_END_FRAMES = 90      # no card visible for this many frames (about 3 s at 30 fps) ends the round
 
 # ---------------------------------------------------------------- table
-PLAYERS = 4                # player seats in the arc layout; change live with keys 1-7 in read.py
-SEATS_FILE = "data/seats.json"  # zones edited with the mouse (key E in read.py); delete it to go back to the template
+PLAYERS = 5                # player seats when nothing is saved yet; change live with keys 1-7 in read.py
+SEATS_FILE = "data/seats.json"  # zones edited with the mouse (key E in read.py), one layout per player count
