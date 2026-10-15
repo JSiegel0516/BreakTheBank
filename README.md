@@ -66,7 +66,9 @@ Blackjack_Project/
 │   ├── raw/                  everything you provide
 │   │   ├── labeled/          YOLO-format exports, one subfolder each
 │   │   │   ├── playingCards/       353 table photos   (Roboflow)
-│   │   │   └── blackjackCorners/   650 table photos   (Roboflow, relabelled to corners)
+│   │   │   ├── blackjackCorners/   650 table photos   (Roboflow, relabelled to corners)
+│   │   │   └── cardsComplete/      852 composited photos (Roboflow, missing corners filled by the model)
+│   │   ├── unused/           exports kept but never trained on
 │   │   ├── cardArt/          AS.png ... KC.png and indexRect.json, used for synthetic images
 │   │   ├── backgrounds/      photos of the empty table, used for synthetic images
 │   │   └── frames/           frames saved from read.py, to label and add to labeled/
@@ -459,6 +461,40 @@ Other levers, in `settings.py` or as flags:
 - `--epochs 150` if the validation scores are still rising at the end.
 - `--base yolo11s.pt` for a bigger model: more accurate, slower.
 - `BATCH_SIZE = 4` if training runs out of memory.
+
+### Exports that label only some corners
+
+Some datasets box only two diagonal corner indices of each card although the
+deck prints one in all four. Training reads an unlabelled corner as "nothing
+here", so such an export teaches the model to ignore real corners. Check a
+few images first; if corners are missing, let the current model fill them in:
+
+```bash
+mkdir -p data/raw/unused && mv data/raw/labeled/<export> data/raw/unused/
+python train.py --complete-corners data/raw/unused/<export>
+```
+
+It writes `data/raw/labeled/<export>Complete`, adding a box only for a card
+already labelled in that photo, at confidence 0.6 or more, where no box exists,
+scaled to the export's own box size. Check `preview/` (green = original,
+magenta = added) before training. The original stays in `data/raw/unused/`,
+which is never trained on.
+
+### Comparing two models
+
+Give each experiment its own name so it does not overwrite the model `read.py`
+uses, then score every model on the same real-photo exam:
+
+```bash
+caffeinate -i python train.py --rebuild --epochs 150 --name n150
+caffeinate -i python train.py --epochs 150 --base yolo11s.pt --name s150
+yolo val model=models/n150/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=val_n150
+yolo val model=models/s150/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=val_s150
+```
+
+Scores are only comparable on the same validation set, so after `--rebuild`
+re-score the old model on the new `realVal.yaml` too. To use the winner, copy
+its `weights/best.pt` to `models/cards/weights/best.pt`.
 
 ### Using your own deck for synthetic images
 
