@@ -86,7 +86,10 @@ Blackjack_Project/
     │   └── *.png, *.jpg      charts and example predictions
     ├── model_1_2026-09-17/   one folder per trained model, numbered and dated,
     ├── model_2_2026-10-13/   each with its charts, logs, and a notes.txt
-    └── yolo11n.pt            pretrained starting weights (yolo11s.pt is downloaded here too)
+    ├── model_3_2026-10-14_n150/  (live, copied to cards/)
+    ├── model_4_2026-10-15_s150/  YOLO11s, tied with model 3, not live
+    ├── yolo11n.pt            pretrained starting weights
+    └── yolo11s.pt            pretrained starting weights for the larger model
 ```
 
 ## Setup
@@ -474,6 +477,30 @@ backgrounds and lighting. About a third of the composited corner labels were
 drawn by model 2, so model 3's mAP50-95 on that subset partly measures agreement
 with those boxes. Remaining confusions are mostly same-rank, same-colour suits
 (10H read as 10D) and similar faces (QH as JH). Each model's `notes.txt` has the details.
+
+## Results: does a bigger model help?
+
+Model 4 (`models/model_4_2026-10-15_s150`) is YOLO11s, 3.6 times the weights of
+YOLO11n, trained on exactly the same images as model 3 (early-stopped at epoch
+102, best epoch 82, 9.6 hours). Both scored on the same 320 real photos:
+
+| | Model 3 (YOLO11n, live) | Model 4 (YOLO11s) |
+|---|---|---|
+| Corners read correctly | 98.4% | 98.4% |
+| Wrong card names (of 3,449) | 37 | 31 |
+| Missed corners | 17 | 23 |
+| mAP50 / mAP50-95 | 0.981 / 0.626 | 0.981 / 0.637 |
+| Table photos only (201) | 98.5% right, 29 wrong | 98.6% right, 25 wrong |
+| Detection time per 1080p frame (M4 Pro, `INPUT_SIZE` 1280) | 8.0 ms, about 124 fps | 15.8 ms, about 63 fps |
+| Model file | 5.6 MB | 19.3 MB |
+
+The two are tied within noise: a handful fewer wrong names and a handful more
+missed corners out of 3,449, at twice the time per frame. Both models still make
+the same top mistake, 10H read as 10D. A bigger model did not fix it, so the
+limit is the training data rather than model size: more labelled photos of red
+cards would help more than a larger network. Model 3 stays live because it is
+as accurate and twice as fast, which leaves headroom for a 4K camera or a higher
+`INPUT_SIZE`.
 
 ## Improving the model
 
