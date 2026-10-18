@@ -15,6 +15,7 @@ models/cards/weights/*
 
 # Zones edited for one camera setup
 data/seats.json
+data.zip
 
 # Generated or downloaded data (rebuilt by train.py, labeled exports live in Roboflow)
 data/dataset/
