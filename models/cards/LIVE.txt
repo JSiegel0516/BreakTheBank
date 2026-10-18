@@ -1,0 +1,5 @@
+model_3_2026-10-14_n150
+promoted 2026-10-18
+best.pt sha256 6ea3e8352dc7ec68406a91e8e9e896ac738693b5475707fa23d82fa9a7604ab9
+base yolo11n.pt, epochs 150, imgsz 1024, batch 8
+To change the live model: python train.py --promote models/<run>

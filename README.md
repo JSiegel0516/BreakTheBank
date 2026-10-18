@@ -12,7 +12,8 @@ python read.py      # read cards off the table, in placement order
 ## Quick start
 
 A trained model is included (`models/cards/weights/best.pt`), so the reader
-works straight after setup. Training is only needed to improve it.
+works straight after setup. Training is only needed to improve it, and needs
+the labelled photos from the team's shared folder (see [data/README.md](data/README.md)).
 
 1. Set up the environment (see [Setup](#setup)).
 2. Point a camera straight down at the table (see [Setting up the camera](docs/reading.md#setting-up-the-camera)).
@@ -60,12 +61,16 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── dataset.py            combines data/raw into data/dataset          (used by train.py)
 │   ├── synthetic.py          renders card art onto tables as extra data    (used by train.py)
 │   ├── cardArt.py            crops photos of your deck into card art       (train.py --extract-art)
-│   └── autolabel.py          fills in corners an export left unlabelled    (train.py --complete-corners)
+│   ├── autolabel.py          fills in corners an export left unlabelled    (train.py --complete-corners)
+│   └── provenance.py         data manifest and live-model promotion        (train.py --manifest, --check-data, --promote)
 ├── tests/
 │   ├── test_tracker.py       placement order, hidden cards, rounds, shoes
 │   ├── test_blackjack.py     hand totals, Hi-Lo, seat layout
-│   └── test_seats.py         zone editing, saving and loading
+│   ├── test_seats.py         zone editing, saving and loading
+│   └── test_provenance.py    manifest checks, promotion
 ├── data/
+│   ├── README.md             where the training data comes from and how to check it
+│   ├── manifest.json         what data/raw must hold, with fingerprints (train.py --check-data)
 │   ├── seats.json            zones edited with the mouse (key E), if any (not in git)
 │   ├── raw/                  everything you provide
 │   │   ├── labeled/          YOLO-format exports, one subfolder each
@@ -82,13 +87,14 @@ BreakTheBank/                 (the folder git clone creates)
 │       ├── images/{train,val}/
 │       └── labels/{train,val}/
 └── models/
-    ├── cards/                the live model: what read.py uses (weights/best.pt is in git)
-    │   ├── weights/best.pt   the epoch with the best validation score
+    ├── cards/                the live model: what read.py uses (put here by train.py --promote)
+    │   ├── LIVE.txt          which run this is
+    │   ├── weights/best.pt   the epoch with the best validation score (in git)
     │   ├── weights/last.pt   the latest epoch, for resuming
     │   ├── results.csv       one row of scores per epoch
     │   └── *.png, *.jpg      charts and example predictions
-    ├── model_1_2026-09-17/   one folder per trained model, numbered and dated,
-    ├── model_2_2026-10-13/   each with its charts, logs, and a notes.txt
+    ├── model_1_2026-09-17/   one folder per trained model, numbered and dated. notes.txt,
+    ├── model_2_2026-10-13/   args.yaml and results.csv are in git; weights and charts are not
     ├── model_3_2026-10-14_n150/  (live, copied to cards/)
     ├── model_4_2026-10-15_s150/  YOLO11s, tied with model 3, not live
     ├── yolo11n.pt            pretrained starting weights

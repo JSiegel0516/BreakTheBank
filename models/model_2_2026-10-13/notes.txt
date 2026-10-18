@@ -1,0 +1,12 @@
+Model 2 - 2026-10-13 - first full training run (also the live model in models/cards/)
+
+What:      YOLO11n, 100 epochs (patience 100, never stopped early), 1024 px, batch 8,
+           AdamW lr 0.000175, 4.5 h on an Apple M4 Pro.
+Data:      2,488 train / 514 val images: playingCards (303/49) + blackjackCorners (498/152)
+           + 2,000 synthetic. 1,002 real photos.
+Result:    full val (514 images):       P 0.979  R 0.977  mAP50 0.989  mAP50-95 0.758
+           real photos only (201):      P 0.974  R 0.977  mAP50 0.984  mAP50-95 0.559
+           real-photo corners: 98.1% right, 1.3% wrong name (mostly same-colour suits), 0.6% missed.
+Files:     weights/best.pt = the model; results.png / results.csv = training curves;
+           valReal/ = charts from the real-photo-only validation; smoke.log = the
+           one-epoch test run before it.

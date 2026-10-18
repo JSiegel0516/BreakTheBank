@@ -198,6 +198,19 @@ of each face-up card, named like `10H`, `KS`, `AD`. Face-down cards get one box
 around the whole card, named `BACK`. An export whose boxes are whole cards is
 skipped automatically.
 
+If you unpacked the exports from the team's shared folder, check that they are
+the ones the live model was trained on:
+
+```bash
+python train.py --check-data
+```
+
+It compares every export with `data/manifest.json` (file by file, by hash) and
+names any that are missing or different. `train.py --rebuild` runs the same check
+and warns, but does not stop. After adding or relabelling data and training on it,
+run `python train.py --manifest` and commit the new manifest with the model's
+record. See [data/README.md](../data/README.md) for the exports and where they live.
+
 ### 2. Build the dataset and run a one-epoch test
 
 ```bash
@@ -346,6 +359,8 @@ which is never trained on.
 Every trained model gets its own numbered, dated folder in `models/`, named
 with `--name`, so an experiment never overwrites the live model in
 `models/cards/`. Write a `notes.txt` in it with what was tried and the scores.
+That file, `args.yaml` (every setting Ultralytics used) and `results.csv` (the
+scores per epoch) are tracked in git for every run; the weights and charts are not.
 
 ```bash
 caffeinate -i python train.py --rebuild --epochs 150 --name model_3_2026-10-15_n150
@@ -361,7 +376,16 @@ yolo val model=models/model_3_2026-10-15_n150/weights/best.pt data=data/dataset/
 
 Scores are only comparable on the same validation set, so after `--rebuild`
 re-score the older models on the new `realVal.yaml` too. To make the winner the
-live model, copy its `weights/best.pt` to `models/cards/weights/best.pt`.
+live model:
+
+```bash
+python train.py --promote models/model_3_2026-10-15_n150
+```
+
+It copies the run's `weights/best.pt`, `notes.txt`, `args.yaml` and `results.csv`
+into `models/cards/` and writes `models/cards/LIVE.txt` naming the run, which
+`read.py` prints at start-up. Commit `models/cards/` afterwards so everyone gets
+the new live model with `git pull`.
 
 ### Using your own deck for synthetic images
 

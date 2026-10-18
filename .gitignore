@@ -4,11 +4,22 @@ __pycache__/
 *.log
 .DS_Store
 
-# Training output: keep only the trained model read.py uses
+# Training output. Weights and charts stay out of git, except the live model's
+# best.pt. Every run's small record (notes.txt, args.yaml, results.csv) is kept,
+# so what was trained, on what, with what result, is always in the history.
 *.pt
 models/*
 !models/cards/
+!models/model_*/
 models/cards/*
+models/model_*/*
+!models/cards/notes.txt
+!models/cards/args.yaml
+!models/cards/results.csv
+!models/cards/LIVE.txt
+!models/model_*/notes.txt
+!models/model_*/args.yaml
+!models/model_*/results.csv
 !models/cards/weights/
 models/cards/weights/*
 !models/cards/weights/best.pt
@@ -17,7 +28,8 @@ models/cards/weights/*
 data/seats.json
 data.zip
 
-# Generated or downloaded data (rebuilt by train.py, labeled exports live in Roboflow)
+# Generated or downloaded data. The labelled exports come from the team's shared
+# folder (see data/README.md); data/manifest.json records what they must contain.
 data/dataset/
 data/raw/labeled/
 data/raw/unused/

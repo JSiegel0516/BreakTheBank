@@ -1,0 +1,11 @@
+Model 1 - 2026-09-17 - first experiments
+
+What:      YOLO11n, 40 epochs, 1024 px, on data/merged (574 train / 78 val images:
+           the Roboflow playingCards export plus synthetic images drawn with
+           PLACEHOLDER card art, before the real deck was photographed).
+Result:    epoch 40: mAP50 0.268, mAP50-95 0.141 (validation set of that time).
+Status:    obsolete; kept for the record.
+
+train_cards.log: a second 40-epoch attempt on data/merged after the real card art
+was made (1,646 train images). It was stopped at epoch 9 and its weights were later
+overwritten, so only this log remains.

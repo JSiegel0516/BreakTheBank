@@ -5,9 +5,12 @@
     python train.py --epochs 150 --base yolo11s.pt --name s150   # an experiment, kept in models/s150/
     python train.py --extract-art data/raw/myDeckExport   # one-off: photos of your deck -> data/raw/cardArt
     python train.py --complete-corners data/raw/unused/cards  # add unlabelled corners using the current model
+    python train.py --promote models/n150  # make a finished run the live model read.py loads
+    python train.py --check-data           # does data/raw match data/manifest.json (the shared folder)?
+    python train.py --manifest             # rewrite data/manifest.json after adding or relabelling data
 
-Weights land in models/cards/weights/best.pt, which is what read.py loads. Use
---name to keep an experiment separate, e.g. --name n150 -> models/n150/.
+Every run goes to models/<name>/ (--name, default cards). read.py loads
+models/cards/weights/best.pt, so train with --name and --promote the winner.
 On a Mac the Apple GPU is used automatically. A Google Colab GPU is a few
 times faster for long runs: upload the project and run the same command there.
 """
@@ -17,7 +20,7 @@ import argparse
 from pathlib import Path
 
 import settings
-from cardReader import autolabel, cardArt, dataset
+from cardReader import autolabel, cardArt, dataset, provenance
 
 ROOT = settings.PROJECT_ROOT
 
@@ -35,8 +38,20 @@ def main():
     ap.add_argument("--extract-art", metavar="EXPORT", help="make card art from a one-card-per-photo export, then stop")
     ap.add_argument("--complete-corners", metavar="EXPORT",
                     help="label the corners an export left out, using the current model, then stop")
+    ap.add_argument("--promote", metavar="RUN", help="copy RUN's best.pt and record to models/cards, then stop")
+    ap.add_argument("--manifest", action="store_true", help="write data/manifest.json from data/raw, then stop")
+    ap.add_argument("--check-data", action="store_true", help="compare data/raw with data/manifest.json, then stop")
     args = ap.parse_args()
 
+    manifest = ROOT / settings.MANIFEST_FILE
+    if args.promote:
+        provenance.promote(args.promote, ROOT / settings.LIVE_MODEL_DIR)
+        return
+    if args.manifest:
+        provenance.write_manifest(ROOT / "data" / "raw", manifest)
+        return
+    if args.check_data:
+        raise SystemExit(1 if provenance.check_manifest(ROOT / "data" / "raw", manifest) else 0)
     if args.complete_corners:
         autolabel.complete_corners(args.complete_corners, ROOT / settings.LABELED_DIR, str(ROOT / settings.MODEL_PATH))
         return
@@ -46,6 +61,9 @@ def main():
 
     data_dir = ROOT / settings.DATASET_DIR
     if args.rebuild or not (data_dir / "data.yaml").exists():
+        if provenance.check_manifest(ROOT / "data" / "raw", manifest):
+            print(f"warning: data/raw differs from {settings.MANIFEST_FILE} (above). Training anyway;"
+                  " run `python train.py --manifest` afterwards if this data is what the model should learn from.")
         dataset.build(data_dir, ROOT / settings.LABELED_DIR, ROOT / settings.CARD_ART_DIR,
                       ROOT / settings.BACKGROUNDS_DIR, args.synthetic, settings.VAL_FRACTION)
 

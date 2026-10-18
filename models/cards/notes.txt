@@ -1,0 +1,24 @@
+Model 3 - 2026-10-14 - YOLO11n, more data (run name n150)
+
+What:      YOLO11n, up to 150 epochs, early-stopped at 110 (best epoch 90, patience 20),
+           1024 px, batch 8, 6.1 h on an Apple M4 Pro.
+Data:      3,221 train / 633 val images: playingCards (303/49) + blackjackCorners (498/152)
+           + cardsComplete (733/119; Roboflow composited set, missing corners filled in
+           by model 2 with --complete-corners) + 2,000 synthetic. 1,854 real photos.
+Result:    full val (633 images):      P 0.980  R 0.978  mAP50 0.989  mAP50-95 0.780
+
+Compared with model 2 on the same real-photo validation (data/dataset/realVal.yaml, 320 images):
+                                       model 2                      model 3
+  all 320 real images                  mAP50 0.969  mAP50-95 0.501  mAP50 0.981  mAP50-95 0.626
+                                       95.3% right, 108 wrong        98.4% right, 37 wrong
+  table photos (201, same as before)   mAP50 0.984  mAP50-95 0.559  mAP50 0.986  mAP50-95 0.572
+                                       98.1% right, 35 wrong, 17 missed   98.5% right, 29 wrong, 11 missed
+  composited cardsComplete (119)       mAP50 0.845  mAP50-95 0.311  mAP50 0.975  mAP50-95 0.842
+                                       84.7% right, 73 wrong         98.1% right, 8 wrong
+
+Top confusions (all 320): 10H->10D 4, QH->JH 3, JD->QD 2, 9H->6H 2, 7D->9D 2.
+Weakest mAP50: KD 0.936, 9D 0.952, AD 0.955, 7D 0.955.
+Caveat: about a third of the cardsComplete corner labels were drawn by model 2 itself, so
+model 3's mAP50-95 on that subset partly measures agreement with those boxes.
+Files:     weights/best.pt; results.png / results.csv = training curves; valReal/ = charts
+           from the 320-image real-photo validation.

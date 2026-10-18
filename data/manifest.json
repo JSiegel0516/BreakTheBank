@@ -1,0 +1,79 @@
+{
+  "written": "2026-10-18",
+  "note": "What data/raw should hold. Written by `python train.py --manifest`, checked by `python train.py --check-data`. See data/README.md.",
+  "exports": {
+    "labeled/blackjackCorners": {
+      "source": {
+        "workspace": "matthew-tu",
+        "project": "blackjack-2-jcplc",
+        "url": "https://universe.roboflow.com/matthew-tu/blackjack-2-jcplc/dataset/dataset",
+        "license": "CC BY 4.0"
+      },
+      "classes": 52,
+      "exported": "October 13, 2026 at 7:24 PM GMT",
+      "images": {
+        "train": 498,
+        "valid": 152
+      },
+      "label_files": 650,
+      "boxes": 10417,
+      "files": 1303,
+      "bytes": 48877515,
+      "sha256": "0c8598449d2902babe107c02f7978ff668ac4120e16dfa4923bf39a4e34f9ec2"
+    },
+    "labeled/cardsComplete": {
+      "source": {
+        "workspace": "matthew-tu",
+        "project": "cards-noyri-8umiy",
+        "url": "https://universe.roboflow.com/matthew-tu/cards-noyri-8umiy/dataset/dataset",
+        "license": "Public Domain"
+      },
+      "classes": 52,
+      "images": {
+        "train": 852
+      },
+      "label_files": 852,
+      "boxes": 5157,
+      "files": 1705,
+      "bytes": 72704586,
+      "sha256": "f32b5c111e7034b9129f891eea73594df0529e07b547cc2ce35a017b9463355a"
+    },
+    "labeled/playingCards": {
+      "source": {
+        "workspace": "matthew-tu",
+        "project": "playing-cards-bef7p-p2ou0",
+        "url": "https://universe.roboflow.com/matthew-tu/playing-cards-bef7p-p2ou0/dataset/dataset",
+        "license": "CC BY 4.0"
+      },
+      "classes": 52,
+      "exported": "September 17, 2026 at 4:47 PM GMT",
+      "images": {
+        "train": 353
+      },
+      "label_files": 353,
+      "boxes": 2258,
+      "files": 709,
+      "bytes": 339611053,
+      "sha256": "20af174b84502d939d861248cedfff0fa9268f1eed2a05c141452508241cb3ed"
+    },
+    "unused/cards": {
+      "source": {
+        "workspace": "matthew-tu",
+        "project": "cards-noyri-8umiy",
+        "url": "https://universe.roboflow.com/matthew-tu/cards-noyri-8umiy/dataset/dataset",
+        "license": "Public Domain"
+      },
+      "classes": 52,
+      "exported": "October 14, 2026 at 11:52 PM GMT",
+      "images": {
+        "train": 852
+      },
+      "label_files": 852,
+      "boxes": 3236,
+      "files": 1707,
+      "bytes": 72630220,
+      "sha256": "f21b4fb4dcd7a7e1961e6b0ab1d47aceca4e6d4a419f7f7e43b0ed68da9e3fd5"
+    }
+  },
+  "backgrounds": 0
+}
