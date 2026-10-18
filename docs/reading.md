@@ -60,6 +60,8 @@ Every event is also printed in the terminal, with the seat and the count:
 [   530] placed   #2   6C  (P2) count +0
 [   901] hidden   #2   6C  (P2)
 [   966] returned #2   6C  (P2)
+[  1402] placed   #3   BACK (dealer) count +0
+[  1870] renamed  #3   KS (was BACK) (dealer) count -1
 [  2210] round_over
 ```
 
@@ -195,8 +197,11 @@ are rich in tens and aces. Face-down cards are counted when they are turned up.
   restarts. A hand briefly covering the whole table does not end it. `R` ends a
   round immediately.
 - **Every face-down card is a separate card.**
-- A card turned face up in place (a dealer's hole card) keeps its BACK label
-  for a while, because the label is a vote over every frame it has been seen.
+- **A card's name can change, its number cannot.** The name is a vote over the
+  last `LABEL_WINDOW` frames of reads (1.5 s). A dealer's hole card turned face up
+  changes from `BACK` to its name in about half that, and a misread that corrects
+  itself is renamed in place. Both print as `renamed`, and the count follows the
+  new name. A second phantom card is never added.
 
 ## Tuning the reader
 
@@ -216,6 +221,8 @@ All of these are in `settings.py`. Change one at a time and watch the effect.
 | The next round starts too slowly after a sweep | lower `ROUND_END_FRAMES` | the empty table is noticed sooner |
 | Cards land in the wrong seat | press `1` to `7` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
+| A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW` (45 to 30) | the name vote forgets old reads sooner |
+| A card's name flips back and forth | raise `LABEL_WINDOW` (45 to 90) | one bad second of reads cannot outvote the rest |
 | Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
 | The video is choppy (low fps) | lower `INPUT_SIZE` (e.g. 1280 to 960) | less work per frame |
 
@@ -246,15 +253,12 @@ frames is one second. If the fps is much lower, scale them down to match.
 
 - **One deck.** Two sightings of the same face are treated as one card, so a
   shoe with several decks would merge real duplicates, and its count would be wrong.
-- **A misread at placement stays in the count.** If a card is first confirmed
-  under the wrong name (a 9H read as 6H), that name is counted; the corrected name
-  is then counted as a second card.
 - **Splits** are shown as one hand per seat.
 - **Face-down cards.** All `BACK` training examples are synthetic, drawn with a
   placeholder design. Photograph your deck's back (see
   [Using your own deck](training.md#using-your-own-deck-for-synthetic-images)) before relying on it.
-- **A card flipped over in place** (a dealer's hole card) keeps its `BACK` label
-  for a while, because the label is a vote over every frame it has been seen.
+- **A misread that never corrects itself** stays in the count under the wrong
+  name. The tracker can only follow what the model reads.
 - **Same-colour suits** are the most common confusion (see [Results](results.md)).
 - **No frame tiling.** A 4K frame is shrunk to `INPUT_SIZE` before detection, so
   very small indices at a large table may be lost.

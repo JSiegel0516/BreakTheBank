@@ -25,10 +25,11 @@ import time
 import cv2
 import numpy as np
 
-from .blackjack import ShoeCount, describe
+from .blackjack import ShoeCount
+from .cards import Card, Detection
 from .deck import BACK, RED_SUITS, suit_of
 from .seats import DEALER, SeatLayout, ZoneEditor
-from .tracker import Card, Detection
+from .table import OTHER, Hand, Table
 
 FONT = cv2.FONT_HERSHEY_DUPLEX
 PANEL = (25, 25, 25)
@@ -91,14 +92,13 @@ class Hud:
             placed.append(self._card_tag(view, c, None if c.hidden else self._card_box(c, dets), placed))
 
         side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
-        seat_of = {c.order: layout.assign(c.x, c.y) for c in cards}
         y = self._count_block(side, count)
         bottom = side.shape[0] - self._bar_height()
         if editing:
             bottom = self._edit_help(side, bottom)
         if self.show_legend:
             bottom = self._legend(side, bottom)
-        self._seat_blocks(side, cards, seat_of, layout, y, bottom)
+        self._seat_blocks(side, Table(layout).hands(cards), y, bottom)
         canvas = np.hstack([view, side])
         self._bottom_bar(canvas, fps, capture_mode, W)
         return canvas
@@ -232,18 +232,14 @@ class Hud:
         cv2.line(side, (self.pad, y - self.pad), (side.shape[1] - self.pad, y - self.pad), DIM, 1)
         return y
 
-    def _seat_blocks(self, side, cards, seat_of, layout: SeatLayout, y: int, bottom: int):
-        """One line per seat: its name, its cards in placement order, and its total on the right.
-        A long hand wraps onto more lines. Cards outside every seat are listed as OTHER."""
+    def _seat_blocks(self, side, hands: list[Hand], y: int, bottom: int):
+        """One line per hand: the seat's name, its cards in placement order, and its total on the
+        right. A long hand wraps onto more lines. Loose cards come last, as OTHER."""
         SW = side.shape[1]
-        rows = [(name, [c for c in cards if seat_of[c.order] == name]) for name in layout.names()]
-        loose = [c for c in cards if seat_of[c.order] is None]
-        if loose:
-            rows.append(("OTHER", loose))
-        name_w = max(self._size(seat_title(n), 0.65)[0] for n, _ in rows) + 2 * self.pad
+        name_w = max(self._size(seat_title(h.seat), 0.65)[0] for h in hands) + 2 * self.pad
         line_h = 2 * self.r + self.pad
-        for name, hand in rows:
-            total = describe([c.label for c in hand]) if name != "OTHER" else ""
+        for h in hands:
+            name, hand, total = h.seat, h.cards, h.total
             tw, th, _ = self._size(total, 0.65) if total else (0, 0, 0)
             # lay the cards out first, so a hand that does not fit can be cut off cleanly
             x0, right = self.pad + name_w, SW - self.pad - (tw + 2 * self.pad if total else 0)
@@ -261,7 +257,7 @@ class Hud:
             cy = y + line_h // 2
             _, nh, _ = self._size(seat_title(name), 0.65)
             self._text(side, seat_title(name), (self.pad, cy + nh // 2), 0.65,
-                       AMBER if name == DEALER else SEAT_LINE if name != "OTHER" else GREY)
+                       AMBER if name == DEALER else SEAT_LINE if name != OTHER else GREY)
             if total:
                 self._text(side, total, (SW - self.pad - tw, cy + th // 2), 0.65, WHITE if hand else DIM)
             for c, cx, ln in spots:

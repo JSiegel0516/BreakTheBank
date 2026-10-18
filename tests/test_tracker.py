@@ -232,3 +232,68 @@ def test_small_jitter_still_counts_as_held_still():
     for dx, dy in [(0, 0), (2, -1), (-2, 1), (1, 2), (-1, -2)]:
         tr.update([det("2H", 300 + dx, 200 + dy)])
     assert labels(tr) == ["2H"]
+
+
+# ------------------------------------------------------------ the name can change: renamed in place
+
+
+def test_hole_card_turned_face_up_is_renamed_not_added():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    run(tr, [det("BACK", 100, 100), det("7H", 400, 100)], 6)   # dealer: hole card and up card
+    assert [(c.order, c.label) for c in tr.round] == [(1, "BACK"), (2, "7H")]
+    ev = run(tr, [det("KS", 100, 100), det("7H", 400, 100)], 6)  # the hole card is turned over
+    assert [(e.kind, e.card.order, e.card.label, e.was) for e in ev] == [("renamed", 1, "KS", "BACK")]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KS"), (2, "7H")]
+    assert tr.shoe_seen == ["7H", "KS"]
+
+
+def test_corrected_misread_fixes_the_count_and_keeps_the_number():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    run(tr, [det("9H", 50, 200)], 3)                     # confirmed under the wrong name
+    run(tr, [det("9H", 50, 200), det("2C", 300, 200)], 3)
+    assert tr.shoe_seen == ["9H", "2C"]
+    ev = run(tr, [det("6H", 50, 200), det("2C", 300, 200)], 6)
+    assert [(e.kind, e.card.order, e.was) for e in ev] == [("renamed", 1, "9H")]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "6H"), (2, "2C")]
+    assert tr.shoe_seen == ["6H", "2C"]                  # the 9H was never on the table; order kept
+    assert len(tr.round) == 2                            # no phantom second card
+
+
+def test_rename_does_not_uncount_a_card_seen_in_an_earlier_round():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10)
+    run(tr, [det("KH", 50, 200)], 3)
+    run(tr, [], 10)                                       # round over; KH stays counted
+    run(tr, [det("KH", 50, 200)], 3)                     # next round: a card misread as the KH
+    run(tr, [det("4D", 50, 200)], 6)                     # it was really a 4D
+    assert [c.label for c in tr.round] == ["4D"]
+    assert tr.shoe_seen == ["KH", "4D"]                  # the real KH from round 1 is still counted
+
+
+def test_two_corners_disagreeing_do_not_rename_until_the_vote_flips():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    run(tr, [det("9H", 50, 200), det("9H", 150, 300)], 3)   # both corners
+    assert len(tr.round) == 1
+    ev = run(tr, [det("6H", 50, 200), det("9H", 150, 300)], 4)  # one corner changes its mind
+    assert ev == [] and tr.round[0].label == "9H"         # 4 of 10 reads: not yet
+    ev = run(tr, [det("6H", 50, 200), det("6H", 150, 300)], 6)
+    assert [e.kind for e in ev] == ["renamed"] and tr.round[0].label == "6H"
+    assert len(tr.round) == 1
+
+
+def test_without_a_label_window_the_vote_is_over_every_read():
+    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    run(tr, [det("BACK", 100, 100)], 20)
+    run(tr, [det("KS", 100, 100)], 15)                   # 15 of 35 reads: BACK still wins
+    assert tr.round[0].label == "BACK"
+
+
+def test_config_object_and_keyword_overrides_agree():
+    from cardReader.tracker import TrackerConfig
+    a = CardTracker(TrackerConfig(confirm_frames=3, match_dist=10), drop_frames=7)
+    assert (a.cfg.confirm_frames, a.cfg.match_dist, a.cfg.drop_frames) == (3, 10, 7)
+
+    class S:  # the fields settings.py provides
+        CONFIRM_FRAMES, CONFIRM_WINDOW, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 15, 20, 0.8, 0.7
+        STILL_DISTANCE, DROP_FRAMES, MATCH_DISTANCE, ROUND_END_FRAMES, LABEL_WINDOW = 0.01, 30, 0.05, 90, 45
+    cfg = TrackerConfig.from_settings(S, 2000)
+    assert (cfg.still_distance, cfg.match_dist, cfg.label_window) == (20.0, 100.0, 45)

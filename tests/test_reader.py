@@ -1,0 +1,78 @@
+import csv
+import io
+
+import numpy as np
+
+from cardReader.cards import Detection
+from cardReader.hud import Hud
+from cardReader.reader import LOG_HEADER, Reader
+from cardReader.seats import SeatLayout
+from cardReader.tracker import CardTracker
+
+W, H = 640, 360
+
+
+def make_reader(tmp_path, players=3, log=None):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    layout = SeatLayout(players, W, H)
+    return Reader(tracker, layout, Hud(), tmp_path / "seats.json", tmp_path / "frames", log=log)
+
+
+def frame():
+    return np.zeros((H, W, 3), np.uint8)
+
+
+def test_process_places_cards_logs_them_with_their_seat_and_counts(tmp_path):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    seat = r.layout.seats[1].polygon.mean(axis=0)  # inside P1
+    dets = [Detection("5H", 0.9, float(seat[0]), float(seat[1]))]
+    assert r.process(frame(), dets) == []
+    events = r.process(frame(), dets)
+    assert [(e.kind, e.card.label) for e in events] == [("placed", "5H")]
+    assert r.count.running == 1
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert len(rows) == 1 and len(rows[0]) == len(LOG_HEADER)
+    assert rows[0][2:7] == ["placed", "1", "5H", "P1", "1"]
+
+
+def test_frame_of_another_size_rescales_the_layout(tmp_path):
+    r = make_reader(tmp_path)
+    r.process(np.zeros((H * 2, W * 2, 3), np.uint8), [])
+    assert (r.layout.width, r.layout.height) == (W * 2, H * 2)
+    assert r.editor.layout is r.layout and r.table.layout is r.layout
+
+
+def test_number_keys_switch_players_and_prefer_a_saved_layout(tmp_path):
+    r = make_reader(tmp_path)
+    assert r.handle_key(ord("5"), frame()) is True
+    assert r.layout.players == 5 and r.editor.layout.players == 5
+    r.layout.seats[1].polygon += (40, 0)                 # edit ...
+    r.handle_key(ord("e"), frame())                      # enter edit mode
+    assert r.editor.active
+    r.handle_key(ord("e"), frame())                      # leave: saves
+    assert not r.editor.active and (tmp_path / "seats.json").exists()
+    moved = r.layout.seats[1].polygon.copy()
+    r.handle_key(ord("3"), frame())
+    r.handle_key(ord("5"), frame())                      # back to 5: the saved zones come back
+    assert np.abs(r.layout.seats[1].polygon - moved).max() <= 1
+
+
+def test_round_shoe_legend_save_and_quit_keys(tmp_path):
+    r = make_reader(tmp_path)
+    seat = r.layout.seats[1].polygon.mean(axis=0)
+    dets = [Detection("KD", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    assert r.tracker.round and r.count.running == -1
+    r.handle_key(ord("r"), frame())
+    assert r.tracker.round == [] and r.tracker.shoe_seen == ["KD"]
+    r.handle_key(ord("R"), frame())
+    assert r.tracker.shoe_seen == [] and r.count.running == 0
+    legend = r.hud.show_legend
+    r.handle_key(ord("l"), frame())
+    assert r.hud.show_legend is not legend
+    r.handle_key(ord("s"), frame())
+    assert len(list((tmp_path / "frames").glob("frame_*.jpg"))) == 1
+    assert r.handle_key(ord("x"), frame()) is True       # unknown keys are ignored
+    assert r.handle_key(ord("q"), frame()) is False
