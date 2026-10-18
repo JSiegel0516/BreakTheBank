@@ -13,6 +13,7 @@ CARD_ART_DIR = "data/raw/cardArt"       # AS.png ... KC.png, BACK_1.png, indexRe
 BACKGROUNDS_DIR = "data/raw/backgrounds"  # photos of the empty table
 FRAMES_DIR = "data/raw/frames"          # frames saved from read.py for labelling
 DATASET_DIR = "data/dataset"            # the training set train.py builds from everything above
+MANIFEST_FILE = "data/manifest.json"    # what data/raw should hold (train.py --manifest / --check-data)
 
 # ---------------------------------------------------------------- training
 SYNTHETIC_IMAGES = 2000    # synthetic images added to the dataset. 0 = real data only.
@@ -25,7 +26,8 @@ BATCH_SIZE = 8
 MODELS_DIR = "models"
 
 # ---------------------------------------------------------------- reading
-MODEL_PATH = "models/cards/weights/best.pt"   # written by train.py
+MODEL_PATH = "models/cards/weights/best.pt"   # the live model, put there by train.py --promote
+LIVE_MODEL_DIR = "models/cards"               # holds LIVE.txt naming the promoted run
 CAMERA_SOURCE = "0"        # "0" = first camera. A capture card is often "1". A video path also works.
 CAMERA_WIDTH = None        # e.g. 3840. None = whatever the camera gives.
 CAMERA_HEIGHT = None       # e.g. 2160

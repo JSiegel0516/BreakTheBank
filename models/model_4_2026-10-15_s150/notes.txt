@@ -1,0 +1,25 @@
+Model 4 - 2026-10-15 - YOLO11s, same data as model 3 (run name model_4_2026-10-15_s150)
+
+What:      YOLO11s (9.4M weights, 3.6x model 3), up to 150 epochs, early-stopped at 102
+           (best epoch 82, patience 20), 1024 px, batch 8, AdamW lr 0.000175, 9.6 h on an
+           Apple M4 Pro. Exactly the same 3,221 train / 633 val images as model 3.
+Result:    full val (633 images):      P 0.984  R 0.984  mAP50 0.991  mAP50-95 0.811
+
+Compared with model 3 (YOLO11n) on the same real-photo validation (320 images):
+                                       model 3 (n)                    model 4 (s)
+  all 320 real images                  mAP50 0.981  mAP50-95 0.626    mAP50 0.981  mAP50-95 0.637
+                                       98.4% right, 37 wrong, 17 missed  98.4% right, 31 wrong, 23 missed
+  table photos (201)                   mAP50 0.986  mAP50-95 0.572    mAP50 0.984  mAP50-95 0.574
+                                       98.5% right, 29 wrong, 11 missed  98.6% right, 25 wrong, 14 missed
+  composited cardsComplete (119)       mAP50 0.975  mAP50-95 0.842    mAP50 0.981  mAP50-95 0.865
+                                       98.1% right, 8 wrong, 6 missed    97.9% right, 6 wrong, 9 missed
+
+Top confusions (all 320): 10H->10D 4, 9H->6H 2, 7D->9D 2, 5S->5C 2, 3D->2D 2 (10H->10D also model 3's top).
+Weakest mAP50: 10H 0.943, 10D 0.945, QS 0.946, KH 0.948.
+Speed:     15.8 ms per 1080p frame at INPUT_SIZE 1280 (about 63 fps detection alone),
+           against 8.0 ms (124 fps) for model 3. best.pt is 19.3 MB against 5.6 MB.
+Verdict:   a tie within noise: about 6 fewer wrong names and 6 more missed corners out of
+           3,449, slightly tighter boxes, at twice the time per frame. The bigger model did
+           not remove the 10H/10D confusion, so the limit is the data, not model size.
+Files:     weights/best.pt; results.png / results.csv = training curves; train.log = full
+           training output; valReal/ = charts from the 320-image real-photo validation.

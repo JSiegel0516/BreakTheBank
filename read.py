@@ -29,6 +29,7 @@ import settings
 from cardReader.blackjack import shoe_count
 from cardReader.camera import Camera, parse_source, snapshot_cameras
 from cardReader.hud import Hud
+from cardReader.provenance import live_model
 from cardReader.seats import MAX_PLAYERS, SeatLayout, ZoneEditor
 from cardReader.tracker import CardTracker
 
@@ -88,6 +89,9 @@ def main():
     if Path(args.model).exists():
         from cardReader.detector import Detector
         detector = Detector(args.model, args.imgsz, args.conf, args.device)
+        live = live_model(settings.PROJECT_ROOT / settings.LIVE_MODEL_DIR)
+        is_live = Path(args.model).resolve() == (settings.PROJECT_ROOT / settings.MODEL_PATH).resolve()
+        print(f"model {args.model}" + (f" (live model: {live})" if live and is_live else ""))
     else:
         print(f"no model at {args.model}: running in capture mode (press s to save frames)")
 
