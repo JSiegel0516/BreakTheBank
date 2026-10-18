@@ -3,6 +3,8 @@
 What belongs here, where the training data comes from, and how to check you
 have the same data the live model was trained on.
 
+https://drive.google.com/file/d/18ACxuf26ypKerWfg-vODjaORBfuLIBpC/view?usp=share_link 
+
 ## Layout
 
 | Folder or file | In git? | What it is |
