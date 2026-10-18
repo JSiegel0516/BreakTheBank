@@ -1,0 +1,36 @@
+[project]
+name = "breakthebank"
+version = "0.1.0"
+description = "A camera looks down at a blackjack table; the card reader names every card in the order it is placed."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "opencv-python>=4.10,<5",   # 5.0 is new; the code was written against 4.x
+    "ultralytics>=8.3",
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "numpy>=2",
+    "pillow>=10",
+    "pyyaml>=6",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]   # so `pytest` finds cardReader and settings from the project root
+testpaths = ["tests"]
+
+[tool.uv]
+package = false      # scripts and a library folder, not an installable package
+
+# Linux (CI) gets CPU-only torch wheels, a fraction of the CUDA build's size.
+# macOS keeps the default wheels, which include Apple GPU (MPS) support.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]

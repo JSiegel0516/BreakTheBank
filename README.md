@@ -95,11 +95,14 @@ Blackjack_Project/
 ## Setup
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -r requirements.txt
+uv sync                      # creates .venv with the exact versions in uv.lock
 source .venv/bin/activate
 pytest
 ```
+
+[uv](https://docs.astral.sh/uv/) installs Python 3.12 itself if needed. The
+dependencies are listed in `pyproject.toml` and pinned in `uv.lock`; `uv sync`
+after pulling keeps everyone on the same versions.
 
 Every command below assumes this project's virtual environment is active
 (`source .venv/bin/activate`, run from inside `Blackjack_Project`).

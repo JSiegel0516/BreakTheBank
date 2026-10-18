@@ -7,7 +7,7 @@ from .tracker import Detection
 
 
 class Detector:
-    def __init__(self, weights: str, imgsz: int = 1280, conf: float = 0.4, device: str | None = None):
+    def __init__(self, weights: str, imgsz: int = 1280, conf: float = 0.6, device: str | None = None):
         from ultralytics import YOLO  # slow import, only paid when a model is used
         self.model = YOLO(weights)
         self.imgsz, self.conf, self.device = imgsz, conf, device
