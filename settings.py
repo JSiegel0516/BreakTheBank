@@ -40,6 +40,8 @@ CONFIRM_CONFIDENCE = 0.7   # the model's average confidence over those frames mu
 STILL_DISTANCE = 0.006     # fraction of frame width the corner may move over those frames (about 12 px at 1080p)
 DROP_FRAMES = 30           # a card missing this many frames in a row becomes hidden (kept, shown greyed out)
 MATCH_DISTANCE = 0.03      # fraction of frame width; detections closer than this are the same corner
+LABEL_WINDOW = 45          # a card's name is the vote over its last this many frames of reads, so a card
+                           # turned face up (a hole card) changes from BACK to its name in about half that
 ROUND_END_FRAMES = 90      # no card visible for this many frames (about 3 s at 30 fps) ends the round
 
 # ---------------------------------------------------------------- table

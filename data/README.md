@@ -3,8 +3,6 @@
 What belongs here, where the training data comes from, and how to check you
 have the same data the live model was trained on.
 
-https://drive.google.com/file/d/18ACxuf26ypKerWfg-vODjaORBfuLIBpC/view?usp=share_link 
-
 ## Layout
 
 | Folder or file | In git? | What it is |
@@ -23,7 +21,7 @@ https://drive.google.com/file/d/18ACxuf26ypKerWfg-vODjaORBfuLIBpC/view?usp=share
 The labelled photos are about 450 MB and are not in git. They are in the
 team's shared folder:
 
-    SHARED FOLDER: <link to be added>
+    https://drive.google.com/file/d/18ACxuf26ypKerWfg-vODjaORBfuLIBpC/view?usp=share_link
 
 Unpack it so that the exports sit directly under `data/raw/`, for example
 `data/raw/labeled/blackjackCorners/data.yaml`. Then check them:

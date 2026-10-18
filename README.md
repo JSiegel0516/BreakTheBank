@@ -34,6 +34,9 @@ tracker       waits until a card is seen several frames in a row, ignores
    |          misses while a hand covers it, votes on the label, and gives
    |          each new card the next placement number     cardReader/tracker.py
    v
+table         which seat each card is in, each seat's hand   cardReader/table.py
+   |          and total, the Hi-Lo count                    cardReader/blackjack.py
+   v
 1:KH  2:7D  3:BACK  4:AS
 ```
 
@@ -53,10 +56,13 @@ BreakTheBank/                 (the folder git clone creates)
 ├── cardReader/               the library
 │   ├── camera.py             frames from a camera, capture card, or video file
 │   ├── detector.py           YOLO wrapper: frame -> list of detections
+│   ├── cards.py              the Detection, Card and Event types
 │   ├── hud.py                the overlay read.py draws on the live feed
 │   ├── seats.py              seat layout by number of players, and the mouse zone editor
 │   ├── blackjack.py          hand totals and the Hi-Lo count
-│   ├── tracker.py            detections -> cards in placement order
+│   ├── tracker.py            detections -> cards in placement order (thresholds: TrackerConfig)
+│   ├── table.py              cards -> the hand at every seat
+│   ├── reader.py             per frame and per key: what read.py does between camera and window
 │   ├── deck.py               the 53 class labels (52 faces + BACK)
 │   ├── dataset.py            combines data/raw into data/dataset          (used by train.py)
 │   ├── synthetic.py          renders card art onto tables as extra data    (used by train.py)
@@ -64,7 +70,10 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── autolabel.py          fills in corners an export left unlabelled    (train.py --complete-corners)
 │   └── provenance.py         data manifest and live-model promotion        (train.py --manifest, --check-data, --promote)
 ├── tests/
-│   ├── test_tracker.py       placement order, hidden cards, rounds, shoes
+│   ├── test_tracker.py       placement order, hidden cards, rounds, shoes, renaming
+│   ├── test_table.py         hands per seat
+│   ├── test_reader.py        events, logging, keys
+│   ├── test_hud.py           the overlay draws
 │   ├── test_blackjack.py     hand totals, Hi-Lo, seat layout
 │   ├── test_seats.py         zone editing, saving and loading
 │   └── test_provenance.py    manifest checks, promotion
