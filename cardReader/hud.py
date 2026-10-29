@@ -42,7 +42,8 @@ AMBER = (0, 190, 255)
 BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
-KEYS = "[1-7] players    [E] edit zones    [L] legend    [R] new round    [Shift+R] new shoe    [S] save frame    [Q] quit"
+KEYS = ("[1-7] players    [E] edit zones    [L] legend    [R] new round    "
+        "[Shift+R] new shoe    [S] save frame    [Q] quit")
 
 
 def card_colour(label: str):
@@ -53,6 +54,15 @@ def card_colour(label: str):
 
 def seat_title(name: str) -> str:
     return "DEALER" if name == DEALER else name
+
+
+def _top_of_overlap(tags: list[tuple], rect: tuple) -> int | None:
+    """Top edge of the first tag rectangle that overlaps rect, or None. Rectangles are (x1, y1, x2, y2)."""
+    x1, y1, x2, y2 = rect
+    for left, top, right, bottom in tags:
+        if x1 < right and x2 > left and y1 < bottom and y2 > top:
+            return top
+    return None
 
 
 class Hud:
@@ -80,16 +90,17 @@ class Hud:
         editing = editor is not None and editor.active
         self._seat_outlines(view, layout, editor if editing else None)
         visible = {c.label for c in cards if not c.hidden}
-        for d in dets:
-            x1, y1, x2, y2 = map(int, d.box)
-            if d.label in visible:
-                cv2.rectangle(view, (x1, y1), (x2, y2), card_colour(d.label), self.thick)
+        for det in dets:
+            x1, y1, x2, y2 = map(int, det.box)
+            if det.label in visible:
+                cv2.rectangle(view, (x1, y1), (x2, y2), card_colour(det.label), self.thick)
             else:
                 cv2.rectangle(view, (x1, y1), (x2, y2), GREY, 1)
 
         placed: list[tuple] = []
-        for c in cards:
-            placed.append(self._card_tag(view, c, None if c.hidden else self._card_box(c, dets), placed))
+        for card in cards:
+            box = None if card.hidden else self._card_box(card, dets)
+            placed.append(self._card_tag(view, card, box, placed))
 
         side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
         y = self._count_block(side, count)
@@ -103,7 +114,6 @@ class Hud:
         self._bottom_bar(canvas, fps, capture_mode, W)
         return canvas
 
-    # ------------------------------------------------------------ drawing helpers
     def _text(self, img, text, org, scale, colour):
         cv2.putText(img, text, (int(org[0]), int(org[1])), FONT, scale * self.s, colour, self.thick, cv2.LINE_AA)
 
@@ -132,7 +142,6 @@ class Hud:
         self._text(img, card.label, (x + 2 * self.r + self.pad // 2, cy + h // 2), 0.8, colour)
         return 2 * self.r + self.pad // 2 + w
 
-    # ------------------------------------------------------------ pieces
     def _seat_outlines(self, img, layout: SeatLayout, editor: ZoneEditor | None):
         for i, seat in enumerate(layout.seats):
             colour = AMBER if seat.name == DEALER else SEAT_LINE
@@ -154,10 +163,10 @@ class Hud:
         r = max(6, editor.handle_radius() * 2 // 3)
         for seat in layout.seats:
             for cx, cy in ZoneEditor.midpoints(seat.polygon):  # '+': drag to add a corner
-                m = max(4, r * 2 // 3)
-                cv2.circle(img, (int(cx), int(cy)), m, (0, 0, 0), -1, cv2.LINE_AA)
-                cv2.line(img, (int(cx) - m + 3, int(cy)), (int(cx) + m - 3, int(cy)), BADGE, 2, cv2.LINE_AA)
-                cv2.line(img, (int(cx), int(cy) - m + 3), (int(cx), int(cy) + m - 3), BADGE, 2, cv2.LINE_AA)
+                plus_r = max(4, r * 2 // 3)
+                cv2.circle(img, (int(cx), int(cy)), plus_r, (0, 0, 0), -1, cv2.LINE_AA)
+                cv2.line(img, (int(cx) - plus_r + 3, int(cy)), (int(cx) + plus_r - 3, int(cy)), BADGE, 2, cv2.LINE_AA)
+                cv2.line(img, (int(cx), int(cy) - plus_r + 3), (int(cx), int(cy) + plus_r - 3), BADGE, 2, cv2.LINE_AA)
             for cx, cy in seat.polygon:  # corners: drag to move, right-click to remove
                 cv2.circle(img, (int(cx), int(cy)), r, (0, 0, 0), -1, cv2.LINE_AA)
                 cv2.circle(img, (int(cx), int(cy)), r - 2, WHITE, -1, cv2.LINE_AA)
@@ -224,10 +233,10 @@ class Hud:
         col_w = (side.shape[1] - 2 * self.pad) // len(parts)
         kh = self._size("RUNNING", 0.5)[1]
         vh = self._size("+0", 1.1)[1]
-        for i, (k, v, c) in enumerate(parts):
+        for i, (title, value, value_colour) in enumerate(parts):
             x = self.pad + i * col_w
-            self._text(side, k, (x, 2 * self.pad + kh), 0.5, GREY)
-            self._text(side, v, (x, 3 * self.pad + kh + vh), 1.1, c)
+            self._text(side, title, (x, 2 * self.pad + kh), 0.5, GREY)
+            self._text(side, value, (x, 3 * self.pad + kh + vh), 1.1, value_colour)
         y = 5 * self.pad + kh + vh
         cv2.line(side, (self.pad, y - self.pad), (side.shape[1] - self.pad, y - self.pad), DIM, 1)
         return y
@@ -235,33 +244,38 @@ class Hud:
     def _seat_blocks(self, side, hands: list[Hand], y: int, bottom: int):
         """One line per hand: the seat's name, its cards in placement order, and its total on the
         right. A long hand wraps onto more lines. Loose cards come last, as OTHER."""
-        SW = side.shape[1]
-        name_w = max(self._size(seat_title(h.seat), 0.65)[0] for h in hands) + 2 * self.pad
+        side_w = side.shape[1]
+        name_w = max(self._size(seat_title(hand.seat), 0.65)[0] for hand in hands) + 2 * self.pad
         line_h = 2 * self.r + self.pad
-        for h in hands:
-            name, hand, total = h.seat, h.cards, h.total
-            tw, th, _ = self._size(total, 0.65) if total else (0, 0, 0)
+        for hand in hands:
+            total = hand.total
+            total_w, total_h, _ = self._size(total, 0.65) if total else (0, 0, 0)
             # lay the cards out first, so a hand that does not fit can be cut off cleanly
-            x0, right = self.pad + name_w, SW - self.pad - (tw + 2 * self.pad if total else 0)
+            x0 = self.pad + name_w
+            right = side_w - self.pad
+            if total:
+                right -= total_w + 2 * self.pad  # the first line leaves room for the total
             spots, x, line = [], x0, 0
-            for c in hand:
-                w = 2 * self.r + self.pad // 2 + self._size(c.label, 0.8)[0]
-                if x + w > right and x > x0:  # wrap; later lines may use the full width
-                    x, line, right = x0, line + 1, SW - self.pad
-                spots.append((c, x, line))
-                x += w + 2 * self.pad
+            for card in hand.cards:
+                chip_w = 2 * self.r + self.pad // 2 + self._size(card.label, 0.8)[0]
+                if x + chip_w > right and x > x0:  # wrap; later lines may use the full width
+                    x, line, right = x0, line + 1, side_w - self.pad
+                spots.append((card, x, line))
+                x += chip_w + 2 * self.pad
             height = (line + 1) * line_h
             if y + height > bottom:
                 self._text(side, "...", (self.pad, bottom - self.pad), 0.65, GREY)
                 return
             cy = y + line_h // 2
-            _, nh, _ = self._size(seat_title(name), 0.65)
-            self._text(side, seat_title(name), (self.pad, cy + nh // 2), 0.65,
-                       AMBER if name == DEALER else SEAT_LINE if name != OTHER else GREY)
+            title = seat_title(hand.seat)
+            title_colour = {DEALER: AMBER, OTHER: GREY}.get(hand.seat, SEAT_LINE)
+            _, title_h, _ = self._size(title, 0.65)
+            self._text(side, title, (self.pad, cy + title_h // 2), 0.65, title_colour)
             if total:
-                self._text(side, total, (SW - self.pad - tw, cy + th // 2), 0.65, WHITE if hand else DIM)
-            for c, cx, ln in spots:
-                self._chip(side, c, cx, cy + ln * line_h)
+                total_colour = WHITE if hand.cards else DIM
+                self._text(side, total, (side_w - self.pad - total_w, cy + total_h // 2), 0.65, total_colour)
+            for card, chip_x, chip_line in spots:
+                self._chip(side, card, chip_x, cy + chip_line * line_h)
             y += height
 
     @staticmethod
@@ -271,29 +285,38 @@ class Hud:
         A face card is any detection with its name (one deck, so they are all
         this card). A face-down card is the BACK detection nearest its position."""
         if card.label == BACK:
-            mine = [d for d in dets if d.label == BACK]
-            return min(mine, key=lambda d: (d.cx - card.x) ** 2 + (d.cy - card.y) ** 2).box if mine else None
-        mine = [d for d in dets if d.label == card.label]
-        return min(mine, key=lambda d: d.box[1]).box if mine else None
+            mine = [det for det in dets if det.label == BACK]
+            if not mine:
+                return None
+            return min(mine, key=lambda det: (det.cx - card.x) ** 2 + (det.cy - card.y) ** 2).box
+        mine = [det for det in dets if det.label == card.label]
+        if not mine:
+            return None
+        return min(mine, key=lambda det: det.box[1]).box
 
     def _card_tag(self, img, card: Card, box, tags):
         """Badge + name just above the card's topmost corner index (below it if there is no room).
         tags: tags already drawn; this one stacks above any it would cover. Returns its rectangle."""
         H, W = img.shape[:2]
         w, h, base = self._size(card.label, 0.8)
-        tag_w, tag_h = 2 * self.r + self.pad + w + self.pad, max(2 * self.r, h + base) + self.pad
+        tag_w = 2 * self.r + self.pad + w + self.pad
+        tag_h = max(2 * self.r, h + base) + self.pad
+        gap = self.pad // 2
         if box is None:  # hidden, or not detected this frame: use the last known position
             box = (card.x, card.y, card.x, card.y)
         x = int(min(max(box[0], 0), W - tag_w))
-        y = int(box[1] - self.pad // 2 - tag_h)
+        y = int(box[1] - gap - tag_h)
         if y < 0:
-            y = int(box[3] + self.pad // 2)
+            y = int(box[3] + gap)
+        # Moving above one tag can cover another, so repeat once per tag at most.
         for _ in range(len(tags) + 1):
-            hit = next((ay1 for ax1, ay1, ax2, ay2 in tags
-                        if x < ax2 and x + tag_w > ax1 and y < ay2 and y + tag_h > ay1), None)
-            if hit is None or hit - tag_h - self.pad // 2 < 0:
+            covered_top = _top_of_overlap(tags, (x, y, x + tag_w, y + tag_h))
+            if covered_top is None:
                 break
-            y = hit - tag_h - self.pad // 2
+            above = covered_top - tag_h - gap
+            if above < 0:
+                break  # no room above it: stay put
+            y = above
         y = int(min(max(y, 0), H - tag_h))
         self._panel(img, x, y, x + tag_w, y + tag_h, alpha=0.8)
         self._chip(img, card, x + self.pad // 2, y + tag_h // 2)
@@ -310,8 +333,8 @@ class Hud:
         status = f"{fps:4.1f} fps"
         if capture_mode:
             status = "CAPTURE MODE (no model)    " + status
-        sw = self._size(status, 0.5)[0]
-        self._text(img, status, (W - sw - self.pad, ty), 0.5, AMBER if capture_mode else GREY)
+        status_w = self._size(status, 0.5)[0]
+        self._text(img, status, (W - status_w - self.pad, ty), 0.5, AMBER if capture_mode else GREY)
 
         if self._message and time.time() < self._message_until:
             mw, mh, mb = self._size(self._message, 0.9)

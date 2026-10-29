@@ -12,7 +12,8 @@ def fake_export(raw, group, name, labels=("0 0.5 0.5 0.05 0.05",), roboflow=True
         (e / "train" / "labels" / f"img{i}.txt").write_text("\n".join(labels) + "\n")
     rf = "roboflow:\n  workspace: w\n  project: p\n  url: https://x/p\n  license: CC BY 4.0\n" if roboflow else ""
     (e / "data.yaml").write_text(f"train: ../train/images\nval: ../valid/images\nnc: 53\nnames: ['AS']\n{rf}")
-    (e / "README.roboflow.txt").write_text("\nThis dataset was exported via roboflow.com on October 13, 2026 at 7:24 PM GMT\n")
+    (e / "README.roboflow.txt").write_text(
+        "\nThis dataset was exported via roboflow.com on October 13, 2026 at 7:24 PM GMT\n")
     return e
 
 
@@ -28,7 +29,8 @@ def test_manifest_records_source_counts_and_fingerprint(tmp_path):
     assert a["images"] == {"train": 2} and a["label_files"] == 2 and a["boxes"] == 4
     assert a["files"] == 6  # 2 images, 2 labels, data.yaml, README; the preview sheet is skipped
     assert "source" not in m["exports"]["unused/oneCard"]
-    assert json.loads((tmp_path / "manifest.json").read_text())["exports"].keys() == {"labeled/tableA", "unused/oneCard"}
+    written = json.loads((tmp_path / "manifest.json").read_text())
+    assert written["exports"].keys() == {"labeled/tableA", "unused/oneCard"}
 
 
 def test_check_passes_then_catches_a_changed_label_and_a_missing_export(tmp_path):

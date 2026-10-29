@@ -29,21 +29,22 @@ def read_labels(out, split):
 
 
 def test_class_ids_are_remapped_by_name_ignoring_case(tmp_path):
-    e = export(tmp_path / "raw", "ex", ["10h", "Ks", "AS"], {"train": {"a": [(0, 0.1, 0.1), (1, 0.5, 0.5), (2, 0.9, 0.9)]}})
+    e = export(tmp_path / "raw", "ex", ["10h", "Ks", "AS"],
+               {"train": {"a": [(0, 0.1, 0.1), (1, 0.5, 0.5), (2, 0.9, 0.9)]}})
     out = tmp_path / "out"
     for s in ("train", "val"):
         (out / "images" / s).mkdir(parents=True)
         (out / "labels" / s).mkdir(parents=True)
     dataset.import_export(e, out, "e0_", 0.0)
     lines = (out / "labels" / "train" / "e0_a.txt").read_text().splitlines()
-    assert [int(l.split()[0]) for l in lines] == [CLASS_TO_ID["10H"], CLASS_TO_ID["KS"], CLASS_TO_ID["AS"]]
+    assert [int(line.split()[0]) for line in lines] == [CLASS_TO_ID["10H"], CLASS_TO_ID["KS"], CLASS_TO_ID["AS"]]
     assert lines[0].split()[1:] == ["0.1", "0.1", "0.04", "0.04"]  # coordinates untouched
     assert (out / "images" / "train" / "e0_a.jpg").read_bytes() == b"\xff\xd8a"
 
 
 def test_dict_names_and_the_exports_own_split_are_kept(tmp_path):
-    e = export(tmp_path / "raw", "ex", {0: "AS", 1: "2S"},
-               {"train": {"t": [(0, 0.5, 0.5)]}, "valid": {"v": [(1, 0.5, 0.5)]}, "test": {"x": [(0, 0.5, 0.5)]}})
+    export(tmp_path / "raw", "ex", {0: "AS", 1: "2S"},
+           {"train": {"t": [(0, 0.5, 0.5)]}, "valid": {"v": [(1, 0.5, 0.5)]}, "test": {"x": [(0, 0.5, 0.5)]}})
     out = tmp_path / "out"
     dataset.build(out, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 0, 0.15)
     assert set(read_labels(out, "train")) == {"e0_t.txt"}
@@ -75,7 +76,8 @@ def test_exports_that_are_not_corner_labels_are_skipped(tmp_path, capsys):
 
 
 def test_images_without_usable_boxes_are_left_out(tmp_path, capsys):
-    e = export(tmp_path / "raw", "ex", ["AS", "joker"], {"train": {"a": [(0, 0.5, 0.5)], "b": [(1, 0.5, 0.5)], "c": []}})
+    export(tmp_path / "raw", "ex", ["AS", "joker"],
+           {"train": {"a": [(0, 0.5, 0.5)], "b": [(1, 0.5, 0.5)], "c": []}})
     out = tmp_path / "out"
     dataset.build(out, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 0, 0.0)
     assert set(read_labels(out, "train")) == {"e0_a.txt"}

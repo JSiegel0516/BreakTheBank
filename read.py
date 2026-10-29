@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import csv
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import cv2
@@ -59,10 +60,12 @@ def list_cameras():
             print(f"--source {i}: {note}")
         tile = cv2.resize(frame, (640, round(640 * frame.shape[0] / frame.shape[1])))
         cv2.rectangle(tile, (0, 0), (640, 44), (25, 25, 25), -1)
-        cv2.putText(tile, f"--source {i}   {note}", (12, 31), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 220, 255), 2, cv2.LINE_AA)
+        cv2.putText(tile, f"--source {i}   {note}", (12, 31), cv2.FONT_HERSHEY_DUPLEX, 0.8, (0, 220, 255), 2,
+                    cv2.LINE_AA)
         tiles.append(tile)
-    height = max(t.shape[0] for t in tiles)
-    sheet = np.hstack([cv2.copyMakeBorder(t, 0, height - t.shape[0], 0, 0, cv2.BORDER_CONSTANT) for t in tiles])
+    height = max(tile.shape[0] for tile in tiles)
+    padded = [cv2.copyMakeBorder(tile, 0, height - tile.shape[0], 0, 0, cv2.BORDER_CONSTANT) for tile in tiles]
+    sheet = np.hstack(padded)
     cv2.imshow("cameras (press any key to close)", sheet)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
@@ -72,18 +75,24 @@ def list_cameras():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default=settings.CAMERA_SOURCE, help="camera index, video file, or stream URL")
-    ap.add_argument("--model", default=settings.MODEL_PATH, help="trained .pt weights; capture mode if the file is missing")
+    ap.add_argument("--model", default=settings.MODEL_PATH,
+                    help="trained .pt weights; capture mode if the file is missing")
     ap.add_argument("--imgsz", type=int, default=settings.INPUT_SIZE)
     ap.add_argument("--conf", type=float, default=settings.CONFIDENCE)
     ap.add_argument("--device", default=None, help="mps, cuda, or cpu (auto if omitted)")
     ap.add_argument("--width", type=int, default=settings.CAMERA_WIDTH)
     ap.add_argument("--height", type=int, default=settings.CAMERA_HEIGHT)
     ap.add_argument("--players", type=int, default=None,
-                    help=f"player seats, 1 to {MAX_PLAYERS} (default: the count used last, else PLAYERS in settings.py)")
+                    help=f"player seats, 1 to {MAX_PLAYERS} "
+                         "(default: the count used last, else PLAYERS in settings.py)")
     ap.add_argument("--log", default=None, help="append every event to this CSV file")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--list-cameras", action="store_true", help="show a snapshot from every camera, then exit")
     args = ap.parse_args()
+    try:
+        settings.validate(settings)
+    except ValueError as error:
+        raise SystemExit(error) from None
     if args.list_cameras:
         list_cameras()
         return
@@ -109,49 +118,47 @@ def main():
     else:
         layout = SeatLayout(args.players or settings.PLAYERS, W, H)
 
-    log_file = log = None
-    if args.log:
-        new_file = not Path(args.log).exists()
-        log_file = open(args.log, "a", newline="")
-        log = csv.writer(log_file)
-        if new_file:
-            log.writerow(LOG_HEADER)
+    with ExitStack() as cleanup:  # closes the log file, if any, on the way out
+        log = None
+        if args.log:
+            new_file = not Path(args.log).exists()
+            log = csv.writer(cleanup.enter_context(open(args.log, "a", newline="")))
+            if new_file:
+                log.writerow(LOG_HEADER)
 
-    tracker = CardTracker(TrackerConfig.from_settings(settings, W))
-    hud = Hud()
-    reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log)
-    if not args.no_display:
-        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)  # resizable, so a 4K feed fits on a laptop screen
-        cv2.setMouseCallback(WINDOW, reader.editor.on_mouse)
-    t_last, fps = time.time(), 0.0
-    try:
-        while True:
-            ok, frame = cam.read()
-            if not ok:
-                if cam.is_file:
+        tracker = CardTracker(TrackerConfig.from_settings(settings, W))
+        hud = Hud()
+        reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log)
+        if not args.no_display:
+            cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)  # resizable, so a 4K feed fits on a laptop screen
+            cv2.setMouseCallback(WINDOW, reader.editor.on_mouse)
+        t_last, fps = time.time(), 0.0
+        try:
+            while True:
+                ok, frame = cam.read()
+                if not ok:
+                    if cam.is_file:
+                        break
+                    time.sleep(0.01)
+                    continue
+                dets = detector(frame) if detector else []
+                reader.process(frame, dets)
+
+                now = time.time()
+                fps = 0.9 * fps + 0.1 / max(now - t_last, 1e-6)
+                t_last = now
+                if args.no_display:
+                    continue
+                cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.round, fps, reader.layout, reader.count,
+                                            capture_mode=detector is None, editor=reader.editor))
+                if not reader.handle_key(cv2.waitKey(1) & 0xFF, frame):
                     break
-                time.sleep(0.01)
-                continue
-            dets = detector(frame) if detector else []
-            reader.process(frame, dets)
-
-            now = time.time()
-            fps = 0.9 * fps + 0.1 / max(now - t_last, 1e-6)
-            t_last = now
-            if args.no_display:
-                continue
-            cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.round, fps, reader.layout, reader.count,
-                                        capture_mode=detector is None, editor=reader.editor))
-            if not reader.handle_key(cv2.waitKey(1) & 0xFF, frame):
-                break
-    finally:
-        cam.release()
-        cv2.destroyAllWindows()
-        if log_file:
-            log_file.close()
-        count = reader.count
-        print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
-        print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
+        finally:
+            cam.release()
+            cv2.destroyAllWindows()
+            count = reader.count
+            print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
+            print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
 
 
 if __name__ == "__main__":

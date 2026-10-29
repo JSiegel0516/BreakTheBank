@@ -30,6 +30,13 @@ The tracker smooths that out and remembers the order cards arrived in:
     round already has one. That collapses a card's corner indices, and a stray
     misread elsewhere cannot add a second King of Hearts. Face-down cards
     (BACK) are all different cards.
+  * A hole card turned face up keeps its number. A BACK box is centred on the
+    card, but face boxes are corner indices about half the card's diagonal
+    away, so they start new tracks. A new face track with no card of its name
+    joins the nearest face-down card within 3 * match_dist that is hidden or
+    missing this frame (every one of its tracks missed it); the card's other
+    corner then joins it by name. A face-down card still in view is never
+    taken, so neighbouring face-down cards keep their own reveals.
 
 Memory, so a card is never counted twice:
 
@@ -43,7 +50,14 @@ Memory, so a card is never counted twice:
   * shoe_seen lists every face card seen since the last shuffle, each once,
     in the order first seen. The Hi-Lo count is computed from it, so a card
     that leaves and comes back, even in a later round, is never counted again.
-    new_shoe() clears it after a reshuffle.
+    A name stays in it while any card of the round holds it, so renaming one of
+    two cards that share a name does not uncount the other.
+  * shoe_unrevealed counts the face-down cards placed this shoe that were never
+    renamed to a face (a hole card swept face down, say). They have left the
+    deck, so shoe_count subtracts them from cards_left, but they add nothing to
+    the running count. A face-down card still on the table across new_round()
+    gets a new number but is not added again.
+  * new_shoe() clears both after a reshuffle.
 
 All thresholds live in TrackerConfig; TrackerConfig.from_settings turns the
 fractions of the frame width in settings.py into pixels.
@@ -71,7 +85,7 @@ class TrackerConfig:
     label_window: int | None = None    # frames the name vote looks back (None: every read ever)
 
     @classmethod
-    def from_settings(cls, s, frame_width: int) -> "TrackerConfig":
+    def from_settings(cls, s, frame_width: int) -> TrackerConfig:
         """From settings.py, with distances given as fractions of the frame width."""
         return cls(confirm_frames=s.CONFIRM_FRAMES, confirm_window=s.CONFIRM_WINDOW,
                    confirm_agreement=s.CONFIRM_AGREEMENT, confirm_confidence=s.CONFIRM_CONFIDENCE,
@@ -100,52 +114,69 @@ class CardTracker:
         self.tracks: dict[int, Track] = {}
         self._next_id = 1
         self.frame = 0
+        self._card_of: dict[int, Card] = {}  # track id -> the card it belongs to
+        self._dealt_backs: set[int] = set()  # ids of tracks of face-down cards already in shoe_unrevealed
         self.new_shoe()
 
     def new_round(self):
-        """Start a new round: forget the table, numbering restarts at 1. The count is kept."""
+        """Start a new round: forget the table, numbering restarts at 1. The count is kept.
+
+        A face-down card still on the table is placed again with a new number,
+        but it is the card already dealt, so it is not added to shoe_unrevealed twice."""
+        self._dealt_backs |= {track_id for track_id, card in self._card_of.items() if card.label == BACK}
         self.round: list[Card] = []
-        self._card_of: dict[int, Card] = {}  # track id -> the card it belongs to
+        self._card_of = {}
         self._empty_frames = 0
 
     def new_shoe(self):
         """After a reshuffle: a new round, and every card can be counted again."""
         self.new_round()
+        self._dealt_backs = set()
         self.shoe_seen: list[str] = []
+        self.shoe_unrevealed = 0  # face-down cards placed this shoe and never renamed to a face
 
     def update(self, detections: list[Detection]) -> list[Event]:
+        """Advance one frame with that frame's detections.
+
+        Returns the events this frame caused: placed cards first, then renamed,
+        hidden, and returned cards in placement order, and round_over last.
+        round_over also starts a new round."""
         self.frame += 1
         self._match(detections)
-        for t in self.tracks.values():
-            if not t.confirmed and self._passes_checks(t):
-                t.confirmed = True
+        for track in self.tracks.values():
+            if not track.confirmed and self._passes_checks(track):
+                track.confirmed = True
         events: list[Event] = []
         # Track ids grow with first sighting, so earlier cards get lower numbers.
-        confirmed = [t for t in sorted(self.tracks.values(), key=lambda t: t.id) if t.confirmed]
+        by_age = sorted(self.tracks.values(), key=lambda track: track.id)
+        confirmed = [track for track in by_age if track.confirmed]
 
         # A track already bound to a card stays with it. Any other joins the card
-        # with its name (one deck), a hidden face-down card near it, or starts a new one.
+        # with its name (one deck), a face-down card near it, or starts a new one.
         tracks_of: dict[int, list[Track]] = {}  # card order -> its tracks this frame
-        for t in confirmed:
-            card = self._card_of.get(t.id)
+        for track in confirmed:
+            card = self._card_of.get(track.id)
             if card is None:
-                card = self._card_for(t)
+                card = self._card_for(track)
                 if card is None:
-                    card = Card(len(self.round) + 1, t.label, t.cx, t.cy, self.frame)
+                    card = Card(len(self.round) + 1, track.label, track.cx, track.cy, self.frame)
                     self.round.append(card)
                     self._count(card)
+                    if card.label == BACK and track.id not in self._dealt_backs:
+                        self.shoe_unrevealed += 1
                     events.append(Event("placed", card, self.frame))
-                self._card_of[t.id] = card
-            tracks_of.setdefault(card.order, []).append(t)
+                self._card_of[track.id] = card
+            tracks_of.setdefault(card.order, []).append(track)
 
         for card in self.round:
-            ts = tracks_of.get(card.order)
-            if not ts:
+            card_tracks = tracks_of.get(card.order)
+            if not card_tracks:
                 if not card.hidden:
                     card.hidden = True
                     events.append(Event("hidden", card, self.frame))
                 continue
-            label = sum((t.votes for t in ts), Counter()).most_common(1)[0][0]
+            votes = sum((track.votes for track in card_tracks), Counter())
+            label = votes.most_common(1)[0][0]
             if label != card.label:
                 was = card.label
                 self._rename(card, label)
@@ -153,9 +184,13 @@ class CardTracker:
             if card.hidden:
                 card.hidden = False
                 events.append(Event("returned", card, self.frame))
-            card.x, card.y = ts[0].cx, ts[0].cy
+            card.x, card.y = card_tracks[0].cx, card_tracks[0].cy
 
-        self._empty_frames = self._empty_frames + 1 if self.round and not tracks_of else 0
+        all_hidden = bool(self.round) and not tracks_of
+        if all_hidden:
+            self._empty_frames += 1
+        else:
+            self._empty_frames = 0
         if self._empty_frames >= self.cfg.round_end_frames:
             events.append(Event("round_over", None, self.frame))
             self.new_round()
@@ -165,20 +200,42 @@ class CardTracker:
         """Cards visible right now, in the order they were placed."""
         return [c for c in self.round if not c.hidden]
 
-    # ------------------------------------------------------------ cards
-    def _card_for(self, t: Track) -> Card | None:
-        """The card of this round an unbound track belongs to, if any."""
-        if t.label != BACK:
-            return next((c for c in self.round if c.label == t.label), None)
-        return self._hidden_back_near(t.cx, t.cy)
+    def _card_for(self, track: Track) -> Card | None:
+        """The card of this round an unbound track belongs to, if any.
 
-    def _hidden_back_near(self, x: float, y: float) -> Card | None:
-        best, best_d = None, 3 * self.cfg.match_dist  # a whole-card box can shift a little when picked up
-        for c in self.round:
-            if c.hidden and c.label == BACK:
-                d = ((c.x - x) ** 2 + (c.y - y) ** 2) ** 0.5
-                if d <= best_d:
-                    best, best_d = c, d
+        A face track joins the card with its name, or a face-down card being
+        revealed whose other corner already reads that name. Otherwise it joins a
+        nearby face-down card that is out of sight this frame: the hole card it
+        was before it was turned over. A BACK track only joins a hidden face-down
+        card near it."""
+        if track.label == BACK:
+            return self._back_card_near(track.cx, track.cy, include_unseen=False)
+        for card in self.round:
+            if card.label == track.label:
+                return card
+            if card.label == BACK and any(t.label == track.label for t in self._tracks_of_card(card)):
+                return card
+        return self._back_card_near(track.cx, track.cy, include_unseen=True)
+
+    def _tracks_of_card(self, card: Card) -> list[Track]:
+        return [self.tracks[track_id] for track_id, bound in self._card_of.items() if bound is card]
+
+    def _back_card_near(self, x: float, y: float, include_unseen: bool) -> Card | None:
+        """The nearest face-down card within 3 match distances of (x, y) that is hidden or,
+        with include_unseen, missing this frame: every one of its tracks missed it.
+
+        The limit allows for a whole-card BACK box being centred on the card while
+        a corner index sits about half the card's diagonal away from that centre."""
+        best, best_dist = None, 3 * self.cfg.match_dist
+        for card in self.round:
+            if card.label != BACK:
+                continue
+            unseen = all(track.missed > 0 for track in self._tracks_of_card(card))
+            if not (card.hidden or (include_unseen and unseen)):
+                continue
+            dist = ((card.x - x) ** 2 + (card.y - y) ** 2) ** 0.5
+            if dist <= best_dist:
+                best, best_dist = card, dist
         return best
 
     def _count(self, card: Card, at: int | None = None):
@@ -188,79 +245,93 @@ class CardTracker:
             card.counted = True
 
     def _rename(self, card: Card, label: str):
-        """The vote changed its mind: same card, new name, and the count follows."""
+        """The vote changed its mind: same card, new name, and the count follows.
+
+        The old name leaves the count only if no other card of the round still
+        holds it; otherwise that card keeps it counted."""
         at = None
-        if card.counted:  # the old name was never on the table
-            at = self.shoe_seen.index(card.label)
-            self.shoe_seen.pop(at)
+        if card.counted:
             card.counted = False
+            holder = next((c for c in self.round if c is not card and c.label == card.label), None)
+            if holder is not None:
+                holder.counted = True
+            else:  # the old name was never on the table
+                at = self.shoe_seen.index(card.label)
+                self.shoe_seen.pop(at)
+        if card.label == BACK and label != BACK:
+            self.shoe_unrevealed -= 1
+        elif card.label != BACK and label == BACK:
+            self.shoe_unrevealed += 1
         card.label = label
         self._count(card, at)
 
-    # ------------------------------------------------------------ tracks
     def _match(self, detections: list[Detection]):
         # Greedy nearest-neighbour matching, closest pairs first.
         pairs = []
-        for di, d in enumerate(detections):
-            for tid, t in self.tracks.items():
-                dist = ((d.cx - t.cx) ** 2 + (d.cy - t.cy) ** 2) ** 0.5
+        for det_i, det in enumerate(detections):
+            for track_id, track in self.tracks.items():
+                dist = ((det.cx - track.cx) ** 2 + (det.cy - track.cy) ** 2) ** 0.5
                 if dist <= self.cfg.match_dist:
-                    pairs.append((dist, di, tid))
+                    pairs.append((dist, det_i, track_id))
         pairs.sort()
-        used_d: set[int] = set()
-        hit_t: set[int] = set()
-        for _, di, tid in pairs:
-            if di in used_d or tid in hit_t:
+        used_dets: set[int] = set()
+        hit_tracks: set[int] = set()
+        for _, det_i, track_id in pairs:
+            if det_i in used_dets or track_id in hit_tracks:
                 continue
-            used_d.add(di)
-            hit_t.add(tid)
-            self._hit(self.tracks[tid], detections[di])
+            used_dets.add(det_i)
+            hit_tracks.add(track_id)
+            self._hit(self.tracks[track_id], detections[det_i])
 
         # Unmatched detections start new tracks, highest confidence first.
-        for di in sorted(set(range(len(detections))) - used_d, key=lambda i: -detections[i].conf):
-            t = Track(self._next_id, detections[di].cx, detections[di].cy)
+        unmatched = set(range(len(detections))) - used_dets
+        for det_i in sorted(unmatched, key=lambda i: -detections[i].conf):
+            track = Track(self._next_id, detections[det_i].cx, detections[det_i].cy)
             self._next_id += 1
-            self._hit(t, detections[di])
-            self.tracks[t.id] = t
-            hit_t.add(t.id)
+            self._hit(track, detections[det_i])
+            self.tracks[track.id] = track
+            hit_tracks.add(track.id)
 
         # Unmatched tracks accumulate misses and are dropped after drop_frames.
-        for tid in list(self.tracks):
-            if tid in hit_t:
+        for track_id in list(self.tracks):
+            if track_id in hit_tracks:
                 continue
-            t = self.tracks[tid]
-            t.missed += 1
-            if t.missed >= self.cfg.drop_frames:
-                del self.tracks[tid]
-                self._card_of.pop(tid, None)
+            track = self.tracks[track_id]
+            track.missed += 1
+            if track.missed >= self.cfg.drop_frames:
+                del self.tracks[track_id]
+                self._card_of.pop(track_id, None)
+                self._dealt_backs.discard(track_id)
 
-    def _hit(self, t: Track, d: Detection):
-        if t.seen:
-            t.cx = 0.7 * t.cx + 0.3 * d.cx  # light smoothing against jitter
-            t.cy = 0.7 * t.cy + 0.3 * d.cy
-        t.hits.append((self.frame, d.conf, d.cx, d.cy, d.label))
-        t.seen += 1
-        t.missed = 0
-        w = self.cfg.label_window
-        if w is None:
-            t.votes[d.label] += 1
+    def _hit(self, track: Track, det: Detection):
+        if track.seen:
+            track.cx = 0.7 * track.cx + 0.3 * det.cx  # light smoothing against jitter
+            track.cy = 0.7 * track.cy + 0.3 * det.cy
+        track.hits.append((self.frame, det.conf, det.cx, det.cy, det.label))
+        track.seen += 1
+        track.missed = 0
+        window = self.cfg.label_window
+        if window is None:
+            track.votes[det.label] += 1
         else:
-            t.votes = Counter(h[4] for h in t.hits if h[0] > self.frame - w)
-        t.label = t.votes.most_common(1)[0][0]
+            track.votes = Counter(hit[4] for hit in track.hits if hit[0] > self.frame - window)
+        track.label = track.votes.most_common(1)[0][0]
 
-    def _passes_checks(self, t: Track) -> bool:
+    def _passes_checks(self, track: Track) -> bool:
         """Has this track earned confirmation? See the module docstring for the checks."""
         cfg = self.cfg
-        recent = [h for h in t.hits if cfg.confirm_window is None or h[0] > self.frame - cfg.confirm_window]
+        window = cfg.confirm_window
+        recent = [hit for hit in track.hits if window is None or hit[0] > self.frame - window]
         if len(recent) < cfg.confirm_frames:
             return False  # not seen enough, or not steadily enough
-        if t.votes[t.label] < cfg.confirm_agreement * sum(t.votes.values()):
+        if track.votes[track.label] < cfg.confirm_agreement * sum(track.votes.values()):
             return False  # the reads disagree on which card this is
-        if sum(h[1] for h in recent) / len(recent) < cfg.confirm_confidence:
+        if sum(hit[1] for hit in recent) / len(recent) < cfg.confirm_confidence:
             return False  # the model is not sure enough
         if cfg.still_distance is not None:
-            xs, ys = [h[2] for h in recent], [h[3] for h in recent]
-            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
-            if max(((x - mx) ** 2 + (y - my) ** 2) ** 0.5 for x, y in zip(xs, ys)) > cfg.still_distance:
+            xs, ys = [hit[2] for hit in recent], [hit[3] for hit in recent]
+            mean_x, mean_y = sum(xs) / len(xs), sum(ys) / len(ys)
+            offsets = [((x - mean_x) ** 2 + (y - mean_y) ** 2) ** 0.5 for x, y in zip(xs, ys, strict=True)]
+            if max(offsets) > cfg.still_distance:
                 return False  # still moving
         return True

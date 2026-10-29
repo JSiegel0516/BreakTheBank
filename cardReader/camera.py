@@ -15,6 +15,12 @@ import cv2
 
 
 class Camera:
+    """One video source: a device index, a video file path, or a stream URL.
+
+    Raises RuntimeError if it cannot be opened. width and height are requested
+    from a live device, which may ignore them; `size` is what it actually gives.
+    Call release() when done, or use it as a context manager."""
+
     def __init__(self, source: int | str = 0, width: int | None = None, height: int | None = None):
         self.source = source
         self.is_file = isinstance(source, str) and Path(source).exists()
@@ -94,9 +100,9 @@ def snapshot_cameras(max_index: int = 5) -> list[tuple[int, object]]:
             continue
         frame = None
         for _ in range(30):  # cameras need a moment to adjust exposure after opening
-            ok, f = cap.read()
+            ok, grabbed = cap.read()
             if ok:
-                frame = f
+                frame = grabbed
             time.sleep(0.03)
         cap.release()
         found.append((i, frame))

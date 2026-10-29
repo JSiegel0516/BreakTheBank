@@ -39,7 +39,7 @@ def test_rotate_points_matches_pil_rotate_with_expand():
         ow, oh = rot.size
         pts = synthetic.rotate_points([(cw / 2, ch / 2)] + synthetic.rect_corners(0, 0, cw, ch), angle, cw, ch, ow, oh)
         assert np.allclose(pts[0], (ow / 2, oh / 2))                      # the centre stays the centre
-        xs, ys = zip(*pts[1:])
+        xs, ys = zip(*pts[1:], strict=True)
         assert np.allclose((min(xs), min(ys), max(xs), max(ys)), (0, 0, ow, oh), atol=1.0)  # corners span the output
 
 
@@ -77,7 +77,8 @@ def test_generate_writes_images_and_yolo_label_files(tmp_path):
         (tmp_path / "images" / s).mkdir(parents=True)
         (tmp_path / "labels" / s).mkdir(parents=True)
     synthetic.generate(tmp_path, 4, tmp_path / "noart", tmp_path / "nobg", 0.5, size=(320, 240), max_cards=3)
-    images = sorted((p for s in ("train", "val") for p in (tmp_path / "images" / s).glob("*.jpg")), key=lambda p: p.name)
+    images = sorted((p for s in ("train", "val") for p in (tmp_path / "images" / s).glob("*.jpg")),
+                    key=lambda p: p.name)
     assert [p.name for p in images] == [f"synth_{i:06d}.jpg" for i in range(4)]
     for img in images:
         lines = (tmp_path / "labels" / img.parent.name / (img.stem + ".txt")).read_text().split("\n")

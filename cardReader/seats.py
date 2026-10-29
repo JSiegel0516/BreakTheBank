@@ -55,27 +55,27 @@ class SeatLayout:
         self.width, self.height = width, height
         self.seats = [Seat(DEALER if i == 0 else f"P{i}", self.template(i)) for i in range(self.players + 1)]
         if polygons is not None:
-            for seat, poly in zip(self.seats, polygons):
+            for seat, poly in zip(self.seats, polygons, strict=False):
                 seat.polygon = np.array(poly, np.int32)
 
     def names(self) -> list[str]:
-        return [s.name for s in self.seats]
+        return [seat.name for seat in self.seats]
 
     def assign(self, x: float, y: float) -> str | None:
         """Name of the seat containing pixel (x, y), or None if it is in none."""
-        for s in self.seats:
-            if cv2.pointPolygonTest(s.polygon.reshape(-1, 1, 2), (float(x), float(y)), False) >= 0:
-                return s.name
+        for seat in self.seats:
+            if cv2.pointPolygonTest(seat.polygon.reshape(-1, 1, 2), (float(x), float(y)), False) >= 0:
+                return seat.name
         return None
 
     def template(self, i: int) -> np.ndarray:
         """Template corners of seat i (0 is the dealer, 1 is P1 ...), in pixels."""
         return self._dealer() if i == 0 else self._player(i - 1)
 
-    def resized(self, width: int, height: int) -> "SeatLayout":
+    def resized(self, width: int, height: int) -> SeatLayout:
         """The same layout for a different frame size."""
         sx, sy = width / self.width, height / self.height
-        return SeatLayout(self.players, width, height, [s.polygon * [sx, sy] for s in self.seats])
+        return SeatLayout(self.players, width, height, [seat.polygon * [sx, sy] for seat in self.seats])
 
     def save(self, path: str | Path):
         """Store this layout under its player count, keeping layouts saved for other counts."""
@@ -83,14 +83,14 @@ class SeatLayout:
         W, H = self.width, self.height
         data = self._read(path)
         data["layouts"][str(self.players)] = [
-            {"name": s.name, "polygon": [[round(x / W, 5), round(y / H, 5)] for x, y in s.polygon]}
-            for s in self.seats]
+            {"name": seat.name, "polygon": [[round(x / W, 5), round(y / H, 5)] for x, y in seat.polygon]}
+            for seat in self.seats]
         data["last"] = self.players
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2))
 
     @classmethod
-    def load(cls, path: str | Path, width: int, height: int, players: int | None = None) -> "SeatLayout | None":
+    def load(cls, path: str | Path, width: int, height: int, players: int | None = None) -> SeatLayout | None:
         """The layout saved for `players` (default: the count saved last), scaled to this
         frame size, or None if nothing was saved for that count."""
         data = cls._read(Path(path))
@@ -98,7 +98,7 @@ class SeatLayout:
         seats = data["layouts"].get(str(players))
         if seats is None:
             return None
-        return cls(players, width, height, [[(x * width, y * height) for x, y in s["polygon"]] for s in seats])
+        return cls(players, width, height, [[(x * width, y * height) for x, y in seat["polygon"]] for seat in seats])
 
     @staticmethod
     def _read(path: Path) -> dict:
@@ -123,8 +123,8 @@ class SeatLayout:
         py = cy + ARC_RADIUS[1] * H * math.sin(math.radians(angle))
         # v points from the seat towards the dealer, u runs along the arc
         vx, vy = cx - px, cy - py
-        n = math.hypot(vx, vy)
-        vx, vy = vx / n, vy / n
+        length = math.hypot(vx, vy)
+        vx, vy = vx / length, vy / length
         ux, uy = -vy, vx
         half_w = min(SEAT_WIDTH_MAX, 0.84 / self.players) * W / 2
         half_d = SEAT_DEPTH * H / 2
@@ -151,7 +151,8 @@ class ZoneEditor:
         self.layout = layout
         self.active = False
         self.selected: int | None = None   # index of the zone last clicked, for highlighting
-        self._drag: tuple | None = None    # (seat index, what, last x, last y); what = corner index, ("mid", edge) or None
+        # (seat index, what, last x, last y); what = corner index, ("mid", edge) or None
+        self._drag: tuple | None = None
 
     def handle_radius(self) -> int:
         return max(12, round(18 * self.layout.width / 1600))
@@ -210,13 +211,13 @@ class ZoneEditor:
         r = self.handle_radius()
         order = list(range(len(self.layout.seats)))[::-1]
         for i in order:
-            d = np.hypot(*(self.layout.seats[i].polygon - (x, y)).T)
-            if d.min() <= r:
-                return i, int(d.argmin())
+            dists = np.hypot(*(self.layout.seats[i].polygon - (x, y)).T)
+            if dists.min() <= r:
+                return i, int(dists.argmin())
         for i in order:
-            d = np.hypot(*(self.midpoints(self.layout.seats[i].polygon) - (x, y)).T)
-            if d.min() <= r:
-                return i, ("mid", int(d.argmin()))
+            dists = np.hypot(*(self.midpoints(self.layout.seats[i].polygon) - (x, y)).T)
+            if dists.min() <= r:
+                return i, ("mid", int(dists.argmin()))
         for i in order:
             poly = self.layout.seats[i].polygon.reshape(-1, 1, 2)
             if cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0:

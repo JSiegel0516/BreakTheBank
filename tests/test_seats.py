@@ -66,7 +66,7 @@ def test_nothing_happens_outside_edit_mode():
     before = [s.polygon.copy() for s in e.layout.seats]
     cx, cy = (int(v) for v in before[0].mean(axis=0))
     drag(e, (cx, cy), (cx + 300, cy + 300))
-    assert all(np.array_equal(s.polygon, b) for s, b in zip(e.layout.seats, before))
+    assert all(np.array_equal(s.polygon, b) for s, b in zip(e.layout.seats, before, strict=True))
 
 
 def test_clicks_on_the_sidebar_are_ignored():
@@ -105,11 +105,8 @@ def test_save_and_load_keep_edits_at_any_resolution(tmp_path):
 def test_resized_scales_every_zone():
     layout = SeatLayout(4, W, H)
     small = layout.resized(W // 2, H // 2)
-    for a, b in zip(layout.seats, small.seats):
+    for a, b in zip(layout.seats, small.seats, strict=True):
         assert np.abs(b.polygon * 2 - a.polygon).max() <= 2
-
-
-# ------------------------------------------------------------ adding and removing corners
 
 
 def test_drag_a_midpoint_adds_a_corner_there():
@@ -166,9 +163,6 @@ def test_corner_wins_over_a_nearby_midpoint():
     p1 = e.layout.seats[1]
     corner = tuple(int(v) for v in p1.polygon[0])
     assert e._hit(*corner) == (1, 0)
-
-
-# ------------------------------------------------------------ one saved layout per player count
 
 
 def test_each_player_count_keeps_its_own_layout(tmp_path):

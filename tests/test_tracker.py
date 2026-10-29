@@ -73,9 +73,6 @@ def test_each_back_is_its_own_card():
     assert labels(tr) == ["BACK", "BACK"]
 
 
-# ------------------------------------------------------------ memory: hidden cards
-
-
 def test_covered_card_is_hidden_not_removed():
     tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
@@ -120,9 +117,6 @@ def test_face_down_card_far_away_is_a_new_card():
     run(tr, [det("7H", 400, 100)], 5)
     ev = run(tr, [det("7H", 400, 100), det("BACK", 800, 500)], 3)
     assert [(e.kind, e.card.order) for e in ev] == [("placed", 3)]
-
-
-# ------------------------------------------------------------ memory: rounds and shoes
 
 
 def test_round_ends_when_table_stays_empty():
@@ -187,9 +181,6 @@ def test_face_down_cards_are_not_counted():
     assert tr.shoe_seen == ["9S"]
 
 
-# ------------------------------------------------------------ confirmation checks
-
-
 def test_flickering_detection_is_not_confirmed_when_seen_steadily_is_required():
     tr = CardTracker(confirm_frames=6, drop_frames=30, confirm_window=8)
     for _ in range(12):                 # seen every other frame: 12 sightings over 24 frames
@@ -232,9 +223,6 @@ def test_small_jitter_still_counts_as_held_still():
     for dx, dy in [(0, 0), (2, -1), (-2, 1), (1, 2), (-1, -2)]:
         tr.update([det("2H", 300 + dx, 200 + dy)])
     assert labels(tr) == ["2H"]
-
-
-# ------------------------------------------------------------ the name can change: renamed in place
 
 
 def test_hole_card_turned_face_up_is_renamed_not_added():
@@ -285,6 +273,70 @@ def test_without_a_label_window_the_vote_is_over_every_read():
     run(tr, [det("BACK", 100, 100)], 20)
     run(tr, [det("KS", 100, 100)], 15)                   # 15 of 35 reads: BACK still wins
     assert tr.round[0].label == "BACK"
+
+
+def real_tracker():
+    """The thresholds read.py uses, for a 1920-pixel-wide frame (match distance about 58 px)."""
+    import settings
+    from cardReader.tracker import TrackerConfig
+    return CardTracker(TrackerConfig.from_settings(settings, 1920))
+
+
+def corners(label, cx, cy):
+    """The two corner indices of a face-up card centred on (cx, cy): about half the diagonal
+    of a 110 x 160 px card away from its centre, where a BACK box is centred."""
+    return [det(label, cx - 45, cy - 80), det(label, cx + 45, cy + 80)]
+
+
+def test_hole_card_turned_face_up_with_real_geometry_keeps_its_number():
+    tr = real_tracker()
+    run(tr, [det("BACK", 900, 300), *corners("7H", 1200, 300)], 30)   # dealer: hole card and up card
+    assert [(c.order, c.label) for c in tr.round] == [(1, "BACK"), (2, "7H")]
+    ev = run(tr, [*corners("KS", 900, 300), *corners("7H", 1200, 300)], 120)  # hole card turned over
+    assert [(e.kind, e.card.order, e.was) for e in ev] == [("renamed", 1, "BACK")]
+    assert [(c.order, c.label, c.hidden) for c in tr.round] == [(1, "KS", False), (2, "7H", False)]
+    assert tr.shoe_seen == ["7H", "KS"] and tr.shoe_unrevealed == 0
+
+
+def test_neighbouring_face_down_cards_revealed_in_turn_keep_their_own_numbers():
+    tr = real_tracker()
+    run(tr, [det("BACK", 800, 300), det("BACK", 930, 300)], 30)        # two cards side by side
+    run(tr, [*corners("QH", 800, 300), det("BACK", 930, 300)], 20)     # the left one is turned over
+    run(tr, [*corners("QH", 800, 300), *corners("4C", 930, 300)], 60)  # then the right one
+    assert [(c.order, c.label, c.hidden) for c in tr.round] == [(1, "QH", False), (2, "4C", False)]
+    assert tr.shoe_seen == ["QH", "4C"]
+
+
+def test_label_stays_counted_while_another_card_still_holds_it():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    run(tr, [det("9H", 50, 200), det("6H", 300, 200)], 3)
+    run(tr, [det("9H", 50, 200), det("9H", 300, 200)], 8)   # the second card is renamed to 9H too
+    run(tr, [det("5C", 50, 200), det("9H", 300, 200)], 8)   # the first card was really a 5C
+    assert [(c.order, c.label) for c in tr.round] == [(1, "5C"), (2, "9H")]
+    assert tr.shoe_seen == ["9H", "5C"]                     # 9H is still on the table
+
+
+def test_face_down_card_swept_without_a_reveal_is_remembered_until_the_next_shoe():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5)
+    run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
+    assert tr.shoe_unrevealed == 1
+    run(tr, [], 10)                                          # swept face down: round over
+    assert tr.round == [] and tr.shoe_unrevealed == 1
+    tr.new_shoe()
+    assert tr.shoe_unrevealed == 0
+
+
+def test_face_down_card_still_down_through_a_new_round_is_dealt_only_once():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    run(tr, [det("BACK", 100, 100)], 3)
+    assert tr.shoe_unrevealed == 1
+    tr.new_round()                                       # key r while the card is still face down
+    run(tr, [det("BACK", 100, 100)], 3)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "BACK")]
+    assert tr.shoe_unrevealed == 1                       # the same card, not a second one dealt
+    run(tr, [det("KS", 100, 100)], 10)                   # then it is turned over
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KS")]
+    assert tr.shoe_unrevealed == 0 and tr.shoe_seen == ["KS"]
 
 
 def test_config_object_and_keyword_overrides_agree():
