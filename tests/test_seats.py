@@ -1,10 +1,15 @@
+import itertools
+
 import cv2
 import numpy as np
+import pytest
 
-from cardReader.seats import SeatLayout, ZoneEditor
+from cardReader.seats import MAX_PLAYERS, SeatLayout, ZoneEditor
 
 W, H = 1920, 1080
 DOWN, MOVE, UP, RIGHT = cv2.EVENT_LBUTTONDOWN, cv2.EVENT_MOUSEMOVE, cv2.EVENT_LBUTTONUP, cv2.EVENT_RBUTTONDOWN
+COUNTS = range(1, MAX_PLAYERS + 1)
+EVERY_SEAT = [(players, i) for players in COUNTS for i in range(players + 1)]  # i = 0 is the dealer
 
 
 def editor(players=3):
@@ -18,6 +23,102 @@ def drag(e, start, end):
     e.on_mouse(MOVE, (start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
     e.on_mouse(MOVE, *end)
     e.on_mouse(UP, *end)
+
+
+def inward(point, step=30):
+    """point moved step pixels towards the middle of the frame on both axes."""
+    x, y = (int(v) for v in point)
+    return x + (step if x < W / 2 else -step), y + (step if y < H / 2 else -step)
+
+
+@pytest.mark.parametrize(("width", "height"), [(1920, 1080), (3840, 2160)])
+@pytest.mark.parametrize("players", COUNTS)
+def test_template_seats_lie_inside_the_frame_and_apart(players, width, height):
+    layout = SeatLayout(players, width, height)
+    for seat in layout.seats:
+        xs, ys = seat.polygon[:, 0], seat.polygon[:, 1]
+        assert (xs > 0).all() and (xs < width - 1).all() and (ys > 0).all() and (ys < height - 1).all(), seat.name
+    for a, b in itertools.combinations(layout.seats, 2):
+        overlap, _ = cv2.intersectConvexConvex(a.polygon.astype(np.float32), b.polygon.astype(np.float32))
+        assert overlap == 0, (a.name, b.name)
+
+
+@pytest.mark.parametrize(("players", "i"), EVERY_SEAT)
+def test_every_corner_of_every_seat_can_be_dragged(players, i):
+    for corner_i in range(4):
+        e = editor(players)
+        seat = e.layout.seats[i]
+        before = seat.polygon.copy()
+        target = inward(before[corner_i])
+        drag(e, tuple(int(v) for v in before[corner_i]), target)
+        assert tuple(seat.polygon[corner_i]) == target, (seat.name, corner_i)
+        assert np.array_equal(np.delete(seat.polygon, corner_i, axis=0), np.delete(before, corner_i, axis=0))
+
+
+@pytest.mark.parametrize(("players", "i"), EVERY_SEAT)
+def test_every_plus_of_every_seat_adds_a_corner(players, i):
+    for edge in range(4):
+        e = editor(players)
+        seat = e.layout.seats[i]
+        before = seat.polygon.copy()
+        mid = ZoneEditor.midpoints(before)[edge]
+        target = inward(mid)
+        drag(e, tuple(int(v) for v in mid), target)
+        assert len(seat.polygon) == 5 and tuple(seat.polygon[edge + 1]) == target, (seat.name, edge)
+
+
+@pytest.mark.parametrize(("players", "i"), EVERY_SEAT)
+def test_every_seat_can_be_moved_by_its_body(players, i):
+    e = editor(players)
+    seat = e.layout.seats[i]
+    before = seat.polygon.copy()
+    centre = tuple(int(v) for v in before.mean(axis=0))
+    target = inward(centre, step=20)
+    drag(e, centre, target)
+    assert e.selected == i
+    assert np.array_equal(seat.polygon, before + np.subtract(target, centre))
+
+
+def test_a_corner_dragged_past_the_edge_stops_there_and_is_grabbed_from_just_beyond():
+    e = editor()
+    last = e.layout.seats[-1]
+    right = int(last.polygon[:, 0].argmax())
+    y = int(last.polygon[right, 1])
+    drag(e, tuple(int(v) for v in last.polygon[right]), (W + 200, y))
+    assert tuple(last.polygon[right]) == (W - 1, y)
+    drag(e, (W + 10, y), (W - 100, y))  # pressed on the sidebar, next to the handle
+    assert tuple(last.polygon[right]) == (W - 100, y)
+
+    low = int(last.polygon[:, 1].argmax())
+    x = int(last.polygon[low, 0])
+    drag(e, (x, int(last.polygon[low, 1])), (x, H + 200))
+    assert tuple(last.polygon[low]) == (x, H - 1)
+    drag(e, (x, H + 10), (x, H - 80))  # pressed on the bottom bar, next to the handle
+    assert tuple(last.polygon[low]) == (x, H - 80)
+
+
+def test_the_nearer_of_two_close_corners_is_grabbed():
+    e = editor()
+    p1, p2 = e.layout.seats[1], e.layout.seats[2]
+    p2_corner = tuple(int(v) for v in p2.polygon[0])
+    near = (p2_corner[0] - 12, p2_corner[1])
+    drag(e, tuple(int(v) for v in p1.polygon[1]), near)
+    assert e._hit(*near) == (1, 1)
+    assert e._hit(*p2_corner) == (2, 0)
+
+
+@pytest.mark.parametrize("players", COUNTS)
+def test_edited_layouts_save_and_reload_at_the_same_shape(players, tmp_path):
+    e = editor(players)
+    for seat in e.layout.seats:
+        drag(e, tuple(int(v) for v in seat.polygon[0]), inward(seat.polygon[0], step=25))
+    path = tmp_path / "seats.json"
+    e.layout.save(path)
+    for width, height in ((W, H), (2 * W, 2 * H)):
+        loaded = SeatLayout.load(path, width, height, players)
+        scale = width / W
+        for a, b in zip(e.layout.seats, loaded.seats, strict=True):
+            assert np.abs(b.polygon - a.polygon * scale).max() <= scale, a.name
 
 
 def test_drag_one_corner_moves_only_that_corner():
