@@ -18,7 +18,8 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
 
 1. Set up the environment (see [Setup](#setup)).
 2. Point a camera straight down at the table (see [Setting up the camera](docs/reading.md#setting-up-the-camera)).
-3. Run `python read.py` and place cards one at a time. Each gets a number in the order placed.
+3. Activate the environment (`source .venv/bin/activate`), then run `python read.py`.
+   Place cards one at a time. Each gets a number in the order placed.
 4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared;
    press `Shift+R` after a reshuffle to reset the count, `Q` to quit.
 5. The sidebar starts in the counter view: a rank by suit grid that crosses off each card
@@ -141,6 +142,12 @@ after pulling keeps everyone on the same versions.
 
 Every command in this README and in `docs/` assumes this project's virtual
 environment is active (`source .venv/bin/activate`, run from the project folder).
+Activation lasts until the terminal closes, so run it again in each new terminal.
+To skip activation, put `uv run` in front instead, for example `uv run python read.py`.
+
+If you see `zsh: command not found: python`, the environment is not active.
+macOS has no `python` outside it, only `python3`, and the system `python3`
+does not have this project's packages.
 
 If you see `ModuleNotFoundError: No module named 'cv2'`, a different
 environment is active, for example one in a parent folder that is also named
