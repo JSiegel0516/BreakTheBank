@@ -39,6 +39,7 @@ def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args):
     """Run read.main() on a fake camera and detector with no real window, pressing one of `keys` per frame.
     args: extra command-line arguments. Saved frames go to tmp_path / "frames"."""
     monkeypatch.setattr(read, "Camera", lambda *a: cam)
+    detect.device_used = "mps"
     detector = ModuleType("cardReader.detector")
     detector.Detector = lambda *a: detect
     monkeypatch.setitem(sys.modules, "cardReader.detector", detector)
@@ -77,6 +78,7 @@ def test_stale_camera_shows_no_signal_feeds_nothing_to_the_tracker_and_c_reconne
     assert [no_signal for stale, no_signal in seen if stale] == [True, True, True]   # reads 5 to 7, until C
     assert (False, "fed") in seen and (False, False) in seen
     out = capsys.readouterr().out
+    assert f"model {tmp_path / 'x.pt'} on mps" in out
     assert "no signal from source" in out and "reconnected to source" in out
     assert "average time per frame: read" in out and "detect" in out
 

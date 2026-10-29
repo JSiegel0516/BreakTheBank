@@ -19,7 +19,7 @@ crossed off (locked), and a duplicate is ringed. Press v for the seats view,
 each seat's hand.
 
 Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
-      v counter or seats view | l legend and key list
+      v counter or seats view | l legend and key list | g show or hide the grey boxes
       r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
       Shift+V show the raw camera frame or the preprocessed one | q quit
@@ -187,7 +187,7 @@ def main():
         detector = Detector(args.model, args.imgsz, args.conf, args.device)
         live = live_model(settings.PROJECT_ROOT / settings.LIVE_MODEL_DIR)
         is_live = Path(args.model).resolve() == (settings.PROJECT_ROOT / settings.MODEL_PATH).resolve()
-        print(f"model {args.model}" + (f" (live model: {live})" if live and is_live else ""))
+        print(f"model {args.model} on {detector.device_used}" + (f" (live model: {live})" if live and is_live else ""))
     else:
         print(f"no model at {args.model}: running in capture mode (press s to save frames)")
 
@@ -268,6 +268,7 @@ def main():
                 shown = enhanced if reader.show_enhanced else frame
                 showing_raw = shown is not enhanced  # the window shows something other than what was detected
                 cv2.imshow(WINDOW, hud.draw(shown, dets, tracker.round, fps, reader.layout, reader.count,
+                                            bound=tracker.bound,
                                             capture_mode=detector is None, editor=reader.editor, dealt=dealt,
                                             stage_ms=timer.smoothed, no_signal=no_signal,
                                             preprocess=reader.preprocess, showing_raw=showing_raw))

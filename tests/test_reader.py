@@ -125,6 +125,15 @@ def test_p_cycles_the_preprocess_modes_and_shift_v_toggles_the_displayed_frame(t
     assert r.hud.view == "counter"                       # Shift+V is not V
 
 
+def test_g_hides_and_shows_the_unmatched_boxes(tmp_path):
+    r = make_reader(tmp_path)
+    assert r.hud.show_unmatched is True
+    r.handle_key(ord("g"), frame())
+    assert r.hud.show_unmatched is False and r.hud._message == "unmatched boxes hidden"
+    r.handle_key(ord("g"), frame())
+    assert r.hud.show_unmatched is True and r.hud._message == "unmatched boxes shown"
+
+
 def test_reader_starts_in_the_mode_it_is_given(tmp_path):
     r = Reader(CardTracker(), SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
                preprocess="clahe")
