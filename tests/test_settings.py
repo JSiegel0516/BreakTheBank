@@ -29,6 +29,13 @@ def test_shipped_settings_are_valid():
     ("CAMERA_WIDTH", -1, "None or a whole number of 1 or more"),
     ("SYNTHETIC_IMAGES", -5, "whole number of 0 or more"),
     ("BATCH_SIZE", True, "whole number of 1 or more"),
+    ("PREPROCESS", "sharpen", "one of 'off', 'gamma', 'clahe', 'auto'"),
+    ("PREPROCESS_BRIGHTEN_GAMMA", 0, "number above 0"),
+    ("PREPROCESS_DARKEN_GAMMA", -1.4, "number above 0"),
+    ("PREPROCESS_DARK_BELOW", -1, "number from 0 to 255"),
+    ("PREPROCESS_BRIGHT_ABOVE", 300, "number from 0 to 255"),
+    ("PREPROCESS_CLAHE_CLIP", 0, "number above 0"),
+    ("PREPROCESS_CLAHE_TILES", 0, "whole number of 1 or more"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:
@@ -40,6 +47,11 @@ def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, 
 def test_confirm_frames_cannot_exceed_the_window_they_are_counted_in():
     with pytest.raises(ValueError, match="CONFIRM_FRAMES = 15 must be at most CONFIRM_WINDOW = 10"):
         settings.validate(shipped(CONFIRM_WINDOW=10))
+
+
+def test_auto_dark_threshold_must_be_below_the_bright_one():
+    with pytest.raises(ValueError, match="PREPROCESS_DARK_BELOW = 200 must be below PREPROCESS_BRIGHT_ABOVE = 190"):
+        settings.validate(shipped(PREPROCESS_DARK_BELOW=200))
 
 
 def test_every_invalid_value_is_listed_at_once():

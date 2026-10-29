@@ -2,6 +2,7 @@
 
 Reading (read.py):
     camera.py    -> get a frame
+    preprocess.py -> optional contrast help for a dim or washed-out frame
     detector.py  -> find and name every corner index in the frame
     tracker.py   -> turn noisy per-frame detections into the ordered list of cards
     table.py     -> which seat each card is in, and the hand at every seat

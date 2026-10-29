@@ -88,3 +88,75 @@ limit is the training data rather than model size: more labelled photos of red
 cards would help more than a larger network. Model 3 stays live because it is
 as accurate and twice as fast, which leaves headroom for a 4K camera or a higher
 `INPUT_SIZE`.
+
+## Preprocessing for dim and bright light
+
+Does adjusting a frame's contrast before detection help the live model when
+the light is poor? `benchmark.py` relit every real validation photo (320
+photos, 3,449 labelled corner indices) to five brightness levels and ran
+each preprocess mode before the live model (model 3, `INPUT_SIZE` 1280,
+`CONFIDENCE` 0.6). A level is a gamma on the photo: 3.5 is very dark, 2.5 much
+darker, 1.8 darker, 1 unchanged, 0.6 brighter. A corner is found when a box's
+centre lies within half the corner's longer side of the labelled centre, and
+right when that box also has the corner's name. Run on 2026-10-29 with the
+settings shipped (`auto` thresholds 110 and 190):
+
+```
+python benchmark.py
+```
+
+| Level | Mode | Found | Right | Extra boxes | Preprocess ms |
+|---|---|---|---|---|---|
+| 3.5 (very dark) | off | 83.3% | 82.5% | 44 | 0.0 |
+| | gamma | **94.8%** | **94.2%** | 60 | 0.2 |
+| | clahe | 70.1% | 68.7% | 28 | 5.9 |
+| | auto | 94.0% | 93.4% | 59 | 0.4 |
+| 2.5 (much darker) | off | 92.3% | 91.6% | 57 | 0.0 |
+| | gamma | **96.6%** | **96.1%** | 66 | 0.2 |
+| | clahe | 81.9% | 80.9% | 38 | 5.5 |
+| | auto | 96.4% | 95.9% | 65 | 0.4 |
+| 1.8 (darker) | off | 96.0% | 95.4% | 63 | 0.0 |
+| | gamma | **97.3%** | **96.7%** | 64 | 0.2 |
+| | clahe | 89.7% | 88.7% | 44 | 5.4 |
+| | auto | 97.2% | 96.6% | 64 | 0.3 |
+| 1 (unchanged) | off | 97.3% | 96.7% | 67 | 0.0 |
+| | gamma | 97.3% | 96.8% | 62 | 0.2 |
+| | clahe | 94.5% | 93.8% | 55 | 5.3 |
+| | auto | **97.5%** | **96.9%** | 69 | 0.3 |
+| 0.6 (brighter) | off | **97.3%** | **96.8%** | 62 | 0.0 |
+| | gamma | 96.1% | 95.5% | 60 | 0.2 |
+| | clahe | 95.6% | 94.9% | 56 | 5.3 |
+| | auto | 97.2% | 96.5% | 62 | 0.2 |
+
+The detector took 54 ms per photo in every row. That run used the CPU (the GPU
+was not available to it), so the preprocess times are also inflated by the
+model competing for the same cores. Measured alone at 1920×1080, `gamma` takes
+about 0.1 ms, `clahe` about 2 ms, and `auto` 0.05 to 0.2 ms.
+
+What it shows:
+
+- **Brightening helps a dim picture a lot.** At the darkest level `off` misses
+  one corner in six; `gamma` and `auto` get back to about 94%. The gain shrinks
+  as the light improves and is gone on the unchanged photos.
+- **Brightening a picture that is already bright costs a little.** At level 0.6
+  `gamma` gets 1.3 points fewer names right than `off`. `auto` measures the brightness first,
+  so it stays within 0.3 points of `off` there.
+- **CLAHE hurts at every level**: 1.9 to 13.8 points fewer names right than
+  `off`. Likely cause: stretching local contrast amplifies noise and changes how
+  the corner indices look, in a way the training photos never showed. It is
+  kept as a mode only to compare by eye.
+- **Darkening does not help.** `auto` darkening washed-out frames earlier
+  (`PREPROCESS_BRIGHT_ABOVE` 160 instead of 190) changed the brighter level by 2
+  corners out of 3,449. The model copes with bright, unclipped pictures as they are.
+
+**Recommendation: `auto`, now the default (`PREPROCESS = "auto"`).** It is the
+best or within 0.8 points of the best (names right) at every level, costs well under a
+millisecond, and never needs switching by hand. `PREPROCESS_DARK_BELOW` was
+raised from 70 to 110 on this benchmark: at 110, `auto` found 18 more corners
+at the darkest level and 3 more on the unchanged photos than at 70, and 3
+fewer at the brighter level. In a room that is always dim, `gamma` is slightly
+better still (`--preprocess gamma`).
+
+None of this helps with glare: a reflection that saturates the sensor leaves
+pure white pixels with no index in them (see
+[Dim or washed-out tables](reading.md#dim-or-washed-out-tables)).

@@ -17,7 +17,8 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |
 | Thin grey boxes | detections the tracker has not confirmed yet (a card still moving, or a one-frame misread) |
 | Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
-| Bottom bar | the main keys, and frames per second |
+| Bottom bar | the main keys, frames per second, the milliseconds per frame spent detecting, and the preprocess mode with its milliseconds (`showing raw` when `Shift+V` shows the raw camera frame) |
+| `no signal: press C to reconnect` | the camera has sent no new frame for two seconds (see [Camera disconnects](#camera-disconnects)) |
 
 The number is the placement order within the round: 1 is the first card
 confirmed (seen for `CONFIRM_FRAMES` frames in a row), 2 the next, and so on. A
@@ -79,6 +80,9 @@ The bottom bar lists the main keys; the legend lists them all.
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
 | `S` | save the current frame to `data/raw/frames/` for labelling |
+| `C` | reconnect the camera: reopen the same source after a cable or power interruption |
+| `P` | next preprocess mode: off, gamma, clahe, auto (see [Dim or washed-out tables](#dim-or-washed-out-tables)) |
+| `Shift+V` | show the raw camera frame, or the preprocessed frame the detector gets |
 | `Q` | quit (or Ctrl+C in the terminal) |
 
 Keys work when the reader window is selected. The window can be resized.
@@ -96,7 +100,17 @@ Every event is also printed in the terminal, with the seat and the count:
 [  2650] duplicate #1   KS (P3)
 ```
 
-and on quitting: `counted this shoe: 10H 6C ...` with the final running and true count.
+and on quitting: `counted this shoe: 10H 6C ...` with the final running and true
+count, then the average milliseconds per frame for each stage of the loop:
+
+```
+average time per frame: read 0.4 ms, preprocess 0.1 ms, detect 31.2 ms, draw 6.8 ms
+```
+
+`read` is taking the newest camera frame, `preprocess` the contrast help (see
+[Dim or washed-out tables](#dim-or-washed-out-tables)), `detect` the model, and
+`draw` the overlay and the window. The bottom bar shows the same detect and
+preprocess times, smoothed, while it runs.
 
 A `duplicate` line means a face card was placed (or renamed) under a name already
 counted this shoe in an earlier round. One deck holds one of each card, so it is
@@ -108,6 +122,7 @@ a misread or a reshuffle nobody marked with `Shift+R`. The count is not changed.
 - `--source round1.mp4` reads a recorded video instead.
 - `--players 5` sets the starting number of seats (`PLAYERS` in `settings.py`).
 - `--log round.csv` appends every event to a CSV, with its seat and the running count.
+- `--preprocess auto` picks the starting preprocess mode (`PREPROCESS` in `settings.py`): `off`, `gamma`, `clahe`, or `auto`.
 - `--no-display` runs without the window; stop it with Ctrl+C.
 
 macOS asks for camera permission the first time OpenCV opens a camera from a
@@ -124,7 +139,8 @@ terminal or VS Code. Grant it under System Settings > Privacy & Security > Camer
   about 20 pixels tall in the image; at 1080p that means the camera roughly 50 to
   80 cm above a small table.
 - Light the table evenly. Avoid a bright lamp reflecting off the cards (glare
-  hides the index) and strong shadows from your hands.
+  hides the index, and no preprocessing brings it back) and strong shadows from
+  your hands. For a dim room see [Dim or washed-out tables](#dim-or-washed-out-tables).
 - Keep the camera still. Bumping it moves every card at once, and the tracker
   may count them as new cards.
 
@@ -157,6 +173,60 @@ under System Settings > Privacy & Security > Camera, then restart the terminal.
   `CAMERA_HEIGHT` in `settings.py` if it does not default to the resolution you want.
 - At 4K over a whole table, raise `INPUT_SIZE` to 1600 or more so the corner
   indices stay readable. It is slower; check the fps in the bottom bar.
+
+#### Camera disconnects
+
+If a live camera sends no new frame for two seconds (a cable pulled, a capture
+card losing power, the iPhone unlocked or picked up), the window keeps the last
+frame and shows `no signal: press C to reconnect`. The terminal prints
+`no signal from source ...`. While there is no signal nothing is detected, so
+the cards, the round, and the count stay as they were.
+
+Fix the cable or wake the phone, then press `C`. The reader releases the camera
+and opens the same `--source` again at the same width and height. The terminal
+and the window say whether it worked; if not, press `C` again. A camera can
+open and still send no picture: the no-signal message then stays until a new
+frame arrives, and `C` can be pressed again. `C` never
+switches to another camera number. If the numbers have changed (an iPhone
+joining or leaving can swap them), quit and run `python read.py --list-cameras`.
+A recorded video never shows no signal; it simply ends.
+
+#### Dim or washed-out tables
+
+The reader can adjust each frame's contrast before the detector sees it
+(`cardReader/preprocess.py`). Press `P` to try each mode live; the bottom bar
+names the mode and its cost in milliseconds. The reader starts in `auto`
+(`PREPROCESS` in `settings.py`); `--preprocess off` starts it in another mode.
+
+| Mode | What it does | Benchmark verdict ([results](results.md#preprocessing-for-dim-and-bright-light)) |
+|---|---|---|
+| `off` | nothing; the frame goes to the detector as the camera sent it | best on a brightened picture, but loses many corners in a dim room |
+| `gamma` | lifts the shadows with `PREPROCESS_BRIGHTEN_GAMMA` (0.6), through a lookup table | best in a dim room; costs corners on a bright picture |
+| `clahe` | stretches contrast locally, tile by tile (contrast-limited adaptive histogram equalisation), on lightness only so colours do not shift | worse than `off` at every brightness; kept only to try by eye |
+| `auto` (default) | measures the frame's mean grey level (0 to 255): below `PREPROCESS_DARK_BELOW` (110) it brightens with `PREPROCESS_BRIGHTEN_GAMMA`, above `PREPROCESS_BRIGHT_ABOVE` (190) it darkens with `PREPROCESS_DARKEN_GAMMA` (1.4), in between it leaves the frame alone | close to `gamma` in the dark and close to `off` in good light |
+
+At 1920×1080 on the development Mac (Apple silicon), `gamma` costs about
+0.1 ms per frame, `clahe` about 2 ms, and `auto` 0.05 ms when it leaves the
+frame alone, about 0.2 ms when it applies a gamma. The detector takes far longer.
+
+To check a mode against the real validation photos at several brightness
+levels, run `python benchmark.py` (a quick run: `python benchmark.py --limit 20`).
+It needs `data/dataset/realVal.yaml` from `python train.py --rebuild`, or
+`--data` pointing at one. It prints, per brightness level and mode, how many
+labelled corner indices were found and named right, the extra boxes, and the
+milliseconds spent preprocessing and detecting. `--levels 3.5 1.0`, `--modes off auto`,
+`--imgsz 1024` and `--csv bench.csv` narrow or record a run. The full run takes
+about 6 minutes on a CPU; the results are in [results.md](results.md#preprocessing-for-dim-and-bright-light).
+
+The window shows the preprocessed frame, so you see what the detector sees.
+Press `Shift+V` to compare with the raw camera frame; the bottom bar then says
+`showing raw`. The detector always gets the preprocessed frame, and `S` always
+saves the raw one, so saved frames stay true to the camera for labelling.
+
+**Glare cannot be fixed in software.** Where a lamp reflects off a card, the
+sensor is saturated: those pixels are pure white and hold no trace of the
+index. Darkening them only gives grey. Move the light or angle the camera
+instead (see Placement above).
 
 ### Seats, hands, and the Hi-Lo count
 
@@ -324,6 +394,8 @@ A value out of range (a fraction above 1, `CONFIRM_FRAMES` larger than
 | A card's name flips back and forth | raise `LABEL_WINDOW` (45 to 90) | one bad second of reads cannot outvote the rest |
 | Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
 | The video is choppy (low fps) | lower `INPUT_SIZE` (e.g. 1280 to 960) | less work per frame |
+| Cards are missed in a very dim room | `PREPROCESS = "gamma"` (try with `P` first) | the shadows are always lifted, not only below `PREPROCESS_DARK_BELOW` |
+| `auto` switches on too late or too early | `PREPROCESS_DARK_BELOW` or `PREPROCESS_BRIGHT_ABOVE` | the mean grey level (0 to 255) at which it brightens or darkens |
 
 `CONFIRM_FRAMES`, `DROP_FRAMES`, and `ROUND_END_FRAMES` are counted in frames, so at 30 fps, 30
 frames is one second. If the fps is much lower, scale them down to match.
@@ -337,6 +409,7 @@ frames is one second. If the fps is much lower, scale them down to match.
 | Wrong camera opens | camera numbers change when an iPhone connects or disconnects | `python read.py --list-cameras` shows a snapshot from each number |
 | The phone's view is plain grey | it points at a plain surface, the lens is blocked, or it is too close to focus | aim it at the table from 50 cm or more; `--list-cameras` marks such a camera as nearly blank |
 | `Could not open video source` | the camera is in use or not connected | close other apps using it (FaceTime, Zoom, Photo Booth); wake the iPhone camera |
+| `no signal: press C to reconnect` | the camera stopped sending frames | reconnect the cable or wake the phone, then press `C` (see [Camera disconnects](#camera-disconnects)) |
 | Bottom bar says CAPTURE MODE | no model at `MODEL_PATH` | check `models/cards/weights/best.pt` exists, or train one |
 | Cards on screen but none get a number | detections too weak, or the camera is too far | see [Tuning the reader](#tuning-the-reader); move the camera closer |
 | Keys do nothing | the terminal has focus, not the window | click the reader window first |
