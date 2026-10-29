@@ -63,7 +63,7 @@ def validate(config) -> None:
     """Check the numbers in a settings module: this one, or any object with the same names.
 
     Raises ValueError listing every invalid value with its allowed range."""
-    from cardReader.seats import MAX_PLAYERS  # imported here so settings.py stays cheap to import
+    from card_reader.seats import MAX_PLAYERS  # imported here so settings.py stays cheap to import
 
     rules = [
         (("CONFIRM_FRAMES", "CONFIRM_WINDOW", "DROP_FRAMES", "LABEL_WINDOW", "ROUND_END_FRAMES",

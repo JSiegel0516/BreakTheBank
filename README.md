@@ -29,14 +29,14 @@ camera frame
    |
    v
 detector      finds every corner index in the frame and names it ("KH", "10S", "BACK")
-   |          a YOLO model trained by train.py            cardReader/detector.py
+   |          a YOLO model trained by train.py            card_reader/detector.py
    v
 tracker       waits until a card is seen several frames in a row, ignores
    |          misses while a hand covers it, votes on the label, and gives
-   |          each new card the next placement number     cardReader/tracker.py
+   |          each new card the next placement number     card_reader/tracker.py
    v
-table         which seat each card is in, each seat's hand   cardReader/table.py
-   |          and total, the Hi-Lo count                    cardReader/blackjack.py
+table         which seat each card is in, each seat's hand   card_reader/table.py
+   |          and total, the Hi-Lo count                    card_reader/blackjack.py
    v
 1:KH  2:7D  3:BACK  4:AS
 ```
@@ -62,7 +62,7 @@ BreakTheBank/                 (the folder git clone creates)
 ├── CONTRIBUTING.md           branch, test, PR: how changes get in
 ├── .github/workflows/        CI: ruff and pytest on every push and pull request
 ├── docs/                     reading.md, training.md, results.md (see Documentation below)
-├── cardReader/               the library
+├── card_reader/              the library
 │   ├── camera.py             frames from a camera, capture card, or video file
 │   ├── detector.py           YOLO wrapper: frame -> list of detections
 │   ├── cards.py              the Detection, Card and Event types
@@ -75,7 +75,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── deck.py               the 53 class labels (52 faces + BACK)
 │   ├── dataset.py            combines data/raw into data/dataset          (used by train.py)
 │   ├── synthetic.py          renders card art onto tables as extra data    (used by train.py)
-│   ├── cardArt.py            crops photos of your deck into card art       (train.py --extract-art)
+│   ├── card_art.py           crops photos of your deck into card art       (train.py --extract-art)
 │   ├── autolabel.py          fills in corners an export left unlabelled    (train.py --complete-corners)
 │   └── provenance.py         data manifest and live-model promotion        (train.py --manifest, --check-data, --promote)
 ├── tests/

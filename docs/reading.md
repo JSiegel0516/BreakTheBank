@@ -5,11 +5,11 @@ Part of [BreakTheBank](../README.md). Training the detector is in [training.md](
 ## Reading
 
 `python read.py` opens a window with the live feed, an overlay on it, and a
-sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
+sidebar on the right so nothing covers the table (drawn by `card_reader/hud.py`):
 
 | On screen | Meaning |
 |---|---|
-| Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
+| Seat outlines | the dealer strip at the top and the player seats on an arc below it (`card_reader/seats.py`) |
 | Sidebar, top | the Hi-Lo running count, true count, and cards left in the deck |
 | Sidebar, below | each seat's total (`17`, `soft 18`, `BLACKJACK`, `BUST (24)`, `9 +1 hidden`) and its cards in placement order; cards outside every seat are listed as OTHER |
 | Yellow badge and name on a card | that card's placement number and name |

@@ -21,7 +21,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]   # so `pytest` finds cardReader and settings from the project root
+pythonpath = ["."]   # so `pytest` finds card_reader and settings from the project root
 testpaths = ["tests"]
 
 [tool.ruff]
@@ -32,10 +32,6 @@ select = ["E", "F", "I", "N", "UP", "SIM", "B"]
 
 [tool.ruff.lint.pep8-naming]
 extend-ignore-names = ["W", "H"]  # frame or image width and height in pixels
-
-[tool.ruff.lint.per-file-ignores]
-"cardReader/__init__.py" = ["N999"]
-"cardReader/cardArt.py" = ["N999"]
 
 [tool.uv]
 package = false      # scripts and a library folder, not an installable package

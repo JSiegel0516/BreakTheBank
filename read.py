@@ -16,7 +16,7 @@ Keys: 1-7 number of players | e edit zones with the mouse (e again saves them) |
       r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames | q quit
 
 This file only owns the command line, the camera, and the window. What happens
-per frame and per key is cardReader/reader.py; the overlay is cardReader/hud.py.
+per frame and per key is card_reader/reader.py; the overlay is card_reader/hud.py.
 """
 from __future__ import annotations
 
@@ -30,12 +30,12 @@ import cv2
 import numpy as np
 
 import settings
-from cardReader.camera import Camera, parse_source, snapshot_cameras
-from cardReader.hud import Hud
-from cardReader.provenance import live_model
-from cardReader.reader import LOG_HEADER, Reader
-from cardReader.seats import MAX_PLAYERS, SeatLayout
-from cardReader.tracker import CardTracker, TrackerConfig
+from card_reader.camera import Camera, parse_source, snapshot_cameras
+from card_reader.hud import Hud
+from card_reader.provenance import live_model
+from card_reader.reader import LOG_HEADER, Reader
+from card_reader.seats import MAX_PLAYERS, SeatLayout
+from card_reader.tracker import CardTracker, TrackerConfig
 
 WINDOW = "card reader"
 
@@ -99,7 +99,7 @@ def main():
 
     detector = None
     if Path(args.model).exists():
-        from cardReader.detector import Detector
+        from card_reader.detector import Detector
         detector = Detector(args.model, args.imgsz, args.conf, args.device)
         live = live_model(settings.PROJECT_ROOT / settings.LIVE_MODEL_DIR)
         is_live = Path(args.model).resolve() == (settings.PROJECT_ROOT / settings.MODEL_PATH).resolve()

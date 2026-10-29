@@ -42,11 +42,11 @@ be reviewed and reverted on its own.
 | Change | Where |
 |---|---|
 | a tunable number | `settings.py`, with a comment saying what it does and which way to turn it |
-| what happens per frame or per key | `cardReader/reader.py` |
-| how cards are grouped into hands | `cardReader/table.py` |
-| how detections become cards | `cardReader/tracker.py` (read its docstring first) |
-| how the overlay looks | `cardReader/hud.py`; it only draws, it does not decide |
-| blackjack rules | `cardReader/blackjack.py` |
+| what happens per frame or per key | `card_reader/reader.py` |
+| how cards are grouped into hands | `card_reader/table.py` |
+| how detections become cards | `card_reader/tracker.py` (read its docstring first) |
+| how the overlay looks | `card_reader/hud.py`; it only draws, it does not decide |
+| blackjack rules | `card_reader/blackjack.py` |
 | a new data export | `data/raw/labeled/<name>/`, then `python train.py --manifest` and commit the manifest |
 | a new trained model | `python train.py --name model_N_<date>_<tag>`; write its `notes.txt`; `--promote` the winner |
 | how something works, for users | `docs/reading.md` or `docs/training.md` |

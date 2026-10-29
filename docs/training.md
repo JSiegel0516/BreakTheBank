@@ -48,7 +48,7 @@ reused except the final layer, which is rebuilt for 53 classes instead of 80.
 |---|---|---|---|
 | `playingCards` (Roboflow) | 303 | 49 | real photos, one background, cards spread out |
 | `blackjackCorners` (Roboflow, relabelled) | 498 | 152 | real photos, many backgrounds and lighting, overlapping hands |
-| synthetic (`cardReader/synthetic.py`) | 1,687 | 313 | unlimited extra layouts, exact labels, the only BACK examples |
+| synthetic (`card_reader/synthetic.py`) | 1,687 | 313 | unlimited extra layouts, exact labels, the only BACK examples |
 | **Total** | **2,488** | **514** | |
 
 There are 1,002 real photos in total and about 10,400 labelled corner boxes in
@@ -170,7 +170,7 @@ When it triggers, Ultralytics prints a line like
 | Setting | Value | Where it is set |
 |---|---|---|
 | Model | YOLO11n, pretrained on COCO, about 2.6 million weights | `BASE_WEIGHTS` in `settings.py` |
-| Classes | 53 (52 card faces + BACK) | `cardReader/deck.py` |
+| Classes | 53 (52 card faces + BACK) | `card_reader/deck.py` |
 | Training input size | 1024 pixels | `TRAIN_INPUT_SIZE` |
 | Batch size | 8 images, weights updated every 64 images | `BATCH_SIZE` |
 | Maximum epochs | 100 | `EPOCHS` |
@@ -435,6 +435,6 @@ Download `models/cards/weights/best.pt` back into the same place locally.
 - **Pretrained weights**: a model already trained on everyday photos (`yolo11n.pt`). Training starts from it rather than from scratch, so it needs far less data.
 - **Confidence**: the model's score for a box, 0 to 1. Boxes under `CONFIDENCE` in `settings.py` are ignored.
 - **Inference**: running the trained model on a new image.
-- **Synthetic data**: images rendered by `cardReader/synthetic.py` by pasting card art onto backgrounds, with labels known exactly.
+- **Synthetic data**: images rendered by `card_reader/synthetic.py` by pasting card art onto backgrounds, with labels known exactly.
 - **Augmentation**: random changes to training images (rotation, brightness, blur) so the model generalises. Ultralytics does this during training; do not also do it in Roboflow.
 - **Input size**: the width an image is resized to before the model sees it. Small objects need a larger input size.

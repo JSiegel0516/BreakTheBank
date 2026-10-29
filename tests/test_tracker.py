@@ -1,5 +1,5 @@
-from cardReader.blackjack import shoe_count
-from cardReader.tracker import CardTracker, Detection
+from card_reader.blackjack import shoe_count
+from card_reader.tracker import CardTracker, Detection
 
 
 def det(label, x, y, conf=0.9):
@@ -337,7 +337,7 @@ def test_without_a_label_window_the_vote_is_over_every_read():
 def real_tracker():
     """The thresholds read.py uses, for a 1920-pixel-wide frame (match distance about 58 px)."""
     import settings
-    from cardReader.tracker import TrackerConfig
+    from card_reader.tracker import TrackerConfig
     return CardTracker(TrackerConfig.from_settings(settings, 1920))
 
 
@@ -399,7 +399,7 @@ def test_face_down_card_still_down_through_a_new_round_is_dealt_only_once():
 
 
 def test_config_object_and_keyword_overrides_agree():
-    from cardReader.tracker import TrackerConfig
+    from card_reader.tracker import TrackerConfig
     a = CardTracker(TrackerConfig(confirm_frames=3, match_dist=10), drop_frames=7)
     assert (a.cfg.confirm_frames, a.cfg.match_dist, a.cfg.drop_frames) == (3, 10, 7)
 

@@ -1,7 +1,7 @@
 import pytest
 
-from cardReader.blackjack import describe, hand_value, hi_lo, is_blackjack, shoe_count
-from cardReader.seats import DEALER, SeatLayout
+from card_reader.blackjack import describe, hand_value, hi_lo, is_blackjack, shoe_count
+from card_reader.seats import DEALER, SeatLayout
 
 
 def test_hand_values():

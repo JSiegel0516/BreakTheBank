@@ -20,7 +20,7 @@ import argparse
 from pathlib import Path
 
 import settings
-from cardReader import autolabel, cardArt, dataset, provenance
+from card_reader import autolabel, card_art, dataset, provenance
 
 ROOT = settings.PROJECT_ROOT
 
@@ -62,7 +62,7 @@ def main():
         autolabel.complete_corners(args.complete_corners, ROOT / settings.LABELED_DIR, str(ROOT / settings.MODEL_PATH))
         return
     if args.extract_art:
-        cardArt.extract_card_art(args.extract_art, ROOT / settings.CARD_ART_DIR)
+        card_art.extract_card_art(args.extract_art, ROOT / settings.CARD_ART_DIR)
         return
 
     data_dir = ROOT / settings.DATASET_DIR

@@ -1,8 +1,8 @@
 """dataset.py: combining YOLO exports into data/dataset. No model involved."""
 import pytest
 
-from cardReader import dataset
-from cardReader.deck import CLASS_TO_ID, CLASSES
+from card_reader import dataset
+from card_reader.deck import CLASS_TO_ID, CLASSES
 
 
 def export(root, name, names, split_labels, width=0.04):

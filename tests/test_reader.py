@@ -3,11 +3,11 @@ import io
 
 import numpy as np
 
-from cardReader.cards import Detection
-from cardReader.hud import Hud
-from cardReader.reader import LOG_HEADER, Reader
-from cardReader.seats import SeatLayout
-from cardReader.tracker import CardTracker
+from card_reader.cards import Detection
+from card_reader.hud import Hud
+from card_reader.reader import LOG_HEADER, Reader
+from card_reader.seats import SeatLayout
+from card_reader.tracker import CardTracker
 
 W, H = 640, 360
 

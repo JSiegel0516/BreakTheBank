@@ -1,7 +1,7 @@
 """Generate synthetic training images of cards scattered on a table.
 
 Card art: if the card art folder holds a png for every face (AS ... KC) those
-are used, plus any BACK*.png (made by cardArt.py, which also writes
+are used, plus any BACK*.png (made by card_art.py, which also writes
 indexRect.json saying where the corner index sits). Otherwise simple
 placeholder cards are drawn so the pipeline can be exercised before the real
 deck is photographed.

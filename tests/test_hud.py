@@ -1,9 +1,9 @@
 import numpy as np
 
-from cardReader.blackjack import shoe_count
-from cardReader.cards import Card, Detection
-from cardReader.hud import SIDEBAR, Hud
-from cardReader.seats import SeatLayout, ZoneEditor
+from card_reader.blackjack import shoe_count
+from card_reader.cards import Card, Detection
+from card_reader.hud import SIDEBAR, Hud
+from card_reader.seats import SeatLayout, ZoneEditor
 
 
 def test_draw_returns_video_plus_sidebar_with_hands_tags_and_edit_handles():

@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from cardReader import autolabel
+from card_reader import autolabel
 
 
 def test_iou():

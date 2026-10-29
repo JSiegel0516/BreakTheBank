@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from cardReader.seats import SeatLayout, ZoneEditor
+from card_reader.seats import SeatLayout, ZoneEditor
 
 W, H = 1920, 1080
 DOWN, MOVE, UP, RIGHT = cv2.EVENT_LBUTTONDOWN, cv2.EVENT_MOUSEMOVE, cv2.EVENT_LBUTTONUP, cv2.EVENT_RBUTTONDOWN

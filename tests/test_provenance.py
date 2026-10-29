@@ -1,6 +1,6 @@
 import json
 
-from cardReader.provenance import check_manifest, live_model, promote, write_manifest
+from card_reader.provenance import check_manifest, live_model, promote, write_manifest
 
 
 def fake_export(raw, group, name, labels=("0 0.5 0.5 0.05 0.05",), roboflow=True):

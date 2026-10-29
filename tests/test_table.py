@@ -1,6 +1,6 @@
-from cardReader.cards import Card
-from cardReader.seats import DEALER, SeatLayout
-from cardReader.table import OTHER, Table
+from card_reader.cards import Card
+from card_reader.seats import DEALER, SeatLayout
+from card_reader.table import OTHER, Table
 
 
 def card(order, label, seat_polygon, hidden=False):

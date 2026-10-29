@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from cardReader import synthetic
-from cardReader.deck import BACK, CLASS_TO_ID, CLASSES
+from card_reader import synthetic
+from card_reader.deck import BACK, CLASS_TO_ID, CLASSES
 
 CARD_ART = Path(__file__).resolve().parents[1] / "data" / "raw" / "cardArt"
 

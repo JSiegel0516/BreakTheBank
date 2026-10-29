@@ -34,9 +34,9 @@ import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cardReader.blackjack import hi_lo
-from cardReader.deck import BACK, CLASSES, rank_of
-from cardReader.reader import LOG_HEADER
+from card_reader.blackjack import hi_lo
+from card_reader.deck import BACK, CLASSES, rank_of
+from card_reader.reader import LOG_HEADER
 
 
 @dataclass
