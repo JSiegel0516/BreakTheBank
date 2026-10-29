@@ -9,8 +9,11 @@ The tracker smooths that out and remembers the order cards arrived in:
   * A track must pass every confirmation check before it counts as a card:
       - seen steadily: in at least confirm_frames of the last confirm_window
         frames, so a detection that flickers on and off never builds up enough
-      - name agreement: its most common name has at least confirm_agreement of
-        its recent reads, so a card read half as 6H and half as 9H waits
+      - rank agreement: the rank of its most common name has at least
+        confirm_agreement of its recent reads (BACK counts as a rank of its
+        own), so a card read half as 6H and half as 9H waits. A card read as
+        both 10H and 10D does not: the suit changes neither its value nor the
+        count. Its name is still the most common full name.
       - confidence: the model's average confidence over those frames is at
         least confirm_confidence, so borderline detections never count
       - held still: the corner has moved less than still_distance over those
@@ -58,6 +61,11 @@ Memory, so a card is never counted twice:
     the running count. A face-down card still on the table across new_round()
     gets a new number but is not added again.
   * new_shoe() clears both after a reshuffle.
+  * A card placed or renamed with a face name already in shoe_seen before
+    this round is a DUPLICATE: one deck holds one of each card, so it is a
+    misread or a reshuffle nobody marked with new_shoe(). It is reported, not
+    counted again. A card still on the table when the round began, and two
+    corners of one card joining by name, are not duplicates.
 
 All thresholds live in TrackerConfig; TrackerConfig.from_settings turns the
 fractions of the frame width in settings.py into pixels.
@@ -68,7 +76,7 @@ from collections import Counter, deque
 from dataclasses import dataclass, field, replace
 
 from .cards import Card, Detection, Event
-from .deck import BACK
+from .deck import BACK, rank_of
 
 
 @dataclass
@@ -76,7 +84,7 @@ class TrackerConfig:
     """Every tracker threshold, in frames and pixels. The defaults are permissive, for tests."""
     confirm_frames: int = 8            # sightings needed ...
     confirm_window: int | None = None  # ... within this many frames (None: ever)
-    confirm_agreement: float = 0.0     # share of recent reads that must agree on the name
+    confirm_agreement: float = 0.0     # share of recent reads that must agree on the rank
     confirm_confidence: float = 0.0    # minimum average confidence over those sightings
     still_distance: float | None = None  # pixels the corner may move over them (None: any)
     drop_frames: int = 30              # misses in a row before a track is forgotten
@@ -121,26 +129,30 @@ class CardTracker:
     def new_round(self):
         """Start a new round: forget the table, numbering restarts at 1. The count is kept.
 
-        A face-down card still on the table is placed again with a new number,
-        but it is the card already dealt, so it is not added to shoe_unrevealed twice."""
+        A card still on the table is placed again with a new number, but it is
+        the card already dealt: it is not reported as a duplicate, and a
+        face-down one is not added to shoe_unrevealed twice."""
         self._dealt_backs |= {track_id for track_id, card in self._card_of.items() if card.label == BACK}
+        self._carried_tracks = set(self._card_of)  # tracks of cards still on the table as the round began
+        self._seen_before_round = set(self.shoe_seen)
         self.round: list[Card] = []
         self._card_of = {}
         self._empty_frames = 0
 
     def new_shoe(self):
         """After a reshuffle: a new round, and every card can be counted again."""
-        self.new_round()
-        self._dealt_backs = set()
         self.shoe_seen: list[str] = []
         self.shoe_unrevealed = 0  # face-down cards placed this shoe and never renamed to a face
+        self.new_round()
+        self._dealt_backs = set()
 
     def update(self, detections: list[Detection]) -> list[Event]:
         """Advance one frame with that frame's detections.
 
         Returns the events this frame caused: placed cards first, then renamed,
-        hidden, and returned cards in placement order, and round_over last.
-        round_over also starts a new round."""
+        hidden, and returned cards in placement order, and round_over last. A
+        placed or renamed event is followed by duplicate when the card's name was
+        already counted before this round. round_over also starts a new round."""
         self.frame += 1
         self._match(detections)
         for track in self.tracks.values():
@@ -165,6 +177,8 @@ class CardTracker:
                     if card.label == BACK and track.id not in self._dealt_backs:
                         self.shoe_unrevealed += 1
                     events.append(Event("placed", card, self.frame))
+                    if track.id not in self._carried_tracks and self._is_duplicate(card.label):
+                        events.append(Event("duplicate", card, self.frame))
                 self._card_of[track.id] = card
             tracks_of.setdefault(card.order, []).append(track)
 
@@ -181,6 +195,8 @@ class CardTracker:
                 was = card.label
                 self._rename(card, label)
                 events.append(Event("renamed", card, self.frame, was=was))
+                if self._is_duplicate(label):
+                    events.append(Event("duplicate", card, self.frame))
             if card.hidden:
                 card.hidden = False
                 events.append(Event("returned", card, self.frame))
@@ -237,6 +253,10 @@ class CardTracker:
             if dist <= best_dist:
                 best, best_dist = card, dist
         return best
+
+    def _is_duplicate(self, label: str) -> bool:
+        """A face name already counted before this round: one deck has only one such card."""
+        return label != BACK and label in self._seen_before_round
 
     def _count(self, card: Card, at: int | None = None):
         """Add the card's name to the shoe count, once per shoe. at: position to keep the order."""
@@ -324,8 +344,11 @@ class CardTracker:
         recent = [hit for hit in track.hits if window is None or hit[0] > self.frame - window]
         if len(recent) < cfg.confirm_frames:
             return False  # not seen enough, or not steadily enough
-        if track.votes[track.label] < cfg.confirm_agreement * sum(track.votes.values()):
-            return False  # the reads disagree on which card this is
+        rank_votes: Counter = Counter()
+        for label, reads in track.votes.items():
+            rank_votes[_rank_group(label)] += reads
+        if rank_votes[_rank_group(track.label)] < cfg.confirm_agreement * track.votes.total():
+            return False  # the reads disagree on the card's rank
         if sum(hit[1] for hit in recent) / len(recent) < cfg.confirm_confidence:
             return False  # the model is not sure enough
         if cfg.still_distance is not None:
@@ -335,3 +358,8 @@ class CardTracker:
             if max(offsets) > cfg.still_distance:
                 return False  # still moving
         return True
+
+
+def _rank_group(label: str) -> str:
+    """What the agreement check compares: the rank, with BACK as a group of its own."""
+    return label if label == BACK else rank_of(label)

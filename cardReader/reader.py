@@ -9,6 +9,8 @@ everything in between, so it can be driven in a test without either:
 
 Events are printed as they happen and appended to the CSV log as
     time, frame, event, order, card, seat, running_count, x, y
+A duplicate event (a name already counted in an earlier round) is logged like
+the rest, with the card's seat; it does not change the count.
 """
 from __future__ import annotations
 

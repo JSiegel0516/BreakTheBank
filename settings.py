@@ -37,7 +37,7 @@ INPUT_SIZE = 1280          # frame is resized to this width before detection. Bi
 CONFIDENCE = 0.6           # detections below this score are ignored
 CONFIRM_FRAMES = 15        # a card must be seen in this many frames ...
 CONFIRM_WINDOW = 20        # ... out of the last this many, so flicker never adds up (about 0.7 s at 30 fps)
-CONFIRM_AGREEMENT = 0.8    # share of reads that must agree on the card's name (0.8 = 80%)
+CONFIRM_AGREEMENT = 0.8    # share of reads that must agree on the card's rank (0.8 = 80%); suits may differ
 CONFIRM_CONFIDENCE = 0.7   # the model's average confidence over those frames must be at least this
 STILL_DISTANCE = 0.006     # fraction of frame width the corner may move over those frames (about 12 px at 1080p)
 DROP_FRAMES = 30           # a card missing this many frames in a row becomes hidden (kept, shown greyed out)

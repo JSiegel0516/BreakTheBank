@@ -2,7 +2,8 @@
 
     Detection   one box the detector drew in one frame
     Card        one physical card of the current round, with its placement number
-    Event       something that changed: placed, hidden, returned, renamed, round_over
+    Event       something that changed: placed, hidden, returned, renamed,
+                duplicate (a name already counted in an earlier round), round_over
 
 detector.py makes Detections, tracker.py turns them into Cards and Events,
 table.py groups Cards into hands, hud.py draws all three.
@@ -34,7 +35,7 @@ class Card:
 
 @dataclass
 class Event:
-    kind: str  # "placed" | "hidden" | "returned" | "renamed" | "round_over"
+    kind: str  # "placed" | "hidden" | "returned" | "renamed" | "duplicate" | "round_over"
     card: Card | None
     frame: int
     was: str | None = None  # renamed: the label before

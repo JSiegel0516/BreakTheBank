@@ -36,6 +36,24 @@ def test_process_places_cards_logs_them_with_their_seat_and_counts(tmp_path):
     assert rows[0][2:7] == ["placed", "1", "5H", "P1", "1"]
 
 
+def test_duplicate_is_logged_with_its_seat_and_leaves_the_count(tmp_path):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    seat = r.layout.seats[2].polygon.mean(axis=0)  # inside P2
+    dets = [Detection("KD", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    for _ in range(5):
+        r.process(frame(), [])                     # the KD is swept away
+    r.handle_key(ord("r"), frame())
+    r.process(frame(), dets)
+    events = r.process(frame(), dets)              # a KD again in the next round
+    assert [e.kind for e in events] == ["placed", "duplicate"]
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert rows[-1][2:7] == ["duplicate", "1", "KD", "P2", "-1"]
+    assert r.count.running == -1
+
+
 def test_face_down_card_takes_one_card_off_cards_left(tmp_path):
     r = make_reader(tmp_path)
     dets = [Detection("BACK", 0.9, 100, 100), Detection("5H", 0.9, 300, 100)]
