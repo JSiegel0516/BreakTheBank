@@ -40,8 +40,8 @@ table         which seat each card is in, each seat's hand   cardReader/table.py
 1:KH  2:7D  3:BACK  4:AS
 ```
 
-The detector is the only learned part. The tracker is plain rules and is
-covered by `pytest`.
+The detector is the only learned part. Everything else is plain rules and is
+covered by `pytest`, including the pipeline that builds the training set.
 
 A dealer's hole card turned face up keeps its number and is renamed from `BACK`
 to its face. The count's cards left also leaves out face-down cards that were
@@ -57,6 +57,7 @@ BreakTheBank/                 (the folder git clone creates)
 ├── read.py                   the live reader: camera -> detector -> tracker -> ordered cards
 ├── settings.py               every tunable number and path, with comments
 ├── pyproject.toml            dependencies, pytest and ruff config; uv.lock pins the exact versions
+├── CONTRIBUTING.md           branch, test, PR: how changes get in
 ├── .github/workflows/        CI: ruff and pytest on every push and pull request
 ├── docs/                     reading.md, training.md, results.md (see Documentation below)
 ├── cardReader/               the library
@@ -80,6 +81,9 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_table.py         hands per seat
 │   ├── test_reader.py        events, logging, keys
 │   ├── test_hud.py           the overlay draws
+│   ├── test_dataset.py       combining exports: class remap, splits, skips
+│   ├── test_synthetic.py     card art, geometry, composed images
+│   ├── test_autolabel.py     corner completion with a faked model
 │   ├── test_blackjack.py     hand totals, Hi-Lo, seat layout
 │   ├── test_seats.py         zone editing, saving and loading
 │   └── test_provenance.py    manifest checks, promotion
@@ -146,6 +150,7 @@ and check that `which python` ends in `BreakTheBank/.venv/bin/python`.
 Every tunable number is in `settings.py`, with a comment on each. `read.py` and
 `train.py` check them at start-up and stop with a list of any value out of range,
 for example `PLAYERS = 9: must be a whole number from 1 to 7`.
+To change the code, read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ## Conventions
 
