@@ -5,7 +5,7 @@ everything in between, so it can be driven in a test without either:
 
     reader = Reader(tracker, layout, hud, seats_file, frames_dir, log=csv_writer)
     events = reader.process(frame, detections)     # tracker -> seats -> print, log, flash
-    keep_going = reader.handle_key(key, frame)     # the keys listed in KEYS
+    keep_going = reader.handle_key(key, frame)     # the keys listed in hud.KEY_LIST
 
 Events are printed as they happen and appended to the CSV log as
     time, frame, event, order, card, seat, running_count, x, y
@@ -86,6 +86,9 @@ class Reader:
             self.toggle_edit()
         elif k == ord("l"):
             self.hud.show_legend = not self.hud.show_legend
+        elif k == ord("v"):
+            self.hud.view = "seats" if self.hud.view == "counter" else "counter"
+            self.hud.flash(f"{self.hud.view} view")
         elif k == ord("r"):
             self.tracker.new_round()
             print("--- new round ---")

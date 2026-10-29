@@ -10,22 +10,48 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | On screen | Meaning |
 |---|---|
 | Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
-| Sidebar, top | the Hi-Lo running count, true count, and cards left in the deck |
-| Sidebar, below | each seat's total (`17`, `soft 18`, `BLACKJACK`, `BUST (24)`, `9 +1 hidden`) and its cards in placement order; cards outside every seat are listed as OTHER |
+| Sidebar, top | the Hi-Lo true count in large type with whom it favours (`favours player`, `favours dealer`, `neutral`), then the running count and cards left (`38/52`) |
+| Sidebar, below | the counter view or the seats view; `V` switches between them (see below) |
 | Yellow badge and name on a card | that card's placement number and name |
 | Grey badge and name | a hidden card: covered right now, but still in the hand and in the count |
 | Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |
 | Thin grey boxes | detections the tracker has not confirmed yet (a card still moving, or a one-frame misread) |
-| Sidebar, bottom | the colour legend (`L` hides it) |
-| Bottom bar | the keys, and frames per second |
+| Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
+| Bottom bar | the main keys, and frames per second |
 
 The number is the placement order within the round: 1 is the first card
 confirmed (seen for `CONFIRM_FRAMES` frames in a row), 2 the next, and so on. A
 card that is covered keeps its number and comes back with it.
 
+### Counter view and seats view
+
+The reader starts in the **counter view**: the whole deck as a grid, with one
+row per rank (2 to 10, J, Q, K, A) and one column per suit (spades, hearts,
+diamonds, clubs). It shows at a glance which cards have been dealt this shoe:
+
+| Cell | Meaning |
+|---|---|
+| Plain | not seen this shoe |
+| Yellow slash | pending: counted this round, so a corrected misread can still change it |
+| Grey, crossed off | locked: counted in an earlier round of this shoe |
+| Magenta ring | a `duplicate` was reported for this card this shoe (a misread, or a reshuffle without `Shift+R`) |
+
+Rows are tinted by Hi-Lo group and labelled with its value: green for 2 to 6
+(+1), grey for 7 to 9 (0), red for 10 to A (-1). The column on the right gives
+how many cards of that rank are left. The line under the grid counts the
+face-down cards dealt and never turned over. `Shift+R` clears the grid. The
+grid assumes one 52-card deck. In the counter view the grid comes first: when
+the window is too small for both, the legend is left out.
+
+The **seats view** lists each seat's total (`17`, `soft 18`, `BLACKJACK`,
+`BUST (24)`, `9 +1 hidden`) and its cards in placement order. Cards outside
+every seat are listed as OTHER. The video, the card tags, and the zone editor
+look the same in both views.
+
 ### What the colours mean
 
-The same legend is shown at the bottom of the sidebar.
+The legend at the bottom of the sidebar explains the colours of the current
+view. The counter view's colours are in the table above.
 
 | Colour | Where | Meaning |
 |---|---|---|
@@ -42,11 +68,14 @@ The same legend is shown at the bottom of the sidebar.
 
 ### Keys
 
+The bottom bar lists the main keys; the legend lists them all.
+
 | Key | Action |
 |---|---|
 | `1` to `7` | number of players; loads your saved layout for that count, or the template |
 | `E` | edit zones with the mouse; press `E` again to save them and lock |
-| `L` | show or hide the colour legend |
+| `V` | switch the sidebar between the counter view and the seats view |
+| `L` | show or hide the legend and key list |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
 | `S` | save the current frame to `data/raw/frames/` for labelling |

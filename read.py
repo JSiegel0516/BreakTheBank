@@ -12,7 +12,13 @@ as it happens, and appended to --log as CSV if given. Without a trained model it
 in capture mode: it shows the live feed and lets you press 's' to save frames
 for labelling.
 
-Keys: 1-7 number of players | e edit zones with the mouse (e again saves them) | l legend
+The sidebar starts in the counter view, a rank by suit grid of the deck: a card
+counted this round is slashed (pending), one counted in an earlier round is
+crossed off (locked), and a duplicate is ringed. Press v for the seats view,
+each seat's hand.
+
+Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
+      v counter or seats view | l legend and key list
       r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames | q quit
 
 This file only owns the command line, the camera, and the window. What happens
@@ -31,7 +37,7 @@ import numpy as np
 
 import settings
 from cardReader.camera import Camera, parse_source, snapshot_cameras
-from cardReader.hud import Hud
+from cardReader.hud import DealtCards, Hud
 from cardReader.provenance import live_model
 from cardReader.reader import LOG_HEADER, Reader
 from cardReader.seats import MAX_PLAYERS, SeatLayout
@@ -149,8 +155,10 @@ def main():
                 t_last = now
                 if args.no_display:
                     continue
+                dealt = DealtCards(tracker.shoe_locked, tracker.shoe_pending, tracker.shoe_duplicates,
+                                   tracker.shoe_unrevealed)
                 cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.round, fps, reader.layout, reader.count,
-                                            capture_mode=detector is None, editor=reader.editor))
+                                            capture_mode=detector is None, editor=reader.editor, dealt=dealt))
                 if not reader.handle_key(cv2.waitKey(1) & 0xFF, frame):
                     break
         finally:
