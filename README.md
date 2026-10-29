@@ -21,6 +21,9 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
 3. Run `python read.py` and place cards one at a time. Each gets a number in the order placed.
 4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared;
    press `Shift+R` after a reshuffle to reset the count, `Q` to quit.
+5. The sidebar starts in the counter view: a rank by suit grid that crosses off each card
+   dealt this shoe. Press `V` to switch to each seat's hand, and `L` to hide the legend
+   and key list. All keys are in [docs/reading.md](docs/reading.md#keys).
 
 ## How it works
 

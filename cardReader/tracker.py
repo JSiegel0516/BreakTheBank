@@ -60,12 +60,17 @@ Memory, so a card is never counted twice:
     deck, so shoe_count subtracts them from cards_left, but they add nothing to
     the running count. A face-down card still on the table across new_round()
     gets a new number but is not added again.
-  * new_shoe() clears both after a reshuffle.
+  * shoe_pending and shoe_locked split shoe_seen in two. A name first counted
+    this round is pending: a rename can still take it back. A name counted
+    before this round began is locked: it stays counted until the next shoe.
   * A card placed or renamed with a face name already in shoe_seen before
     this round is a DUPLICATE: one deck holds one of each card, so it is a
     misread or a reshuffle nobody marked with new_shoe(). It is reported, not
-    counted again. A card still on the table when the round began, and two
-    corners of one card joining by name, are not duplicates.
+    counted again, and its name is added to shoe_duplicates. A card still on
+    the table when the round began, and two corners of one card joining by
+    name, are not duplicates.
+  * new_shoe() clears shoe_seen, shoe_unrevealed, and shoe_duplicates after a
+    reshuffle.
 
 All thresholds live in TrackerConfig; TrackerConfig.from_settings turns the
 fractions of the frame width in settings.py into pixels.
@@ -143,8 +148,19 @@ class CardTracker:
         """After a reshuffle: a new round, and every card can be counted again."""
         self.shoe_seen: list[str] = []
         self.shoe_unrevealed = 0  # face-down cards placed this shoe and never renamed to a face
+        self.shoe_duplicates: set[str] = set()  # face names reported as a duplicate this shoe
         self.new_round()
         self._dealt_backs = set()
+
+    @property
+    def shoe_pending(self) -> set[str]:
+        """Face names first counted this round. A rename can still take them back."""
+        return {name for name in self.shoe_seen if name not in self._seen_before_round}
+
+    @property
+    def shoe_locked(self) -> set[str]:
+        """Face names counted before this round began. They stay counted until new_shoe()."""
+        return {name for name in self.shoe_seen if name in self._seen_before_round}
 
     def update(self, detections: list[Detection]) -> list[Event]:
         """Advance one frame with that frame's detections.
@@ -178,6 +194,7 @@ class CardTracker:
                         self.shoe_unrevealed += 1
                     events.append(Event("placed", card, self.frame))
                     if track.id not in self._carried_tracks and self._is_duplicate(card.label):
+                        self.shoe_duplicates.add(card.label)
                         events.append(Event("duplicate", card, self.frame))
                 self._card_of[track.id] = card
             tracks_of.setdefault(card.order, []).append(track)
@@ -196,6 +213,7 @@ class CardTracker:
                 self._rename(card, label)
                 events.append(Event("renamed", card, self.frame, was=was))
                 if self._is_duplicate(label):
+                    self.shoe_duplicates.add(label)
                     events.append(Event("duplicate", card, self.frame))
             if card.hidden:
                 card.hidden = False

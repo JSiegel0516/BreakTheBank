@@ -84,7 +84,7 @@ def test_number_keys_switch_players_and_prefer_a_saved_layout(tmp_path):
     assert np.abs(r.layout.seats[1].polygon - moved).max() <= 1
 
 
-def test_round_shoe_legend_save_and_quit_keys(tmp_path):
+def test_round_shoe_legend_view_save_and_quit_keys(tmp_path):
     r = make_reader(tmp_path)
     seat = r.layout.seats[1].polygon.mean(axis=0)
     dets = [Detection("KD", 0.9, float(seat[0]), float(seat[1]))]
@@ -98,6 +98,11 @@ def test_round_shoe_legend_save_and_quit_keys(tmp_path):
     legend = r.hud.show_legend
     r.handle_key(ord("l"), frame())
     assert r.hud.show_legend is not legend
+    assert r.hud.view == "counter"
+    r.handle_key(ord("v"), frame())
+    assert r.hud.view == "seats"
+    r.handle_key(ord("v"), frame())
+    assert r.hud.view == "counter"
     r.handle_key(ord("s"), frame())
     assert len(list((tmp_path / "frames").glob("frame_*.jpg"))) == 1
     assert r.handle_key(ord("x"), frame()) is True       # unknown keys are ignored

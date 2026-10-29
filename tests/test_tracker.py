@@ -165,7 +165,7 @@ def test_rename_to_a_name_counted_in_an_earlier_round_is_a_duplicate():
     run(tr, [det("BACK", 50, 200)], 3)
     ev = run(tr, [det("KH", 50, 200)], 10)  # the face-down card is turned over: a KH again
     assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("renamed", 1, "KH"), ("duplicate", 1, "KH")]
-    assert tr.shoe_seen == ["KH"]
+    assert tr.shoe_seen == ["KH"] and tr.shoe_duplicates == {"KH"}
 
 
 def test_two_corners_of_one_card_are_not_a_duplicate():
@@ -181,6 +181,33 @@ def test_card_still_down_through_a_new_round_is_not_a_duplicate():
     tr.new_round()
     ev = run(tr, [det("QS", 50, 50)], 1)
     assert [e.kind for e in ev] == ["placed"]
+
+
+def test_name_counted_this_round_is_pending_until_new_round():
+    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    run(tr, [det("QS", 50, 50)], 3)
+    assert (tr.shoe_pending, tr.shoe_locked) == ({"QS"}, set())
+    tr.new_round()
+    assert (tr.shoe_pending, tr.shoe_locked) == (set(), {"QS"})
+
+
+def test_name_counted_this_round_is_locked_after_round_over():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    run(tr, [det("QS", 50, 50)], 3)
+    ev = run(tr, [], 20)
+    assert "round_over" in [e.kind for e in ev]
+    assert (tr.shoe_pending, tr.shoe_locked) == (set(), {"QS"})
+
+
+def test_duplicate_name_is_remembered_until_new_shoe():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    run(tr, [det("KH", 50, 200)], 3)
+    assert tr.shoe_duplicates == set()
+    run(tr, [], 20)                     # round over
+    run(tr, [det("KH", 400, 200)], 3)
+    assert tr.shoe_duplicates == {"KH"}
+    tr.new_shoe()
+    assert tr.shoe_duplicates == set() and tr.shoe_locked == set() and tr.shoe_pending == set()
 
 
 def test_new_shoe_forgets_earlier_names():
