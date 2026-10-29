@@ -40,6 +40,7 @@ ARC_RADIUS = (0.42, 0.68)               # horizontal, vertical
 ARC_ANGLES = (160, 20)                  # degrees, P1 end to last-player end; 90 is straight below
 SEAT_DEPTH = 0.30                       # seat size towards the dealer, fraction of frame height
 SEAT_WIDTH_MAX = 0.20                   # fraction of frame width, shrinks as players are added
+SEAT_MARGIN = 0.02                      # least gap between a seat and the frame edge, fraction of frame height
 
 
 @dataclass
@@ -128,9 +129,13 @@ class SeatLayout:
         ux, uy = -vy, vx
         half_w = min(SEAT_WIDTH_MAX, 0.84 / self.players) * W / 2
         half_d = SEAT_DEPTH * H / 2
-        pts = [(px + sx * ux * half_w + sy * vx * half_d, py + sx * uy * half_w + sy * vy * half_d)
-               for sx, sy in ((-1, 1), (1, 1), (1, -1), (-1, -1))]
-        return np.clip(np.array(pts), [0, 0], [W - 1, H - 1]).astype(np.int32)
+        pts = np.array([(px + sx * ux * half_w + sy * vx * half_d, py + sx * uy * half_w + sy * vy * half_d)
+                        for sx, sy in ((-1, 1), (1, 1), (1, -1), (-1, -1))])
+        # an end seat can reach past the frame edge: slide it inward whole, so every corner handle stays visible
+        margin = SEAT_MARGIN * H
+        low, high = np.array([margin, margin]), np.array([W - 1 - margin, H - 1 - margin])
+        shift = np.maximum(low - pts.min(axis=0), 0) - np.maximum(pts.max(axis=0) - high, 0)
+        return (pts + shift).astype(np.int32)
 
 
 class ZoneEditor:
@@ -143,7 +148,8 @@ class ZoneEditor:
       * left-drag inside a zone: move the whole zone
       * right-click a corner: remove it (a zone keeps at least 3 corners)
       * right-click inside a zone: reset it to the template shape
-    Pass on_mouse to cv2.setMouseCallback. Clicks beyond the video (on the sidebar) are ignored."""
+    Pass on_mouse to cv2.setMouseCallback. Clicks beyond the video (on the sidebar) are ignored,
+    except within handle_radius of a handle on the frame edge, which they grab."""
 
     MIN_CORNERS = 3
 
@@ -155,7 +161,9 @@ class ZoneEditor:
         self._drag: tuple | None = None
 
     def handle_radius(self) -> int:
-        return max(12, round(18 * self.layout.width / 1600))
+        """How far from a handle, in frame pixels, a click still grabs it. Wider than the drawn
+        handle, so a handle stays easy to hit in a window shown at half scale (e.g. on Retina)."""
+        return max(16, round(28 * self.layout.width / 1600))
 
     @staticmethod
     def midpoints(polygon: np.ndarray) -> np.ndarray:
@@ -167,11 +175,13 @@ class ZoneEditor:
             self._drag = None
             return
         W, H = self.layout.width, self.layout.height
-        if event in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_RBUTTONDOWN) and not (0 <= x < W and 0 <= y < H):
-            return  # a click on the sidebar or bottom bar
+        hit = None
+        if event in (cv2.EVENT_LBUTTONDOWN, cv2.EVENT_RBUTTONDOWN):
+            hit = self._hit(x, y)  # before clamping, so a handle on the frame edge is grabbed from just past it
+            if hit is None and not (0 <= x < W and 0 <= y < H):
+                return  # a click on the sidebar or bottom bar
         x, y = min(max(x, 0), W - 1), min(max(y, 0), H - 1)  # a drag past the edge stops at the edge
         if event == cv2.EVENT_LBUTTONDOWN:
-            hit = self._hit(x, y)
             self.selected = hit[0] if hit else None
             self._drag = (*hit, x, y) if hit else None
         elif event == cv2.EVENT_MOUSEMOVE and self._drag is not None:
@@ -192,7 +202,6 @@ class ZoneEditor:
         elif event == cv2.EVENT_LBUTTONUP:
             self._drag = None
         elif event == cv2.EVENT_RBUTTONDOWN:
-            hit = self._hit(x, y)
             if hit is None:
                 return
             seat_i, what = hit
@@ -206,20 +215,32 @@ class ZoneEditor:
 
     def _hit(self, x, y):
         """What is under (x, y): (seat, corner index) for a corner, (seat, ("mid", edge)) for a '+',
-        (seat, None) inside a zone, or None. Corners win over '+' handles, '+' handles over zone
-        interiors, and player seats over the dealer, so a handle can always be grabbed."""
+        (seat, None) inside a zone, or None. Corners win over '+' handles and '+' handles over zone
+        interiors. Among handles within reach the nearest wins, so a handle can always be grabbed
+        even when a neighbour's handle is close; player seats win over the dealer on a tie and for
+        interiors. (x, y) may lie just outside the frame, next to a handle on its edge."""
         r = self.handle_radius()
-        order = list(range(len(self.layout.seats)))[::-1]
-        for i in order:
-            dists = np.hypot(*(self.layout.seats[i].polygon - (x, y)).T)
-            if dists.min() <= r:
-                return i, int(dists.argmin())
-        for i in order:
-            dists = np.hypot(*(self.midpoints(self.layout.seats[i].polygon) - (x, y)).T)
-            if dists.min() <= r:
-                return i, ("mid", int(dists.argmin()))
-        for i in order:
-            poly = self.layout.seats[i].polygon.reshape(-1, 1, 2)
+        seats = self.layout.seats
+        corner = self._nearest([seat.polygon for seat in seats], x, y, r)
+        if corner is not None:
+            return corner
+        mid = self._nearest([self.midpoints(seat.polygon) for seat in seats], x, y, r)
+        if mid is not None:
+            return mid[0], ("mid", mid[1])
+        for i in reversed(range(len(seats))):
+            poly = seats[i].polygon.reshape(-1, 1, 2)
             if cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0:
                 return i, None
         return None
+
+    @staticmethod
+    def _nearest(handles: list[np.ndarray], x, y, r) -> tuple[int, int] | None:
+        """(seat index, handle index) of the handle nearest (x, y) and at most r away, or None.
+        handles[i] holds seat i's handle points; on a tie the later seat wins."""
+        best = None
+        for i, points in enumerate(handles):
+            dists = np.hypot(*(points - (x, y)).T)
+            j = int(dists.argmin())
+            if dists[j] <= r and (best is None or dists[j] <= best[0]):
+                best = (dists[j], i, j)
+        return None if best is None else best[1:]

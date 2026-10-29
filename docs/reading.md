@@ -249,6 +249,10 @@ each edge:
 | drag inside a zone | moves the whole zone, keeping its shape |
 | right-click inside a zone | resets it to the template shape, removing added corners |
 
+A click grabs the nearest handle within reach, which is a little wider than the
+drawn handle. A drag past the frame edge stops at the edge; a handle left on the
+right or bottom edge can be grabbed from just outside the video.
+
 Press `E` again to save and lock. Layouts are saved to `data/seats.json`, **one
 per player count**, and work at any camera resolution:
 
@@ -260,6 +264,8 @@ per player count**, and work at any camera resolution:
 - Delete `data/seats.json` to forget every saved layout.
 
 Cards keep being read while you edit, and each card's seat follows the zones as you move them.
+While editing, the detector runs on one frame in three (`EDIT_DETECT_EVERY` in
+`read.py`), so the window keeps handling the mouse even when detection is slow.
 
 **Hands.** Each seat's cards make one hand. Aces count 11 unless that busts,
 then 1. Face-down cards are left out of the total and shown as `+1 hidden`.
@@ -418,7 +424,8 @@ frames is one second. If the fps is much lower, scale them down to match.
 | Training reports `device=cpu` and is very slow | wrong environment, or no GPU support | activate this project's `.venv`; on a Mac check `python -c "import torch; print(torch.backends.mps.is_available())"` |
 | An export says `skip ... boxes are whole cards` | it is labelled around whole cards, not corners | relabel the corners in Roboflow and export again |
 | Zones in odd places after starting | a layout saved earlier was loaded | press `E`, then right-click inside each zone to reset it, or delete `data/seats.json` |
-| Dragging misses the handles after resizing the window | the window is scaled | make the window its original size, or grab slightly inside the handle |
+| Dragging misses the handles in a resized or Retina window | the window is scaled, so handles are drawn smaller than they are in the video | press on the handle's centre; the grab area is wider than the drawn handle |
+| A drag does nothing, or starts away from where you pressed | on macOS the window reads the pointer when it handles the click, which waits for the detector | hold still for a moment after pressing; if it persists, raise `EDIT_DETECT_EVERY` in `read.py` |
 | `yolo val` results end up in `runs/detect/` | relative `project=` path | use `project="$PWD/models"` as in [Validate a model on its own](training.md#5-validate-a-model-on-its-own) |
 
 ## Known limitations

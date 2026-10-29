@@ -258,7 +258,7 @@ class Hud:
             self._text(img, title, (x, y), 0.6, colour)
         if editor is None:
             return
-        r = max(6, editor.handle_radius() * 2 // 3)
+        r = max(6, editor.handle_radius() // 2)  # drawn smaller than the grab area
         for seat in layout.seats:
             for cx, cy in ZoneEditor.midpoints(seat.polygon):  # '+': drag to add a corner
                 plus_r = max(4, r * 2 // 3)

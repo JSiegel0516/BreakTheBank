@@ -105,6 +105,52 @@ def test_detector_gets_the_preprocessed_frame_shift_v_shows_the_raw_one_and_s_sa
     assert abs(int(cv2.imread(str(saved[0]))[0, 0, 0]) - raw) <= 2
 
 
+def test_editing_detects_every_third_frame_reuses_the_cards_and_drains_the_mouse(monkeypatch, tmp_path):
+    cam = FakeCamera()
+    detected, fed, drained = [], [], []
+    process, drain = read.Reader.process, read.wait_key_draining_mouse
+
+    def detect(frame):
+        detected.append(cam.reads)
+        return [Detection("5H", 0.9, 100, 100)]
+
+    def watched_process(self, frame, dets):
+        fed.append(len(dets))
+        return process(self, frame, dets)
+
+    def watched_drain(budget_ms):
+        drained.append(cam.reads)
+        return drain(budget_ms)
+
+    monkeypatch.setattr(read.Reader, "process", watched_process)
+    monkeypatch.setattr(read, "wait_key_draining_mouse", watched_drain)
+    monkeypatch.setattr(read.settings, "SEATS_FILE", str(tmp_path / "seats.json"))
+    keys = [255, ord("e")] + [255] * 5 + [ord("e"), 255, ord("q")]  # E after read 2 starts editing, after 8 ends it
+    run_reader(monkeypatch, tmp_path, cam, keys, detect)
+
+    assert detected == [1, 2, 4, 7, 9, 10]   # every frame, then one in three while editing, then every frame again
+    assert fed == [1] * 10                  # frames without a detection pass reuse the last cards
+    assert drained == [3, 4, 5, 6, 7, 8]
+    assert (tmp_path / "seats.json").exists()
+
+
+def test_draining_the_mouse_stops_at_a_key_or_when_the_time_is_up(monkeypatch):
+    calls = []
+
+    def wait_key(ms):
+        calls.append(ms)
+        time.sleep(0.002)
+        return ord("v") if len(calls) == 3 else -1
+
+    monkeypatch.setattr(read.cv2, "waitKey", wait_key)
+    assert read.wait_key_draining_mouse(1000) == ord("v") and calls == [1, 1, 1]
+    calls.clear()
+    monkeypatch.setattr(read.cv2, "waitKey", lambda ms: calls.append(ms) or -1)
+    start = time.perf_counter()
+    assert read.wait_key_draining_mouse(20) == -1
+    assert time.perf_counter() - start >= 0.02 and len(calls) > 1
+
+
 def test_preprocess_flag_only_takes_a_known_mode(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["read.py", "--preprocess", "sharpen"])
     with pytest.raises(SystemExit):
