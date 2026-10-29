@@ -5,7 +5,10 @@ everything in between, so it can be driven in a test without either:
 
     reader = Reader(tracker, layout, hud, seats_file, frames_dir, log=csv_writer)
     events = reader.process(frame, detections)     # tracker -> seats -> print, log, flash
-    keep_going = reader.handle_key(key, frame)     # the keys listed in hud.KEY_LIST
+    keep_going = reader.handle_key(key, frame)     # the keys listed in hud.KEY_LIST (C is read.py's)
+
+reader.preprocess (key P) and reader.show_enhanced (key Shift+V) tell read.py
+how to preprocess each frame for the detector and which frame to show.
 
 Events are printed as they happen and appended to the CSV log as
     time, frame, event, order, card, seat, running_count, x, y
@@ -23,6 +26,7 @@ import numpy as np
 from .blackjack import ShoeCount, shoe_count
 from .cards import Detection, Event
 from .hud import Hud
+from .preprocess import MODES
 from .seats import MAX_PLAYERS, SeatLayout, ZoneEditor
 from .table import Table
 from .tracker import CardTracker
@@ -32,12 +36,15 @@ LOG_HEADER = ["time", "frame", "event", "order", "card", "seat", "running_count"
 
 class Reader:
     def __init__(self, tracker: CardTracker, layout: SeatLayout, hud: Hud,
-                 seats_file: Path, frames_dir: Path, log=None):
+                 seats_file: Path, frames_dir: Path, log=None, preprocess: str = "off"):
+        """preprocess: the starting preprocess mode, one of preprocess.MODES (key P cycles it)."""
         self.tracker, self.hud, self.log = tracker, hud, log
         self.seats_file, self.frames_dir = Path(seats_file), Path(frames_dir)
         self.editor = ZoneEditor(layout)
         self.table = Table(layout)
         self.count: ShoeCount = self._recount()
+        self.preprocess = preprocess  # read.py preprocesses each frame with this mode before detection
+        self.show_enhanced = True     # False: the window shows the raw camera frame instead (key Shift+V)
 
     @property
     def layout(self) -> SeatLayout:
@@ -77,7 +84,9 @@ class Reader:
         return events
 
     def handle_key(self, k: int, frame: np.ndarray) -> bool:
-        """Act on a key code from cv2.waitKey. Returns False when the reader should quit."""
+        """Act on a key code from cv2.waitKey. Returns False when the reader should quit.
+
+        frame: the raw camera frame, before preprocessing; S saves it."""
         if k == ord("q"):
             return False
         if ord("1") <= k <= ord(str(MAX_PLAYERS)):
@@ -98,6 +107,13 @@ class Reader:
             self.count = self._recount()
             print("--- new shoe: count reset ---")
             self.hud.flash("new shoe: count reset to 0")
+        elif k == ord("p"):
+            self.preprocess = MODES[(MODES.index(self.preprocess) + 1) % len(MODES)]
+            self.hud.flash(f"preprocess: {self.preprocess}")
+        elif k == ord("V"):
+            self.show_enhanced = not self.show_enhanced
+            self.hud.flash("showing the frame the detector sees" if self.show_enhanced
+                           else "showing the raw camera frame")
         elif k == ord("s"):
             self.save_frame(frame)
         return True

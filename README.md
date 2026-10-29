@@ -8,6 +8,7 @@ with each seat's hand and the Hi-Lo count.
 python train.py     # teach the detector what cards look like, using everything in data/raw
 python read.py      # read cards off the table, in placement order
 python evaluate.py --log round1.csv --expected round1Expected.csv   # score a logged run against the real cards
+python benchmark.py --limit 20   # does preprocessing help the model in dim or bright light?
 ```
 
 ## Quick start
@@ -21,7 +22,12 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
 3. Activate the environment (`source .venv/bin/activate`), then run `python read.py`.
    Place cards one at a time. Each gets a number in the order placed.
 4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared;
-   press `Shift+R` after a reshuffle to reset the count, `Q` to quit.
+   press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
+   `no signal`, reconnect the camera's cable or wake the phone and press `C` to reopen it.
+   In a dim room or under uneven light, press `P` to cycle the preprocess modes (off, gamma,
+   clahe, auto) and `Shift+V` to compare with the raw camera frame. See
+   [Dim or washed-out tables](docs/reading.md#dim-or-washed-out-tables); glare that turns a
+   card's index pure white cannot be fixed in software.
 5. The sidebar starts in the counter view: a rank by suit grid that crosses off each card
    dealt this shoe. Press `V` to switch to each seat's hand, and `L` to hide the legend
    and key list. All keys are in [docs/reading.md](docs/reading.md#keys).
@@ -31,6 +37,9 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
 ```
 camera frame
    |
+   v
+preprocess    contrast help: by default "auto" brightens a     cardReader/preprocess.py
+   |          dim frame and leaves a well-lit one alone
    v
 detector      finds every corner index in the frame and names it ("KH", "10S", "BACK")
    |          a YOLO model trained by train.py            cardReader/detector.py
@@ -61,6 +70,7 @@ BreakTheBank/                 (the folder git clone creates)
 ├── train.py                  build the training set from data/raw, then train the detector
 ├── read.py                   the live reader: camera -> detector -> tracker -> ordered cards
 ├── evaluate.py               scores a read.py --log against the cards really dealt
+├── benchmark.py              accuracy and speed of each preprocess mode on darkened and brightened photos
 ├── settings.py               every tunable number and path, with comments
 ├── pyproject.toml            dependencies, pytest and ruff config; uv.lock pins the exact versions
 ├── CONTRIBUTING.md           branch, test, PR: how changes get in
@@ -68,6 +78,7 @@ BreakTheBank/                 (the folder git clone creates)
 ├── docs/                     reading.md, training.md, results.md (see Documentation below)
 ├── cardReader/               the library
 │   ├── camera.py             frames from a camera, capture card, or video file
+│   ├── preprocess.py         contrast help before detection: gamma, CLAHE, auto
 │   ├── detector.py           YOLO wrapper: frame -> list of detections
 │   ├── cards.py              the Detection, Card and Event types
 │   ├── hud.py                the overlay read.py draws on the live feed
@@ -86,7 +97,11 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_tracker.py       placement order, hidden cards, rounds, shoes, renaming
 │   ├── test_table.py         hands per seat
 │   ├── test_reader.py        events, logging, keys
+│   ├── test_read.py          stage timings, no signal and reconnect in the main loop
+│   ├── test_camera.py        stale detection and reopening with a faked capture
+│   ├── test_preprocess.py    the preprocess modes: shape, auto's branches, colour kept
 │   ├── test_evaluate.py      scoring a log: missed, extra, wrong names, the count
+│   ├── test_benchmark.py     benchmark scoring and the level x mode loop with a faked detector
 │   ├── test_hud.py           the overlay draws
 │   ├── test_dataset.py       combining exports: class remap, splits, skips
 │   ├── test_synthetic.py     card art, geometry, composed images
@@ -158,7 +173,7 @@ and check that `which python` ends in `BreakTheBank/.venv/bin/python`.
 
 - [docs/reading.md](docs/reading.md): running the reader, keys, camera setup, seats and the count, scoring a recorded run, tuning, troubleshooting, known limitations
 - [docs/training.md](docs/training.md): how training works, the step-by-step guide, improving the model, Colab, glossary
-- [docs/results.md](docs/results.md): every trained model's scores and the comparisons between them
+- [docs/results.md](docs/results.md): every trained model's scores and the comparisons between them, and the preprocessing benchmark
 
 Every tunable number is in `settings.py`, with a comment on each. `read.py` and
 `train.py` check them at start-up and stop with a list of any value out of range,

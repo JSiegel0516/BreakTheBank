@@ -3,7 +3,7 @@ import pytest
 
 from cardReader.blackjack import shoe_count
 from cardReader.cards import Card, Detection
-from cardReader.hud import KEYS, SIDEBAR, DealtCards, Hud, count_cue
+from cardReader.hud import KEY_LIST, KEYS, SIDEBAR, DealtCards, Hud, count_cue, status_text
 from cardReader.seats import SeatLayout, ZoneEditor
 
 
@@ -82,11 +82,43 @@ def test_each_view_has_its_own_legend_and_l_hides_it(view):
 def test_bottom_bar_fits_at_720p_in_capture_mode():
     W, H = 1280, 720
     hud = Hud()
+    stage_ms = {"detect": 123.4, "preprocess": 12.3}
     canvas = hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H), shoe_count([]),
-                      capture_mode=True)
+                      capture_mode=True, stage_ms=stage_ms, preprocess="clahe", showing_raw=True)
     keys_w = hud._size(KEYS, 0.5)[0]
-    status_w = hud._size("CAPTURE MODE (no model)    30.0 fps", 0.5)[0]
+    status_w = hud._size(status_text(30.0, stage_ms, True, "clahe", True), 0.5)[0]
     assert keys_w + status_w + 3 * hud.pad <= canvas.shape[1]
+
+
+def test_status_shows_fps_timings_the_preprocess_mode_and_a_raw_display():
+    assert status_text(29.7, {"detect": 23.41, "preprocess": 0.0}, False) == \
+        "29.7 fps  detect 23.4 ms  prep off 0.0 ms"
+    assert status_text(29.7, None, False) == "29.7 fps  detect 0.0 ms  prep off 0.0 ms"
+    assert status_text(29.7, {"preprocess": 3.96}, False, "clahe") == "29.7 fps  detect 0.0 ms  prep clahe 4.0 ms"
+    assert status_text(29.7, None, False, "gamma", showing_raw=True).endswith("prep gamma 0.0 ms  showing raw")
+    assert status_text(0.0, None, True).startswith("CAPTURE MODE (no model)")
+
+
+def test_the_mode_and_raw_display_change_the_bottom_bar():
+    W, H = 1280, 720
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    plain = Hud().draw(frame, [], [], 30.0, layout, shoe_count([]))
+    raw = Hud().draw(frame, [], [], 30.0, layout, shoe_count([]), preprocess="gamma", showing_raw=True)
+    assert (plain[-40:] != raw[-40:]).any()
+    assert ("P", "preprocess mode") in KEY_LIST and ("Shift+V", "raw or enhanced") in KEY_LIST
+
+
+@pytest.mark.parametrize(("W", "H"), [(640, 360), (1280, 720), (1920, 1080)])
+def test_no_signal_message_is_drawn_over_the_video_and_c_is_listed(W, H):
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    live = Hud().draw(frame, [], [], 30.0, layout, shoe_count([]))
+    lost = Hud().draw(frame, [], [], 30.0, layout, shoe_count([]), no_signal=True)
+    centre = (slice(H // 3, 2 * H // 3), slice(W // 4, 3 * W // 4))
+    assert (live[centre] != lost[centre]).any()
+    assert frame.sum() == 0
+    assert ("C", "reconnect camera") in KEY_LIST
 
 
 def test_count_cue_follows_the_sign_of_the_true_count():

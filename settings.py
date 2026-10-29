@@ -46,6 +46,16 @@ LABEL_WINDOW = 45          # a card's name is the vote over its last this many f
                            # turned face up (a hole card) changes from BACK to its name in about half that
 ROUND_END_FRAMES = 90      # no card visible for this many frames (about 3 s at 30 fps) ends the round
 
+# Preprocessing: contrast help for dim or washed-out tables (key P in read.py cycles the mode).
+PREPROCESS = "auto"        # "off", "gamma" (brighten), "clahe" (local contrast), or "auto" (gamma by brightness).
+                           # auto is the benchmarked choice (docs/results.md); clahe lowered accuracy at every level.
+PREPROCESS_BRIGHTEN_GAMMA = 0.6  # used by "gamma", and by "auto" in a dim room. Below 1 lifts the shadows.
+PREPROCESS_DARKEN_GAMMA = 1.4    # used by "auto" on a washed-out table. Above 1 pulls the highlights down.
+PREPROCESS_DARK_BELOW = 110      # "auto": a mean grey level (0 to 255) below this counts as dim ...
+PREPROCESS_BRIGHT_ABOVE = 190    # ... and above this as washed out; in between the frame is left alone
+PREPROCESS_CLAHE_CLIP = 2.0      # "clahe": how far local contrast may be stretched. Higher = stronger, noisier.
+PREPROCESS_CLAHE_TILES = 8       # "clahe": the frame is split into this many tiles across and down
+
 # Table.
 PLAYERS = 5                # player seats when nothing is saved yet; change live with keys 1-7 in read.py
 SEATS_FILE = "data/seats.json"  # zones edited with the mouse (key E in read.py), one layout per player count
@@ -60,14 +70,15 @@ def _is_number(value) -> bool:
 
 
 def validate(config) -> None:
-    """Check the numbers in a settings module: this one, or any object with the same names.
+    """Check the values in a settings module: this one, or any object with the same names.
 
     Raises ValueError listing every invalid value with its allowed range."""
-    from cardReader.seats import MAX_PLAYERS  # imported here so settings.py stays cheap to import
+    from cardReader.preprocess import MODES  # imported here so settings.py stays cheap to import
+    from cardReader.seats import MAX_PLAYERS
 
     rules = [
         (("CONFIRM_FRAMES", "CONFIRM_WINDOW", "DROP_FRAMES", "LABEL_WINDOW", "ROUND_END_FRAMES",
-          "INPUT_SIZE", "TRAIN_INPUT_SIZE", "BATCH_SIZE", "EPOCHS", "PATIENCE"),
+          "INPUT_SIZE", "TRAIN_INPUT_SIZE", "BATCH_SIZE", "EPOCHS", "PATIENCE", "PREPROCESS_CLAHE_TILES"),
          lambda v: _is_whole(v) and v >= 1, "a whole number of 1 or more"),
         (("SYNTHETIC_IMAGES",), lambda v: _is_whole(v) and v >= 0, "a whole number of 0 or more"),
         (("CAMERA_WIDTH", "CAMERA_HEIGHT"),
@@ -78,6 +89,11 @@ def validate(config) -> None:
         (("CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
+        (("PREPROCESS",), lambda v: v in MODES, "one of " + ", ".join(repr(mode) for mode in MODES)),
+        (("PREPROCESS_BRIGHTEN_GAMMA", "PREPROCESS_DARKEN_GAMMA", "PREPROCESS_CLAHE_CLIP"),
+         lambda v: _is_number(v) and v > 0, "a number above 0"),
+        (("PREPROCESS_DARK_BELOW", "PREPROCESS_BRIGHT_ABOVE"),
+         lambda v: _is_number(v) and 0 <= v <= 255, "a number from 0 to 255"),
     ]
     problems = []
     for names, is_valid, allowed in rules:
@@ -90,5 +106,8 @@ def validate(config) -> None:
     if _is_whole(frames) and _is_whole(window) and frames > window:
         problems.append(f"CONFIRM_FRAMES = {frames} must be at most CONFIRM_WINDOW = {window}, "
                         "the frames it is counted in")
+    dark, bright = config.PREPROCESS_DARK_BELOW, config.PREPROCESS_BRIGHT_ABOVE
+    if _is_number(dark) and _is_number(bright) and dark >= bright:
+        problems.append(f"PREPROCESS_DARK_BELOW = {dark} must be below PREPROCESS_BRIGHT_ABOVE = {bright}")
     if problems:
         raise ValueError("invalid values in settings.py:\n" + "\n".join(f"  {p}" for p in problems))

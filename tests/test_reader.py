@@ -107,3 +107,26 @@ def test_round_shoe_legend_view_save_and_quit_keys(tmp_path):
     assert len(list((tmp_path / "frames").glob("frame_*.jpg"))) == 1
     assert r.handle_key(ord("x"), frame()) is True       # unknown keys are ignored
     assert r.handle_key(ord("q"), frame()) is False
+
+
+def test_p_cycles_the_preprocess_modes_and_shift_v_toggles_the_displayed_frame(tmp_path):
+    r = make_reader(tmp_path)
+    assert (r.preprocess, r.show_enhanced) == ("off", True)
+    modes = []
+    for _ in range(4):
+        r.handle_key(ord("p"), frame())
+        modes.append(r.preprocess)
+        assert r.hud._message == f"preprocess: {r.preprocess}"
+    assert modes == ["gamma", "clahe", "auto", "off"]
+    r.handle_key(ord("V"), frame())
+    assert r.show_enhanced is False and r.hud._message == "showing the raw camera frame"
+    r.handle_key(ord("V"), frame())
+    assert r.show_enhanced is True and r.hud._message == "showing the frame the detector sees"
+    assert r.hud.view == "counter"                       # Shift+V is not V
+
+
+def test_reader_starts_in_the_mode_it_is_given(tmp_path):
+    r = Reader(CardTracker(), SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               preprocess="clahe")
+    r.handle_key(ord("p"), frame())
+    assert r.preprocess == "auto"
