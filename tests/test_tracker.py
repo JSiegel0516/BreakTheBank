@@ -435,3 +435,17 @@ def test_config_object_and_keyword_overrides_agree():
         STILL_DISTANCE, DROP_FRAMES, MATCH_DISTANCE, ROUND_END_FRAMES, LABEL_WINDOW = 0.01, 30, 0.05, 90, 45
     cfg = TrackerConfig.from_settings(S, 2000)
     assert (cfg.still_distance, cfg.match_dist, cfg.label_window) == (20.0, 100.0, 45)
+
+
+def test_bound_gives_each_detection_its_confirmed_card_even_when_misread():
+    tr = CardTracker(confirm_frames=3, drop_frames=5, match_dist=20)
+    tr.update([det("6H", 100, 100)])
+    assert tr.bound == [None]                            # seen once: not confirmed yet
+    run(tr, [det("6H", 100, 100)], 2)
+    card = tr.round[0]
+    assert tr.bound == [card]
+    tr.update([det("9H", 101, 100), det("KS", 400, 300)])  # a one-frame misread, and a new corner elsewhere
+    assert tr.bound[0] is card and card.label == "6H"
+    assert tr.bound[1] is None
+    tr.update([])
+    assert tr.bound == []

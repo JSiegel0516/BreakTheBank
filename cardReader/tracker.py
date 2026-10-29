@@ -129,6 +129,7 @@ class CardTracker:
         self.frame = 0
         self._card_of: dict[int, Card] = {}  # track id -> the card it belongs to
         self._dealt_backs: set[int] = set()  # ids of tracks of face-down cards already in shoe_unrevealed
+        self.bound: list[Card | None] = []   # per detection of the last update: the confirmed card it matched
         self.new_shoe()
 
     def new_round(self):
@@ -168,9 +169,13 @@ class CardTracker:
         Returns the events this frame caused: placed cards first, then renamed,
         hidden, and returned cards in placement order, and round_over last. A
         placed or renamed event is followed by duplicate when the card's name was
-        already counted before this round. round_over also starts a new round."""
+        already counted before this round. round_over also starts a new round.
+
+        Also sets bound: one entry per detection, in the same order, giving the
+        confirmed card its track belongs to, or None while that track is not
+        confirmed. A detection misread as another name is still bound to its card."""
         self.frame += 1
-        self._match(detections)
+        det_tracks = self._match(detections)
         for track in self.tracks.values():
             if not track.confirmed and self._passes_checks(track):
                 track.confirmed = True
@@ -219,6 +224,7 @@ class CardTracker:
                 card.hidden = False
                 events.append(Event("returned", card, self.frame))
             card.x, card.y = card_tracks[0].cx, card_tracks[0].cy
+        self.bound = [self._card_of.get(track_id) for track_id in det_tracks]
 
         all_hidden = bool(self.round) and not tracks_of
         if all_hidden:
@@ -303,8 +309,11 @@ class CardTracker:
         card.label = label
         self._count(card, at)
 
-    def _match(self, detections: list[Detection]):
+    def _match(self, detections: list[Detection]) -> list[int]:
+        """Hit each detection's track, starting new tracks for the unmatched, and age the rest.
+        Returns the track id of each detection, in detection order."""
         # Greedy nearest-neighbour matching, closest pairs first.
+        det_tracks = [0] * len(detections)
         pairs = []
         for det_i, det in enumerate(detections):
             for track_id, track in self.tracks.items():
@@ -319,6 +328,7 @@ class CardTracker:
                 continue
             used_dets.add(det_i)
             hit_tracks.add(track_id)
+            det_tracks[det_i] = track_id
             self._hit(self.tracks[track_id], detections[det_i])
 
         # Unmatched detections start new tracks, highest confidence first.
@@ -329,6 +339,7 @@ class CardTracker:
             self._hit(track, detections[det_i])
             self.tracks[track.id] = track
             hit_tracks.add(track.id)
+            det_tracks[det_i] = track.id
 
         # Unmatched tracks accumulate misses and are dropped after drop_frames.
         for track_id in list(self.tracks):
@@ -340,6 +351,7 @@ class CardTracker:
                 del self.tracks[track_id]
                 self._card_of.pop(track_id, None)
                 self._dealt_backs.discard(track_id)
+        return det_tracks
 
     def _hit(self, track: Track, det: Detection):
         if track.seen:

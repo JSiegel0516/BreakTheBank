@@ -3,7 +3,7 @@ import pytest
 
 from cardReader.blackjack import shoe_count
 from cardReader.cards import Card, Detection
-from cardReader.hud import KEY_LIST, KEYS, SIDEBAR, DealtCards, Hud, count_cue, status_text
+from cardReader.hud import GREY, KEY_LIST, KEYS, RED, SIDEBAR, DealtCards, Hud, count_cue, status_text
 from cardReader.seats import SeatLayout, ZoneEditor
 
 
@@ -24,6 +24,25 @@ def test_draw_returns_video_plus_sidebar_with_hands_tags_and_edit_handles():
     assert canvas.shape == (H, W + round(SIDEBAR * W), 3)
     assert canvas[:, W:].any()                      # the sidebar has content
     assert frame.sum() == 0                          # the input frame is not drawn on
+
+
+def test_boxes_take_the_colour_of_their_bound_card_and_g_hides_the_unmatched():
+    W, H = 1280, 720
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    six = Card(1, "6H", 120, 130, 1)
+    misread = [Detection("9H", 0.9, 120, 130, (100, 100, 140, 160))]  # the 6H's corner, read as 9H this frame
+    edge = (130, 100)                                                   # a pixel on the box's left edge
+    hud = Hud()
+    empty = hud.draw(frame, [], [six], 30.0, layout, shoe_count(["6H"]))
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[six])[edge]) == RED
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[None])[edge]) == GREY
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]))[edge]) == GREY
+    hud.show_unmatched = False
+    hidden = hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[None])
+    assert (hidden[edge] == empty[edge]).all()
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[six])[edge]) == RED
+    assert ("G", "grey boxes") in KEY_LIST
 
 
 @pytest.mark.parametrize("legend", [True, False])

@@ -4,8 +4,10 @@
       edit mode (key E) every corner gets a white handle, every edge a '+' to add
       a corner, the zone last clicked is tinted, and the bottom of the sidebar
       explains the mouse controls.
-    * every corner index the detector sees: thin grey box until the tracker
-      confirms the card, then a box in the card's colour
+    * every corner index the detector sees: a box in the card's colour when the
+      tracker has matched it to a confirmed card, even on a frame that misreads
+      its name; otherwise a thin grey box, not matched to a confirmed card yet
+      (key G hides these)
     * a tag on each card of the round: its placement number in a yellow badge,
       then its name. A hidden (covered) card keeps a grey tag where it was last seen.
     * a sidebar to the right of the video, so nothing covers the table. It
@@ -60,12 +62,12 @@ DUPLICATE = (255, 60, 255)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 KEYS = "[V] view    [L] legend/keys    [R] round    [Shift+R] shoe    [Q] quit"  # the bottom bar
 KEY_LIST = [("1-7", "players"), ("E", "edit zones"), ("V", "switch view"), ("L", "hide legend"),
-            ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"), ("C", "reconnect camera"),
-            ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("Q", "quit")]
+            ("G", "grey boxes"), ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"),
+            ("C", "reconnect camera"), ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("Q", "quit")]
 NO_SIGNAL = "no signal: press C to reconnect"
 # Legend entries per view: (swatch kind, colour, meaning). Kinds are drawn by Hud._swatch.
 SEATS_LEGEND = [("box", RED, "hearts, diamonds"), ("box", WHITE, "spades, clubs"),
-                ("box", AMBER, "face down"), ("thin", GREY, "not confirmed yet"),
+                ("box", AMBER, "face down"), ("thin", GREY, "not matched to a card"),
                 ("badge", BADGE, "placement number"), ("badge", DIM, "covered, still counted"),
                 ("line", AMBER, "dealer zone"), ("line", SEAT_LINE, "player zone")]
 COUNTER_LEGEND = [("pending", BADGE, "pending: this round"), ("locked", WHITE, "locked: earlier round"),
@@ -150,6 +152,7 @@ class Hud:
         self._message = ""
         self._message_until = 0.0
         self.show_legend = True
+        self.show_unmatched = True  # False: thin grey boxes are not drawn (key G)
         self.view = "counter"  # "counter" or "seats": what the sidebar shows below the count
 
     def flash(self, text: str, seconds: float = 1.5):
@@ -160,10 +163,15 @@ class Hud:
              layout: SeatLayout, count: ShoeCount, capture_mode: bool = False,
              editor: ZoneEditor | None = None, dealt: DealtCards | None = None,
              stage_ms: dict[str, float] | None = None, no_signal: bool = False,
-             preprocess: str = "off", showing_raw: bool = False) -> np.ndarray:
+             preprocess: str = "off", showing_raw: bool = False,
+             bound: list[Card | None] | None = None) -> np.ndarray:
         """Return the frame with the overlay, plus the sidebar on its right. The frame is not changed.
 
         cards: every card of the round, hidden ones included, in placement order.
+        bound: per detection, in the order of dets, the confirmed card it belongs to or None
+        (CardTracker.bound). A bound box takes its card's colour even when this frame misreads
+        its name; any other box is thin grey, drawn only while show_unmatched is set. A
+        detection without an entry, or every detection when bound is None, is not bound.
         editor: the zone editor, drawn with handles while it is active.
         dealt: the shoe's cards for the counter view's grid (None: an empty grid).
         stage_ms: smoothed milliseconds per stage; "detect" and "preprocess" go in the bottom bar.
@@ -179,12 +187,13 @@ class Hud:
 
         editing = editor is not None and editor.active
         self._seat_outlines(view, layout, editor if editing else None)
-        visible = {c.label for c in cards if not c.hidden}
-        for det in dets:
+        bound = bound or []
+        for i, det in enumerate(dets):
+            card = bound[i] if i < len(bound) else None
             x1, y1, x2, y2 = map(int, det.box)
-            if det.label in visible:
-                cv2.rectangle(view, (x1, y1), (x2, y2), card_colour(det.label), self.thick)
-            else:
+            if card is not None:
+                cv2.rectangle(view, (x1, y1), (x2, y2), card_colour(card.label), self.thick)
+            elif self.show_unmatched:
                 cv2.rectangle(view, (x1, y1), (x2, y2), GREY, 1)
 
         placed: list[tuple] = []

@@ -14,8 +14,8 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | Sidebar, below | the counter view or the seats view; `V` switches between them (see below) |
 | Yellow badge and name on a card | that card's placement number and name |
 | Grey badge and name | a hidden card: covered right now, but still in the hand and in the count |
-| Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |
-| Thin grey boxes | detections the tracker has not confirmed yet (a card still moving, or a one-frame misread) |
+| Coloured boxes | corner indices the tracker has matched to a confirmed card, in that card's colour: red for hearts and diamonds, white for spades and clubs, amber for face-down. A frame that misreads the corner (a 6H read as 9H) keeps the card's colour |
+| Thin grey boxes | detections not matched to a confirmed card: a card not confirmed yet, or a stray box away from every card. `G` hides them |
 | Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
 | Bottom bar | the main keys, frames per second, the milliseconds per frame spent detecting, and the preprocess mode with its milliseconds (`showing raw` when `Shift+V` shows the raw camera frame) |
 | `no signal: press C to reconnect` | the camera has sent no new frame for two seconds (see [Camera disconnects](#camera-disconnects)) |
@@ -59,7 +59,7 @@ view. The counter view's colours are in the table above.
 | Red box or name | corner index, tags, sidebar | a confirmed heart or diamond (the suit colour, not an error) |
 | White box or name | same | a confirmed spade or club |
 | Amber box or name | same | a confirmed face-down card |
-| Thin grey box | corner index | something detected that has not passed the [confirmation checks](#rules-the-tracker-assumes) yet |
+| Thin grey box | corner index | a detection not matched to a confirmed card: it has not passed the [confirmation checks](#rules-the-tracker-assumes) yet, or it is away from every card (`G` hides these) |
 | Yellow badge | tags, sidebar | the card's placement number |
 | Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand and the count |
 | Amber outline | zones | the dealer's zone |
@@ -77,6 +77,7 @@ The bottom bar lists the main keys; the legend lists them all.
 | `E` | edit zones with the mouse; press `E` again to save them and lock |
 | `V` | switch the sidebar between the counter view and the seats view |
 | `L` | show or hide the legend and key list |
+| `G` | show or hide the thin grey boxes, the detections not matched to a confirmed card |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
 | `S` | save the current frame to `data/raw/frames/` for labelling |
@@ -111,6 +112,11 @@ average time per frame: read 0.4 ms, preprocess 0.1 ms, detect 31.2 ms, draw 6.8
 [Dim or washed-out tables](#dim-or-washed-out-tables)), `detect` the model, and
 `draw` the overlay and the window. The bottom bar shows the same detect and
 preprocess times, smoothed, while it runs.
+
+At start-up the model line names the device the detector runs on, as in
+`model models/cards/weights/best.pt on mps`: `mps` (Apple GPU), `cuda` (NVIDIA
+GPU), or `cpu`. `cpu` on a Mac with Apple silicon makes detect several times
+slower; try `--device mps`.
 
 A `duplicate` line means a face card was placed (or renamed) under a name already
 counted this shoe in an earlier round. One deck holds one of each card, so it is
@@ -418,6 +424,7 @@ frames is one second. If the fps is much lower, scale them down to match.
 | `no signal: press C to reconnect` | the camera stopped sending frames | reconnect the cable or wake the phone, then press `C` (see [Camera disconnects](#camera-disconnects)) |
 | Bottom bar says CAPTURE MODE | no model at `MODEL_PATH` | check `models/cards/weights/best.pt` exists, or train one |
 | Cards on screen but none get a number | detections too weak, or the camera is too far | see [Tuning the reader](#tuning-the-reader); move the camera closer |
+| Thin grey boxes clutter the table | detections not matched to a confirmed card: cards still settling, or stray boxes | press `G` to hide them; a one-frame misread of a confirmed card's corner keeps the card's colour, not grey |
 | Keys do nothing | the terminal has focus, not the window | click the reader window first |
 | The window close button does not quit | OpenCV reopens the window | press `Q`, or Ctrl+C in the terminal |
 | Training stops with an out-of-memory error | batch too large for the GPU | `BATCH_SIZE = 4` in `settings.py` |

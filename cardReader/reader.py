@@ -95,6 +95,9 @@ class Reader:
             self.toggle_edit()
         elif k == ord("l"):
             self.hud.show_legend = not self.hud.show_legend
+        elif k == ord("g"):
+            self.hud.show_unmatched = not self.hud.show_unmatched
+            self.hud.flash("unmatched boxes shown" if self.hud.show_unmatched else "unmatched boxes hidden")
         elif k == ord("v"):
             self.hud.view = "seats" if self.hud.view == "counter" else "counter"
             self.hud.flash(f"{self.hud.view} view")
