@@ -7,8 +7,8 @@
 
 Per frame:  camera -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
 
-Every event (placed, hidden, returned, renamed, round over) is printed as it
-happens, and appended to --log as CSV if given. Without a trained model it runs
+Every event (placed, hidden, returned, renamed, duplicate, round over) is printed
+as it happens, and appended to --log as CSV if given. Without a trained model it runs
 in capture mode: it shows the live feed and lets you press 's' to save frames
 for labelling.
 

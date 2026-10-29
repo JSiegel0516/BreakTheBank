@@ -7,6 +7,7 @@ with each seat's hand and the Hi-Lo count.
 ```
 python train.py     # teach the detector what cards look like, using everything in data/raw
 python read.py      # read cards off the table, in placement order
+python evaluate.py --log round1.csv --expected round1Expected.csv   # score a logged run against the real cards
 ```
 
 ## Quick start
@@ -55,6 +56,7 @@ sensible near the end of the deck. Details are in
 BreakTheBank/                 (the folder git clone creates)
 ├── train.py                  build the training set from data/raw, then train the detector
 ├── read.py                   the live reader: camera -> detector -> tracker -> ordered cards
+├── evaluate.py               scores a read.py --log against the cards really dealt
 ├── settings.py               every tunable number and path, with comments
 ├── pyproject.toml            dependencies, pytest and ruff config; uv.lock pins the exact versions
 ├── CONTRIBUTING.md           branch, test, PR: how changes get in
@@ -80,6 +82,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_tracker.py       placement order, hidden cards, rounds, shoes, renaming
 │   ├── test_table.py         hands per seat
 │   ├── test_reader.py        events, logging, keys
+│   ├── test_evaluate.py      scoring a log: missed, extra, wrong names, the count
 │   ├── test_hud.py           the overlay draws
 │   ├── test_dataset.py       combining exports: class remap, splits, skips
 │   ├── test_synthetic.py     card art, geometry, composed images
@@ -143,7 +146,7 @@ and check that `which python` ends in `BreakTheBank/.venv/bin/python`.
 
 ## Documentation
 
-- [docs/reading.md](docs/reading.md): running the reader, keys, camera setup, seats and the count, tuning, troubleshooting, known limitations
+- [docs/reading.md](docs/reading.md): running the reader, keys, camera setup, seats and the count, scoring a recorded run, tuning, troubleshooting, known limitations
 - [docs/training.md](docs/training.md): how training works, the step-by-step guide, improving the model, Colab, glossary
 - [docs/results.md](docs/results.md): every trained model's scores and the comparisons between them
 

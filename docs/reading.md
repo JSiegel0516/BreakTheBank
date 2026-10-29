@@ -63,9 +63,15 @@ Every event is also printed in the terminal, with the seat and the count:
 [  1402] placed   #3   BACK (dealer) count +0
 [  1870] renamed  #3   KS (was BACK) (dealer) count -1
 [  2210] round_over
+[  2650] placed   #1   KS (P3) count -1
+[  2650] duplicate #1   KS (P3)
 ```
 
 and on quitting: `counted this shoe: 10H 6C ...` with the final running and true count.
+
+A `duplicate` line means a face card was placed (or renamed) under a name already
+counted this shoe in an earlier round. One deck holds one of each card, so it is
+a misread or a reshuffle nobody marked with `Shift+R`. The count is not changed.
 
 - `--source 0` picks the camera. With an iPhone as a Continuity Camera, OpenCV
   usually numbers it 0 and the built-in camera 1; try the other number if the
@@ -190,14 +196,17 @@ true count means the remaining cards are rich in tens and aces.
   | Check | Setting | Stops |
   |---|---|---|
   | seen in `CONFIRM_FRAMES` of the last `CONFIRM_WINDOW` frames | 15 of 20 | flickering detections adding up over time |
-  | its most common name has `CONFIRM_AGREEMENT` of all reads | 80% | a card being counted under a disputed name |
+  | the rank of its most common name has `CONFIRM_AGREEMENT` of all reads | 80% | a card being counted under a disputed rank |
   | the model's average confidence is at least `CONFIRM_CONFIDENCE` | 0.7 | weak, borderline detections |
   | the corner moved less than `STILL_DISTANCE` over those frames | 0.6% of the width | a card being counted while it is still being slid |
 
   With the defaults a real card is confirmed about 0.7 s after it settles.
+  Reads split between suits of one rank (10H and 10D) agree, since the suit
+  changes neither the hand nor the count; the card shows its most common name.
 - **One deck.** Two sightings of the same face are the same card. This merges a
   card's corner indices, stops a stray misread from adding a duplicate, and means
-  a card is counted once per shoe even if it leaves and comes back.
+  a card is counted once per shoe even if it leaves and comes back. A new card
+  under a name counted in an earlier round prints as `duplicate`.
 - **Covered is not removed.** A card that disappears for `DROP_FRAMES` frames
   becomes hidden: it keeps its number, stays in its hand, and is not counted again
   when it reappears. A face card is recognised by its name anywhere on the table,
@@ -218,6 +227,49 @@ true count means the remaining cards are rich in tens and aces.
   that card is renamed from `BACK` to its name. A face-down card still in view is
   never taken, so two face-down cards side by side keep their own numbers when
   they are turned over one after the other. No second phantom card is added.
+
+## Scoring a recorded run
+
+`evaluate.py` checks the whole reader, not only the detector: placement order,
+names, and the count. Record a video, write down the cards dealt, then:
+
+```bash
+python read.py --source round1.mp4 --log round1.csv --no-display
+python evaluate.py --log round1.csv --expected round1Expected.csv
+```
+
+The expected file is a CSV with one row per card, in the order placed. `round`
+counts from 1 and `order` restarts at 1 each round. `seat` is optional. A card
+left face down is written as `BACK`.
+
+```
+round,order,card,seat
+1,1,10H,P1
+1,2,6C,P2
+1,3,KS,dealer
+2,1,4D,P1
+```
+
+The report:
+
+```
+cards: 4 expected, 4 placed
+matched: 4 (3 right name, 1 wrong name: 1 wrong suit, 0 wrong rank)
+missed: 0
+extra: 0
+wrong seat: 0 (listed, not counted as errors)
+running count: read +0, expected +0, difference +0
+
+round 1 #3: expected KS, read KH (wrong suit)
+```
+
+- Rounds in the log end at each `round_over`. Pressing `R` logs nothing, so a
+  card placed under a number already used in the round also starts a new one.
+- A renamed card is scored under its last name.
+- Cards are matched by round and number. A missed card shifts the numbers after
+  it, so the rest of that round shows as wrong names.
+- Use one shoe per log. `Shift+R` resets the logged running count.
+- The exit code is 1 only when a file is missing or has a bad row, not when cards disagree.
 
 ## Tuning the reader
 

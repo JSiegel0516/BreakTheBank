@@ -1,3 +1,4 @@
+from cardReader.blackjack import shoe_count
 from cardReader.tracker import CardTracker, Detection
 
 
@@ -147,6 +148,50 @@ def test_card_seen_in_a_later_round_is_not_counted_again():
     assert tr.shoe_seen == ["KH", "3D"]  # one deck: the KH is the same physical card
 
 
+def test_card_seen_in_a_later_round_is_reported_as_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    run(tr, [det("KH", 50, 200), det("3D", 300, 200)], 3)
+    run(tr, [], 20)                     # round over
+    ev = run(tr, [det("KH", 400, 200)], 3)
+    assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("placed", 1, "KH"), ("duplicate", 1, "KH")]
+    assert tr.shoe_seen == ["KH", "3D"]
+    assert shoe_count(tr.shoe_seen).running == 0
+
+
+def test_rename_to_a_name_counted_in_an_earlier_round_is_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10)
+    run(tr, [det("KH", 50, 200)], 3)
+    run(tr, [], 10)                     # round over
+    run(tr, [det("BACK", 50, 200)], 3)
+    ev = run(tr, [det("KH", 50, 200)], 10)  # the face-down card is turned over: a KH again
+    assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("renamed", 1, "KH"), ("duplicate", 1, "KH")]
+    assert tr.shoe_seen == ["KH"]
+
+
+def test_two_corners_of_one_card_are_not_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    ev = run(tr, [det("7D", 50, 200)], 3)
+    ev += run(tr, [det("7D", 50, 200), det("7D", 150, 300)], 3)
+    assert [e.kind for e in ev] == ["placed"]
+
+
+def test_card_still_down_through_a_new_round_is_not_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("QS", 50, 50)], 3)
+    tr.new_round()
+    ev = run(tr, [det("QS", 50, 50)], 1)
+    assert [e.kind for e in ev] == ["placed"]
+
+
+def test_new_shoe_forgets_earlier_names():
+    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    run(tr, [det("QS", 50, 50)], 3)
+    run(tr, [], 10)
+    tr.new_shoe()
+    ev = run(tr, [det("QS", 50, 50)], 3)
+    assert [e.kind for e in ev] == ["placed"]
+
+
 def test_new_round_restarts_numbering_but_keeps_the_count():
     tr = CardTracker(confirm_frames=2, drop_frames=5)
     run(tr, [det("QS", 50, 50)], 3)
@@ -198,6 +243,20 @@ def test_disputed_name_waits_for_agreement():
     assert tr.round == []
     run(tr, [det("6H", 50, 200)], 12)   # 16 of 20 reads say 6H
     assert labels(tr) == ["6H"]
+
+
+def test_reads_split_between_suits_of_one_rank_agree():
+    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_agreement=0.8)
+    for label in ["10H", "10D", "10H"] * 2:   # suits disagree, the rank does not
+        tr.update([det(label, 50, 200)])
+    assert labels(tr) == ["10H"]              # shown under its most common name
+
+
+def test_reads_split_between_ranks_of_one_suit_wait():
+    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_agreement=0.8)
+    for label in ["6H", "9H", "6H"] * 2:
+        tr.update([det(label, 50, 200)])
+    assert tr.round == []
 
 
 def test_low_average_confidence_is_not_confirmed():
