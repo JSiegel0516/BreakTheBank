@@ -36,6 +36,14 @@ def test_process_places_cards_logs_them_with_their_seat_and_counts(tmp_path):
     assert rows[0][2:7] == ["placed", "1", "5H", "P1", "1"]
 
 
+def test_face_down_card_takes_one_card_off_cards_left(tmp_path):
+    r = make_reader(tmp_path)
+    dets = [Detection("BACK", 0.9, 100, 100), Detection("5H", 0.9, 300, 100)]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    assert (r.count.running, r.count.cards_left) == (1, 50)
+
+
 def test_frame_of_another_size_rescales_the_layout(tmp_path):
     r = make_reader(tmp_path)
     r.process(np.zeros((H * 2, W * 2, 3), np.uint8), [])

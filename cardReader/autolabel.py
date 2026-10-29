@@ -31,8 +31,6 @@ from pathlib import Path
 import cv2
 import yaml
 
-from .deck import CLASS_TO_ID
-
 MIN_CONF = 0.6
 MAX_OVERLAP = 0.2  # IoU with a labelled box above this means the corner is already labelled
 
@@ -46,6 +44,10 @@ def iou(a, b) -> float:
 
 
 def complete_corners(export: str | Path, out_dir: Path, weights: str, imgsz: int = 1024, preview: int = 36):
+    """Write a copy of `export` to out_dir/<name>Complete with the model's missing corners added.
+
+    The folder is replaced if it exists. `preview` sample images are drawn into
+    its preview/ folder with a summary.txt. Returns the new export's path."""
     from ultralytics import YOLO
 
     export = Path(export)
@@ -65,36 +67,41 @@ def complete_corners(export: str | Path, out_dir: Path, weights: str, imgsz: int
     for split_dir in sorted(d for d in export.iterdir() if (d / "images").is_dir()):
         for ip in sorted((split_dir / "images").iterdir()):
             lp = split_dir / "labels" / (ip.stem + ".txt")
-            lines = [l for l in lp.read_text().splitlines() if len(l.split()) == 5] if lp.exists() else []
+            lines = []
+            if lp.exists():
+                lines = [line for line in lp.read_text().splitlines() if len(line.split()) == 5]
             img = cv2.imread(str(ip))
             if img is None:
                 continue
             H, W = img.shape[:2]
             labelled = []  # (deck name, box px)
-            for l in lines:
-                c, cx, cy, w, h = l.split()
+            for line in lines:
+                class_id, cx, cy, w, h = line.split()
                 cx, cy, w, h = float(cx) * W, float(cy) * H, float(w) * W, float(h) * H
-                labelled.append((str(names[int(c)]).upper(), (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)))
+                box = (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+                labelled.append((str(names[int(class_id)]).upper(), box))
             present = {n for n, _ in labelled}
 
             added = []
             res = model.predict(img, imgsz=imgsz, conf=MIN_CONF, verbose=False)[0]
-            for b in res.boxes:
-                name = model.names[int(b.cls)]
-                box = tuple(b.xyxy[0].tolist())
+            for predicted in res.boxes:
+                name = model.names[int(predicted.cls)]
+                box = tuple(predicted.xyxy[0].tolist())
                 if name not in present or name not in export_id:
                     continue  # only corners of cards a person labelled in this photo
-                if any(iou(box, lb) > MAX_OVERLAP for _, lb in labelled + added):
+                if any(iou(box, other) > MAX_OVERLAP for _, other in labelled + added):
                     continue  # this corner already has a box
                 added.append((name, box))
             results.append((split_dir.name, ip, labelled, added, W, H, lines))
 
     # Match the export's own box size: scale added boxes around their centres.
     def sizes(key):
-        return [(b[2] - b[0], b[3] - b[1]) for r in results for _, b in r[key]]
+        return [(box[2] - box[0], box[3] - box[1]) for result in results for _, box in result[key]]
     orig, new = sizes(2), sizes(3)
-    sx = statistics.median(w for w, _ in orig) / statistics.median(w for w, _ in new) if new else 1.0
-    sy = statistics.median(h for _, h in orig) / statistics.median(h for _, h in new) if new else 1.0
+    sx = sy = 1.0
+    if new:
+        sx = statistics.median(w for w, _ in orig) / statistics.median(w for w, _ in new)
+        sy = statistics.median(h for _, h in orig) / statistics.median(h for _, h in new)
 
     def scaled(box):
         cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
@@ -103,10 +110,10 @@ def complete_corners(export: str | Path, out_dir: Path, weights: str, imgsz: int
 
     samples = []
     for split, ip, labelled, added, W, H, lines in results:
-        added = [(n, scaled(b)) for n, b in added]
+        added = [(name, scaled(box)) for name, box in added]
         new_lines = lines + [
-            f"{export_id[n]} {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} {(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}"
-            for n, (x1, y1, x2, y2) in added]
+            f"{export_id[name]} {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} {(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}"
+            for name, (x1, y1, x2, y2) in added]
         (out / split / "images").mkdir(parents=True, exist_ok=True)
         (out / split / "labels").mkdir(parents=True, exist_ok=True)
         (out / split / "images" / ip.name).hardlink_to(ip)
@@ -129,16 +136,18 @@ def complete_corners(export: str | Path, out_dir: Path, weights: str, imgsz: int
 
 
 def _preview_sheets(samples, folder: Path, per_sheet=6, tile=540):
-    for s in range(0, len(samples), per_sheet):
+    for start in range(0, len(samples), per_sheet):
         sheet = []
-        for ip, labelled, added in samples[s:s + per_sheet]:
+        for ip, labelled, added in samples[start:start + per_sheet]:
             view = cv2.imread(str(ip))
             for colour, boxes in (((0, 255, 0), labelled), ((255, 0, 255), added)):
                 for name, (x1, y1, x2, y2) in boxes:
                     cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), colour, 2)
-                    cv2.putText(view, name, (int(x1), int(y1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1, cv2.LINE_AA)
+                    cv2.putText(view, name, (int(x1), int(y1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1,
+                                cv2.LINE_AA)
             sheet.append(cv2.resize(view, (tile, tile)))
         while len(sheet) < per_sheet:
             sheet.append(sheet[0] * 0)
         rows = [cv2.hconcat(sheet[i:i + 3]) for i in range(0, per_sheet, 3)]
-        cv2.imwrite(str(folder / f"sheet_{s // per_sheet + 1:02d}.jpg"), cv2.vconcat(rows), [cv2.IMWRITE_JPEG_QUALITY, 85])
+        sheet_path = folder / f"sheet_{start // per_sheet + 1:02d}.jpg"
+        cv2.imwrite(str(sheet_path), cv2.vconcat(rows), [cv2.IMWRITE_JPEG_QUALITY, 85])

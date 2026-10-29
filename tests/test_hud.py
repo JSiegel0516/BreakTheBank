@@ -27,5 +27,6 @@ def test_draw_returns_video_plus_sidebar_with_hands_tags_and_edit_handles():
 
 def test_draw_in_capture_mode_with_nothing_on_the_table():
     W, H = 640, 360
-    canvas = Hud().draw(np.zeros((H, W, 3), np.uint8), [], [], 0.0, SeatLayout(1, W, H), shoe_count([]), capture_mode=True)
+    canvas = Hud().draw(np.zeros((H, W, 3), np.uint8), [], [], 0.0, SeatLayout(1, W, H), shoe_count([]),
+                        capture_mode=True)
     assert canvas.shape[1] == W + round(SIDEBAR * W)

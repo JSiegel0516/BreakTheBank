@@ -40,6 +40,18 @@ def test_true_count_divides_by_decks_left():
     assert c.true == pytest.approx(8.0)
 
 
+def test_true_count_floors_decks_left_at_a_quarter_deck():
+    deck = [r + s for s in "SHDC" for r in ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]]
+    c = shoe_count([card for card in deck if card != "2H"])  # one card left: running -1
+    assert (c.running, c.cards_left) == (-1, 1)
+    assert c.true == pytest.approx(-4.0)                       # -1 / 0.25 deck, not -1 / (1/52)
+
+
+def test_face_down_cards_never_revealed_leave_the_deck_but_not_the_count():
+    c = shoe_count(["KH", "5D"], unrevealed=2)
+    assert (c.running, c.cards_left) == (0, 48)
+
+
 @pytest.mark.parametrize("players", range(1, 8))
 def test_seat_layout(players):
     W, H = 1920, 1080

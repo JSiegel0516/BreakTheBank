@@ -43,6 +43,12 @@ table         which seat each card is in, each seat's hand   cardReader/table.py
 The detector is the only learned part. The tracker is plain rules and is
 covered by `pytest`.
 
+A dealer's hole card turned face up keeps its number and is renamed from `BACK`
+to its face. The count's cards left also leaves out face-down cards that were
+never turned up. The true count divides by at least a quarter deck, so it stays
+sensible near the end of the deck. Details are in
+[docs/reading.md](docs/reading.md#seats-hands-and-the-hi-lo-count).
+
 ## Repository structure
 
 ```
@@ -50,8 +56,8 @@ BreakTheBank/                 (the folder git clone creates)
 ├── train.py                  build the training set from data/raw, then train the detector
 ├── read.py                   the live reader: camera -> detector -> tracker -> ordered cards
 ├── settings.py               every tunable number and path, with comments
-├── pyproject.toml            dependencies and pytest config; uv.lock pins the exact versions
-├── .github/workflows/        CI: pytest on every push and pull request
+├── pyproject.toml            dependencies, pytest and ruff config; uv.lock pins the exact versions
+├── .github/workflows/        CI: ruff and pytest on every push and pull request
 ├── docs/                     reading.md, training.md, results.md (see Documentation below)
 ├── cardReader/               the library
 │   ├── camera.py             frames from a camera, capture card, or video file
@@ -115,6 +121,7 @@ BreakTheBank/                 (the folder git clone creates)
 ```bash
 uv sync                      # creates .venv with the exact versions in uv.lock
 source .venv/bin/activate
+ruff check .                 # style and lint rules, configured in pyproject.toml
 pytest
 ```
 
@@ -136,7 +143,9 @@ and check that `which python` ends in `BreakTheBank/.venv/bin/python`.
 - [docs/training.md](docs/training.md): how training works, the step-by-step guide, improving the model, Colab, glossary
 - [docs/results.md](docs/results.md): every trained model's scores and the comparisons between them
 
-Every tunable number is in `settings.py`, with a comment on each.
+Every tunable number is in `settings.py`, with a comment on each. `read.py` and
+`train.py` check them at start-up and stop with a list of any value out of range,
+for example `PLAYERS = 9: must be a whole number from 1 to 7`.
 
 ## Conventions
 

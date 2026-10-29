@@ -36,37 +36,36 @@ SKIP_FILES = {".DS_Store"}
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
-# ------------------------------------------------------------------ manifest
 def describe_export(folder: Path) -> dict:
     """Source, export date, counts, and a fingerprint over every file of one export."""
     info: dict = {}
     data_yaml = folder / "data.yaml"
     if data_yaml.exists():
-        y = yaml.safe_load(data_yaml.read_text()) or {}
-        rf = y.get("roboflow") or {}
-        if rf:
-            info["source"] = {k: rf[k] for k in ("workspace", "project", "url", "license") if k in rf}
-        info["classes"] = y.get("nc") or len(y.get("names") or [])
+        config = yaml.safe_load(data_yaml.read_text()) or {}
+        roboflow = config.get("roboflow") or {}
+        if roboflow:
+            info["source"] = {k: roboflow[k] for k in ("workspace", "project", "url", "license") if k in roboflow}
+        info["classes"] = config.get("nc") or len(config.get("names") or [])
     readme = folder / "README.roboflow.txt"
     if readme.exists():
-        m = re.search(r"exported via roboflow\.com on (.+)$", readme.read_text(), re.M)
-        if m:
-            info["exported"] = m.group(1).strip()
+        match = re.search(r"exported via roboflow\.com on (.+)$", readme.read_text(), re.MULTILINE)
+        if match:
+            info["exported"] = match.group(1).strip()
 
     splits, label_files, boxes = {}, 0, 0
     digest, files, size = hashlib.sha256(), 0, 0
-    for p in sorted(folder.rglob("*")):
-        rel = p.relative_to(folder)
-        if not p.is_file() or p.name in SKIP_FILES or SKIP_DIRS & set(rel.parts):
+    for path in sorted(folder.rglob("*")):
+        rel = path.relative_to(folder)
+        if not path.is_file() or path.name in SKIP_FILES or SKIP_DIRS & set(rel.parts):
             continue
         files += 1
-        size += p.stat().st_size
-        digest.update(f"{rel.as_posix()}\0{hashlib.sha256(p.read_bytes()).hexdigest()}\n".encode())
-        if len(rel.parts) == 3 and rel.parts[1] == "images" and p.suffix.lower() in IMG_EXT:
+        size += path.stat().st_size
+        digest.update(f"{rel.as_posix()}\0{hashlib.sha256(path.read_bytes()).hexdigest()}\n".encode())
+        if len(rel.parts) == 3 and rel.parts[1] == "images" and path.suffix.lower() in IMG_EXT:
             splits[rel.parts[0]] = splits.get(rel.parts[0], 0) + 1
-        elif len(rel.parts) == 3 and rel.parts[1] == "labels" and p.suffix == ".txt":
+        elif len(rel.parts) == 3 and rel.parts[1] == "labels" and path.suffix == ".txt":
             label_files += 1
-            boxes += sum(1 for line in p.read_text().splitlines() if len(line.split()) >= 5)
+            boxes += sum(1 for line in path.read_text().splitlines() if len(line.split()) >= 5)
     info.update(images=dict(sorted(splits.items())), label_files=label_files, boxes=boxes,
                 files=files, bytes=size, sha256=digest.hexdigest())
     return info
@@ -76,27 +75,33 @@ def exports_in(raw_dir: Path) -> dict[str, Path]:
     """'labeled/<name>' and 'unused/<name>' for every export folder (one with a data.yaml)."""
     found = {}
     for group in ("labeled", "unused"):
-        d = raw_dir / group
-        if d.is_dir():
-            for e in sorted(p for p in d.iterdir() if (p / "data.yaml").exists()):
-                found[f"{group}/{e.name}"] = e
+        group_dir = raw_dir / group
+        if group_dir.is_dir():
+            for export in sorted(p for p in group_dir.iterdir() if (p / "data.yaml").exists()):
+                found[f"{group}/{export.name}"] = export
     return found
 
 
 def write_manifest(raw_dir: Path, path: Path) -> dict:
+    """Write `path` as JSON: every export under raw_dir (see describe_export) and the background count.
+
+    Prints one line per export. Returns the manifest that was written."""
     exports = exports_in(raw_dir)
-    backgrounds = raw_dir / "backgrounds"
+    backgrounds_dir = raw_dir / "backgrounds"
+    backgrounds = 0
+    if backgrounds_dir.is_dir():
+        backgrounds = sum(1 for p in backgrounds_dir.iterdir() if p.suffix.lower() in IMG_EXT)
     manifest = {
         "written": date.today().isoformat(),
         "note": "What data/raw should hold. Written by `python train.py --manifest`, "
                 "checked by `python train.py --check-data`. See data/README.md.",
         "exports": {name: describe_export(folder) for name, folder in exports.items()},
-        "backgrounds": sum(1 for p in backgrounds.iterdir() if p.suffix.lower() in IMG_EXT) if backgrounds.is_dir() else 0,
+        "backgrounds": backgrounds,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, indent=2) + "\n")
-    for name, e in manifest["exports"].items():
-        print(f"  {name}: {sum(e['images'].values())} images, {e['boxes']} boxes, {e['sha256'][:12]}")
+    for name, export in manifest["exports"].items():
+        print(f"  {name}: {sum(export['images'].values())} images, {export['boxes']} boxes, {export['sha256'][:12]}")
     print(f"manifest: {len(exports)} exports -> {path}")
     return manifest
 
@@ -133,7 +138,6 @@ def check_manifest(raw_dir: Path, path: Path) -> list[str]:
     return problems
 
 
-# ------------------------------------------------------------------ live model
 def promote(run_dir: Path, live_dir: Path) -> Path:
     """Make a training run the live model: copy its weights and record, write LIVE.txt."""
     run_dir, live_dir = Path(run_dir).resolve(), Path(live_dir).resolve()
@@ -145,10 +149,10 @@ def promote(run_dir: Path, live_dir: Path) -> Path:
     (live_dir / "weights").mkdir(parents=True, exist_ok=True)
     shutil.copy2(best, live_dir / "weights" / "best.pt")
     copied = ["weights/best.pt"]
-    for f in RECORD_FILES:
-        if (run_dir / f).exists():
-            shutil.copy2(run_dir / f, live_dir / f)
-            copied.append(f)
+    for record in RECORD_FILES:
+        if (run_dir / record).exists():
+            shutil.copy2(run_dir / record, live_dir / record)
+            copied.append(record)
     args = {}
     if (run_dir / "args.yaml").exists():
         args = yaml.safe_load((run_dir / "args.yaml").read_text()) or {}
@@ -168,5 +172,5 @@ def promote(run_dir: Path, live_dir: Path) -> Path:
 
 def live_model(live_dir: Path) -> str | None:
     """Name of the run that is live, from LIVE.txt, or None if nothing was promoted yet."""
-    f = Path(live_dir) / "LIVE.txt"
-    return f.read_text().splitlines()[0].strip() if f.exists() else None
+    live_file = Path(live_dir) / "LIVE.txt"
+    return live_file.read_text().splitlines()[0].strip() if live_file.exists() else None

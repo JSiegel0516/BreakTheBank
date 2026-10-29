@@ -35,36 +35,45 @@ class Reader:
         self.seats_file, self.frames_dir = Path(seats_file), Path(frames_dir)
         self.editor = ZoneEditor(layout)
         self.table = Table(layout)
-        self.count: ShoeCount = shoe_count(tracker.shoe_seen)
+        self.count: ShoeCount = self._recount()
 
     @property
     def layout(self) -> SeatLayout:
         return self.table.layout
+
+    def _recount(self) -> ShoeCount:
+        return shoe_count(self.tracker.shoe_seen, unrevealed=self.tracker.shoe_unrevealed)
 
     def set_layout(self, layout: SeatLayout):
         """Swap the seat layout everywhere it is held."""
         self.table.layout = self.editor.layout = layout
         self.editor.selected = None
 
-    # ------------------------------------------------------------ per frame
     def process(self, frame: np.ndarray, dets: list[Detection]) -> list[Event]:
+        """Feed one frame's detections to the tracker and report what changed.
+
+        Follows a change of frame size by rescaling the seat layout. Prints each
+        event, flashes "round over" on the overlay, and appends a row per event to
+        the CSV log if there is one. Returns the tracker's events for this frame."""
         h, w = frame.shape[:2]
         if (w, h) != (self.layout.width, self.layout.height):
             self.set_layout(self.layout.resized(w, h))
         events = self.tracker.update(dets)
-        self.count = shoe_count(self.tracker.shoe_seen)
-        for e in events:
-            seat = self.table.seat_of(e.card) if e.card else None
-            print(e, f"({seat})" if seat else "", f"count {self.count.running:+d}" if e.kind in ("placed", "renamed") else "")
-            if e.kind == "round_over":
+        self.count = self._recount()
+        for event in events:
+            card = event.card
+            seat = self.table.seat_of(card) if card else None
+            seat_text = f"({seat})" if seat else ""
+            count_text = f"count {self.count.running:+d}" if event.kind in ("placed", "renamed") else ""
+            print(event, seat_text, count_text)
+            if event.kind == "round_over":
                 self.hud.flash("round over: table cleared")
             if self.log:
-                c = e.card
-                self.log.writerow([f"{time.time():.3f}", e.frame, e.kind, c.order if c else "", c.label if c else "",
-                                   seat or "", self.count.running, round(c.x) if c else "", round(c.y) if c else ""])
+                self.log.writerow([f"{time.time():.3f}", event.frame, event.kind,
+                                   card.order if card else "", card.label if card else "", seat or "",
+                                   self.count.running, round(card.x) if card else "", round(card.y) if card else ""])
         return events
 
-    # ------------------------------------------------------------ keys
     def handle_key(self, k: int, frame: np.ndarray) -> bool:
         """Act on a key code from cv2.waitKey. Returns False when the reader should quit."""
         if k == ord("q"):
@@ -81,7 +90,7 @@ class Reader:
             self.hud.flash("new round: numbering restarts at 1")
         elif k == ord("R"):
             self.tracker.new_shoe()
-            self.count = shoe_count(self.tracker.shoe_seen)
+            self.count = self._recount()
             print("--- new shoe: count reset ---")
             self.hud.flash("new shoe: count reset to 0")
         elif k == ord("s"):
@@ -106,9 +115,10 @@ class Reader:
         self.hud.flash(f"{self.layout.players}-player zones saved")
 
     def save_frame(self, frame: np.ndarray) -> Path:
+        """Write the raw frame, without the overlay, to frames_dir as frame_<ms>.jpg. Returns its path."""
         self.frames_dir.mkdir(parents=True, exist_ok=True)
-        p = self.frames_dir / f"frame_{int(time.time() * 1000)}.jpg"
-        cv2.imwrite(str(p), frame)
-        print("saved", p)
-        self.hud.flash(f"frame saved: {p.name}")
-        return p
+        path = self.frames_dir / f"frame_{int(time.time() * 1000)}.jpg"
+        cv2.imwrite(str(path), frame)
+        print("saved", path)
+        self.hud.flash(f"frame saved: {path.name}")
+        return path

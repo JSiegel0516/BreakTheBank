@@ -38,10 +38,10 @@ SUIT_CLASSES = {"c": "C", "d": "D", "h": "H", "s": "S"}
 
 def order_corners(pts: np.ndarray) -> np.ndarray:
     """Return 4 points as top-left, top-right, bottom-right, bottom-left, portrait orientation."""
-    s = pts.sum(axis=1)
-    d = np.diff(pts, axis=1).ravel()
-    tl, br = pts[np.argmin(s)], pts[np.argmax(s)]
-    tr, bl = pts[np.argmin(d)], pts[np.argmax(d)]
+    sums = pts.sum(axis=1)                 # x + y: smallest top-left, largest bottom-right
+    diffs = np.diff(pts, axis=1).ravel()   # y - x: smallest top-right, largest bottom-left
+    tl, br = pts[np.argmin(sums)], pts[np.argmax(sums)]
+    tr, bl = pts[np.argmin(diffs)], pts[np.argmax(diffs)]
     quad = np.array([tl, tr, br, bl], dtype=np.float32)
     # If the card is wider than tall in the photo, rotate the corner order so output is portrait.
     if np.linalg.norm(tr - tl) > np.linalg.norm(bl - tl):
@@ -63,8 +63,8 @@ def find_card_quad(crop: np.ndarray, expected_area: float) -> np.ndarray | None:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
-    c = max(contours, key=cv2.contourArea)
-    hull = cv2.convexHull(c)
+    largest = max(contours, key=cv2.contourArea)
+    hull = cv2.convexHull(largest)
     rect = cv2.minAreaRect(hull)
     w, h = rect[1]
     if min(w, h) == 0:
@@ -106,11 +106,11 @@ def extract_card_art(export: str | Path, out: str | Path, pad: float = 0.04):
             H, W = img.shape[:2]
             boxes = {}
             for line in lp.read_text().splitlines():
-                f = line.split()
-                if len(f) < 5:
+                fields = line.split()
+                if len(fields) < 5:
                     continue
-                cls = names[int(f[0])]
-                cx, cy, bw, bh = (float(v) for v in f[1:5])
+                cls = names[int(fields[0])]
+                cx, cy, bw, bh = (float(v) for v in fields[1:5])
                 boxes[cls] = (cx * W - bw * W / 2, cy * H - bh * H / 2, cx * W + bw * W / 2, cy * H + bh * H / 2)
             if CARD_CLASS not in boxes:
                 print("skip (no card box):", ip.name)
@@ -141,20 +141,22 @@ def extract_card_art(export: str | Path, out: str | Path, pad: float = 0.04):
             quad = find_card_quad(crop, (x2 - x1) * (y2 - y1))
             if quad is None:
                 print(f"note: outline not found for {label}, using the box as-is")
-                quad = np.array([[x1 - cx1, y1 - cy1], [x2 - cx1, y1 - cy1], [x2 - cx1, y2 - cy1], [x1 - cx1, y2 - cy1]], np.float32)
+                box_corners = [[x1 - cx1, y1 - cy1], [x2 - cx1, y1 - cy1], [x2 - cx1, y2 - cy1], [x1 - cx1, y2 - cy1]]
+                quad = np.array(box_corners, np.float32)
             dst = np.array([[0, 0], [OUT_W, 0], [OUT_W, OUT_H], [0, OUT_H]], np.float32)
-            M = cv2.getPerspectiveTransform(quad, dst)
-            card = cv2.warpPerspective(crop, M, (OUT_W, OUT_H), flags=cv2.INTER_AREA)
+            warp = cv2.getPerspectiveTransform(quad, dst)
+            card = cv2.warpPerspective(crop, warp, (OUT_W, OUT_H), flags=cv2.INTER_AREA)
             alpha = rounded_alpha(OUT_W, OUT_H, int(OUT_W * 0.045))
             cv2.imwrite(str(out / f"{label}.png"), np.dstack([card, alpha]))
             made.add(label)
 
             if rank and suit:
                 pts = []
-                for c in (rank, suit):
-                    bx1, by1, bx2, by2 = boxes[c]
-                    pts += [[bx1 - cx1, by1 - cy1], [bx2 - cx1, by1 - cy1], [bx2 - cx1, by2 - cy1], [bx1 - cx1, by2 - cy1]]
-                warped = cv2.perspectiveTransform(np.array([pts], np.float32), M)[0]
+                for glyph in (rank, suit):
+                    bx1, by1, bx2, by2 = boxes[glyph]
+                    pts += [[bx1 - cx1, by1 - cy1], [bx2 - cx1, by1 - cy1],
+                            [bx2 - cx1, by2 - cy1], [bx1 - cx1, by2 - cy1]]
+                warped = cv2.perspectiveTransform(np.array([pts], np.float32), warp)[0]
                 ix1, iy1 = warped.min(axis=0)
                 ix2, iy2 = warped.max(axis=0)
                 index_rects.append((ix1 / OUT_W, iy1 / OUT_H, (ix2 - ix1) / OUT_W, (iy2 - iy1) / OUT_H))
@@ -167,12 +169,12 @@ def extract_card_art(export: str | Path, out: str | Path, pad: float = 0.04):
         print("no card backs yet: photograph one, name the file BACK_1.jpg, label only the card box, re-run."
               " Until then the synthetic generator draws a placeholder back.")
     if index_rects:
-        r = np.array(index_rects)
-        x, y, w, h = r.mean(axis=0)
+        rects = np.array(index_rects)
+        x, y, w, h = rects.mean(axis=0)
         pad = 0.01  # a hair of margin so the box does not clip the glyphs
         rect = {"x": round(float(x - pad), 4), "y": round(float(y - pad), 4),
                 "w": round(float(w + 2 * pad), 4), "h": round(float(h + 2 * pad), 4),
-                "note": "corner index position as fractions of the card, averaged over %d cards" % len(r)}
+                "note": f"corner index position as fractions of the card, averaged over {len(rects)} cards"}
         (out / "indexRect.json").write_text(json.dumps(rect, indent=2))
         print("index rect (x, y, w, h fractions):", rect["x"], rect["y"], rect["w"], rect["h"],
-              " spread:", np.round(r.std(axis=0), 3).tolist())
+              " spread:", np.round(rects.std(axis=0), 3).tolist())

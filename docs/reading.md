@@ -168,10 +168,20 @@ Split hands are not separated yet.
 | 7, 8, 9 | 0 |
 | 10, J, Q, K, A | -1 |
 
-The true count is the running count divided by the decks not yet seen. With one
-deck that is `(52 - cards seen) / 52`, so a running count of +4 with half the
-deck left is a true count of +8. A positive true count means the remaining cards
-are rich in tens and aces. Face-down cards are counted when they are turned up.
+The true count is the running count divided by the decks still to be dealt, so a
+running count of +4 with half the deck left is a true count of +8. A positive
+true count means the remaining cards are rich in tens and aces.
+
+- **Cards left** is 52 minus the face cards seen, minus the face-down cards that
+  were dealt and never turned up (swept away face down, for example). Those are
+  gone from the deck, but nobody saw them, so they do not change the running count.
+- Face-down cards are counted when they are turned up, and then stop being
+  "never turned up". A face-down card still on the table when you press `R`
+  (new round, lowercase r) gets a new number, but is not taken off cards left a
+  second time. `Shift+R` (new shoe) resets all of this.
+- **Decks left never drops below a quarter deck** (13 cards). Near the end of the
+  deck, dividing by a sliver of a deck would make the true count huge: with one
+  card left and a running count of -1 it reads -4, not -52.
 
 ### Rules the tracker assumes
 
@@ -198,14 +208,22 @@ are rich in tens and aces. Face-down cards are counted when they are turned up.
   round immediately.
 - **Every face-down card is a separate card.**
 - **A card's name can change, its number cannot.** The name is a vote over the
-  last `LABEL_WINDOW` frames of reads (1.5 s). A dealer's hole card turned face up
-  changes from `BACK` to its name in about half that, and a misread that corrects
-  itself is renamed in place. Both print as `renamed`, and the count follows the
-  new name. A second phantom card is never added.
+  last `LABEL_WINDOW` frames of reads (1.5 s). A misread that corrects itself is
+  renamed in place, and prints as `renamed`. The count follows the new name, and
+  a name stays counted while any card of the round still holds it.
+- **A hole card turned face up keeps its number.** The face-down box is drawn
+  around the whole card, but the face-up boxes are its corner indices, away from
+  the centre. A new face-up corner that is not near any card yet joins the nearest
+  face-down card within 3 match distances that is out of sight this frame, and
+  that card is renamed from `BACK` to its name. A face-down card still in view is
+  never taken, so two face-down cards side by side keep their own numbers when
+  they are turned over one after the other. No second phantom card is added.
 
 ## Tuning the reader
 
 All of these are in `settings.py`. Change one at a time and watch the effect.
+A value out of range (a fraction above 1, `CONFIRM_FRAMES` larger than
+`CONFIRM_WINDOW`, and so on) stops `read.py` at start-up with a message naming it.
 
 | If you see this | Change | Why |
 |---|---|---|
@@ -259,6 +277,11 @@ frames is one second. If the fps is much lower, scale them down to match.
   [Using your own deck](training.md#using-your-own-deck-for-synthetic-images)) before relying on it.
 - **A misread that never corrects itself** stays in the count under the wrong
   name. The tracker can only follow what the model reads.
+- **A face card dealt right beside a face-down card** can be taken for its reveal
+  if the face-down box happens to be missed on the very frame the new card is
+  confirmed. The new card then gets no number of its own: its corners join the
+  face-down card, whose name is a vote between its `BACK` box and those corners,
+  so it can be renamed to the new card's name and counted under it.
 - **Same-colour suits** are the most common confusion (see [Results](results.md)).
 - **No frame tiling.** A 4K frame is shrunk to `INPUT_SIZE` before detection, so
   very small indices at a large table may be lost.

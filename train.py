@@ -31,10 +31,12 @@ def main():
     ap.add_argument("--synthetic", type=int, default=settings.SYNTHETIC_IMAGES, help="synthetic images to generate")
     ap.add_argument("--base", default=settings.BASE_WEIGHTS, help="pretrained weights to start from")
     ap.add_argument("--epochs", type=int, default=settings.EPOCHS)
-    ap.add_argument("--patience", type=int, default=settings.PATIENCE, help="epochs without improvement before stopping")
+    ap.add_argument("--patience", type=int, default=settings.PATIENCE,
+                    help="epochs without improvement before stopping")
     ap.add_argument("--imgsz", type=int, default=settings.TRAIN_INPUT_SIZE)
     ap.add_argument("--batch", type=int, default=settings.BATCH_SIZE)
-    ap.add_argument("--name", default="cards", help="run name: output goes to models/<name>/. read.py uses models/cards")
+    ap.add_argument("--name", default="cards",
+                    help="run name: output goes to models/<name>/. read.py uses models/cards")
     ap.add_argument("--extract-art", metavar="EXPORT", help="make card art from a one-card-per-photo export, then stop")
     ap.add_argument("--complete-corners", metavar="EXPORT",
                     help="label the corners an export left out, using the current model, then stop")
@@ -42,6 +44,10 @@ def main():
     ap.add_argument("--manifest", action="store_true", help="write data/manifest.json from data/raw, then stop")
     ap.add_argument("--check-data", action="store_true", help="compare data/raw with data/manifest.json, then stop")
     args = ap.parse_args()
+    try:
+        settings.validate(settings)
+    except ValueError as error:
+        raise SystemExit(error) from None
 
     manifest = ROOT / settings.MANIFEST_FILE
     if args.promote:
@@ -75,8 +81,9 @@ def main():
     # A bare name such as yolo11s.pt is downloaded into models/ the first time, not into the current folder.
     base = Path(args.base) if Path(args.base).parent != Path(".") else models_dir / args.base
     model = YOLO(str(base))
-    model.train(data=str(data_dir / "data.yaml"), epochs=args.epochs, patience=args.patience, imgsz=args.imgsz, batch=args.batch,
-                device=device, name=args.name, project=str(models_dir), exist_ok=True,
+    model.train(data=str(data_dir / "data.yaml"), epochs=args.epochs, patience=args.patience,
+                imgsz=args.imgsz, batch=args.batch, device=device,
+                name=args.name, project=str(models_dir), exist_ok=True,
                 # Cards are never mirrored, so disable flips; keep rotation and colour jitter.
                 fliplr=0.0, flipud=0.0, degrees=15, hsv_v=0.4)
     print("best weights:", model.trainer.best)

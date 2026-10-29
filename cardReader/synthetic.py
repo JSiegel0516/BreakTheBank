@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from .deck import BACK, CLASSES, CLASS_TO_ID, RED_SUITS, SUIT_SYMBOL, rank_of, suit_of
+from .deck import BACK, CLASS_TO_ID, CLASSES, RED_SUITS, SUIT_SYMBOL, rank_of, suit_of
 
 CARD_W, CARD_H = 250, 350
 PLACEHOLDER_INDEX_RECT = (0.04, 0.03, 0.20, 0.26)  # x, y, w, h fractions of the card
@@ -35,24 +35,24 @@ FONT_CANDIDATES = [
 
 
 def load_font(size: int) -> ImageFont.FreeTypeFont:
-    for p in FONT_CANDIDATES:
+    for font_path in FONT_CANDIDATES:
         try:
-            return ImageFont.truetype(p, size)
+            return ImageFont.truetype(font_path, size)
         except OSError:
             continue
     return ImageFont.load_default()
 
 
-# ------------------------------------------------------------------ card art
 def draw_placeholder(label: str) -> Image.Image:
     img = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle((0, 0, CARD_W - 1, CARD_H - 1), radius=18, fill=(250, 250, 248, 255), outline=(60, 60, 60, 255), width=2)
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, CARD_W - 1, CARD_H - 1), radius=18,
+                           fill=(250, 250, 248, 255), outline=(60, 60, 60, 255), width=2)
     if label == BACK:
-        d.rounded_rectangle((14, 14, CARD_W - 15, CARD_H - 15), radius=10, fill=(40, 70, 160, 255))
+        draw.rounded_rectangle((14, 14, CARD_W - 15, CARD_H - 15), radius=10, fill=(40, 70, 160, 255))
         for k in range(-CARD_H, CARD_W + CARD_H, 22):
-            d.line((k, 14, k + CARD_H, CARD_H - 15), fill=(90, 120, 210, 255), width=3)
-            d.line((k, CARD_H - 15, k + CARD_H, 14), fill=(90, 120, 210, 255), width=3)
+            draw.line((k, 14, k + CARD_H, CARD_H - 15), fill=(90, 120, 210, 255), width=3)
+            draw.line((k, CARD_H - 15, k + CARD_H, 14), fill=(90, 120, 210, 255), width=3)
         return img
     rank, suit = rank_of(label), suit_of(label)
     color = (200, 20, 30, 255) if suit in RED_SUITS else (20, 20, 20, 255)
@@ -60,14 +60,15 @@ def draw_placeholder(label: str) -> Image.Image:
     f_suit = load_font(40)
     f_big = load_font(120)
     sym = SUIT_SYMBOL[suit]
-    x, y, w, h = [v * s for v, s in zip(PLACEHOLDER_INDEX_RECT, (CARD_W, CARD_H, CARD_W, CARD_H))]
+    card_size = (CARD_W, CARD_H, CARD_W, CARD_H)
+    x, y, w, h = [frac * size for frac, size in zip(PLACEHOLDER_INDEX_RECT, card_size, strict=True)]
     corner = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
-    cd = ImageDraw.Draw(corner)
-    cd.text((w / 2, 2), rank, font=f_rank, fill=color, anchor="mt")
-    cd.text((w / 2, h - 2), sym, font=f_suit, fill=color, anchor="mb")
+    corner_draw = ImageDraw.Draw(corner)
+    corner_draw.text((w / 2, 2), rank, font=f_rank, fill=color, anchor="mt")
+    corner_draw.text((w / 2, h - 2), sym, font=f_suit, fill=color, anchor="mb")
     img.alpha_composite(corner, (int(x), int(y)))
     img.alpha_composite(corner.rotate(180), (int(CARD_W - x - w), int(CARD_H - y - h)))
-    d.text((CARD_W / 2, CARD_H / 2), sym, font=f_big, fill=color, anchor="mm")
+    draw.text((CARD_W / 2, CARD_H / 2), sym, font=f_big, fill=color, anchor="mm")
     return img
 
 
@@ -76,26 +77,25 @@ def load_card_art(assets: Path):
     faces = {c: assets / f"{c}.png" for c in CLASSES if c != BACK}
     backs = sorted(assets.glob("BACK*.png"))
     rect_file = assets / "indexRect.json"
-    if all(p.exists() for p in faces.values()):
-        art = {c: [Image.open(p).convert("RGBA")] for c, p in faces.items()}
+    if all(path.exists() for path in faces.values()):
+        art = {c: [Image.open(path).convert("RGBA")] for c, path in faces.items()}
         if backs:
             print(f"using real card art from {assets} ({len(backs)} back design(s))")
-            art[BACK] = [Image.open(p).convert("RGBA") for p in backs]
+            art[BACK] = [Image.open(path).convert("RGBA") for path in backs]
         else:
             print(f"using real card art from {assets}; no BACK*.png yet so drawing a placeholder back")
-            ph = draw_placeholder(BACK)
+            placeholder = draw_placeholder(BACK)
             ref = next(iter(art.values()))[0]
-            art[BACK] = [ph.resize(ref.size, Image.LANCZOS)]
+            art[BACK] = [placeholder.resize(ref.size, Image.LANCZOS)]
         rect = None
         if rect_file.exists():
-            j = json.loads(rect_file.read_text())
-            rect = (j["x"], j["y"], j["w"], j["h"])
+            saved = json.loads(rect_file.read_text())
+            rect = (saved["x"], saved["y"], saved["w"], saved["h"])
         return art, rect
     print(f"no complete card set in {assets}, drawing placeholder cards")
     return {c: [draw_placeholder(c)] for c in CLASSES}, PLACEHOLDER_INDEX_RECT
 
 
-# ------------------------------------------------------------------ backgrounds
 def make_background(w: int, h: int, rng: random.Random, pool: list[Path]) -> Image.Image:
     if pool:
         bg = Image.open(rng.choice(pool)).convert("RGB")
@@ -113,16 +113,15 @@ def make_background(w: int, h: int, rng: random.Random, pool: list[Path]) -> Ima
     return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
 
 
-# ------------------------------------------------------------------ geometry
 def rotate_points(pts, angle_deg, cw, ch, out_w, out_h):
     """Map card-space points through PIL's rotate(angle, expand=True)."""
-    th = math.radians(angle_deg)
-    c, s = math.cos(th), math.sin(th)
+    angle = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
     out = []
     for x, y in pts:
         dx, dy = x - cw / 2, y - ch / 2
-        rx = dx * c + dy * s
-        ry = -dx * s + dy * c
+        rx = dx * cos_a + dy * sin_a
+        ry = -dx * sin_a + dy * cos_a
         out.append((rx + out_w / 2, ry + out_h / 2))
     return out
 
@@ -134,14 +133,18 @@ def rect_corners(x, y, w, h):
 def visible_fraction(id_canvas: np.ndarray, poly, card_id: int) -> float:
     mask = Image.new("L", id_canvas.shape[::-1], 0)
     ImageDraw.Draw(mask).polygon([(float(x), float(y)) for x, y in poly], fill=255)
-    m = np.array(mask) > 0
-    if not m.any():
+    inside = np.array(mask) > 0
+    if not inside.any():
         return 0.0
-    return float((id_canvas[m] == card_id).mean())
+    return float((id_canvas[inside] == card_id).mean())
 
 
-# ------------------------------------------------------------------ one image
 def compose(rng, art, index_rect, bg_pool, W, H, max_cards, glare_p):
+    """One W x H image of 1 to max_cards random cards on a background.
+
+    Returns (image, labels), labels as (class id, x1, y1, x2, y2) in pixels. A
+    corner index less than 60% visible gets no label. glare_p is the chance of
+    a glare spot."""
     bg = make_background(W, H, rng, bg_pool).convert("RGBA")
     id_canvas = np.zeros((H, W), dtype=np.int32)
     labels = []  # (class_id, x1, y1, x2, y2)
@@ -181,7 +184,7 @@ def compose(rng, art, index_rect, bg_pool, W, H, max_cards, glare_p):
         for poly in polys:
             if visible_fraction(id_canvas, poly, card_id) < 0.6:
                 continue
-            xs, ys = zip(*poly)
+            xs, ys = zip(*poly, strict=True)
             x1, y1, x2, y2 = max(0, min(xs)), max(0, min(ys)), min(W, max(xs)), min(H, max(ys))
             if x2 - x1 < 6 or y2 - y1 < 6:
                 continue
@@ -209,7 +212,7 @@ def generate(out: Path, n: int, card_art_dir: Path, backgrounds_dir: Path, val_f
     art, index_rect = load_card_art(card_art_dir)
     if index_rect is None:
         raise SystemExit(f"real card art needs {card_art_dir}/indexRect.json (made by train.py --extract-art)")
-    bg_pool = [p for p in backgrounds_dir.glob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
+    bg_pool = [path for path in backgrounds_dir.glob("*") if path.suffix.lower() in (".jpg", ".jpeg", ".png")]
 
     rng = random.Random(seed)
     for i in range(n):
@@ -217,8 +220,8 @@ def generate(out: Path, n: int, card_art_dir: Path, backgrounds_dir: Path, val_f
         split = "val" if rng.random() < val_frac else "train"
         stem = f"synth_{i:06d}"
         img.save(out / "images" / split / f"{stem}.jpg", quality=90)
-        with open(out / "labels" / split / f"{stem}.txt", "w") as f:
-            for cls, x1, y1, x2, y2 in labels:
-                f.write(f"{cls} {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} {(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}\n")
+        lines = [f"{cls} {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} {(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}\n"
+                 for cls, x1, y1, x2, y2 in labels]
+        (out / "labels" / split / f"{stem}.txt").write_text("".join(lines))
         if (i + 1) % 250 == 0:
             print(f"  synthetic {i + 1}/{n}")
