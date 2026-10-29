@@ -19,44 +19,71 @@ class Camera:
 
     Raises RuntimeError if it cannot be opened. width and height are requested
     from a live device, which may ignore them; `size` is what it actually gives.
+    A live source is `stale` once no fresh frame has come for `stale_after`
+    seconds (a cable pulled, a phone locked); reopen() tries it again.
     Call release() when done, or use it as a context manager."""
 
+    stale_after = 2.0
+
     def __init__(self, source: int | str = 0, width: int | None = None, height: int | None = None):
-        self.source = source
+        self.source, self.width, self.height = source, width, height
         self.is_file = isinstance(source, str) and Path(source).exists()
         self.cap = cv2.VideoCapture(source)
         if not self.cap.isOpened():
             raise RuntimeError(f"Could not open video source {source!r}")
-        if width:
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        if height:
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self._request_size()
 
         self._frame = None
         self._ok = False
+        self._fresh_at = time.monotonic()
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
         if not self.is_file:
-            self._thread = threading.Thread(target=self._pump, daemon=True)
-            self._thread.start()
-            # Give the device a moment to deliver a first frame.
-            for _ in range(50):
-                if self._ok:
-                    break
-                time.sleep(0.02)
+            self._start_pump()
 
-    def _pump(self):
-        while not self._stop.is_set():
-            ok, frame = self.cap.read()
+    def _request_size(self):
+        if self.width:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        if self.height:
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+
+    def _start_pump(self):
+        # _fresh_at is left alone: after a reopen the source stays stale until the new capture
+        # really delivers a frame. Each pump gets its own capture and stop flag, so one left over
+        # from before a reopen cannot read the new capture.
+        started = time.monotonic()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._pump, args=(self.cap, self._stop), daemon=True)
+        self._thread.start()
+        # Give the device a moment to deliver a first frame.
+        for _ in range(50):
+            if self._fresh_at > started:
+                break
+            time.sleep(0.02)
+
+    def _stop_pump(self):
+        # Stopping under the lock means a pump still blocked in read() cannot publish once this returns.
+        with self._lock:
+            self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=1)
+            self._thread = None
+
+    def _pump(self, cap, stop: threading.Event):
+        while not stop.is_set():
+            ok, frame = cap.read()
             if not ok:
                 time.sleep(0.005)
                 continue
             with self._lock:
-                self._frame, self._ok = frame, True
+                if stop.is_set():
+                    return
+                self._frame, self._ok, self._fresh_at = frame, True, time.monotonic()
 
     def read(self):
-        """Return (ok, frame). For live sources this is the newest available frame."""
+        """Return (ok, frame). For live sources this is the newest available frame,
+        which stays the last one received while the source is stale."""
         if self.is_file:
             return self.cap.read()
         with self._lock:
@@ -65,13 +92,40 @@ class Camera:
             return True, self._frame.copy()
 
     @property
+    def age(self) -> float:
+        """Seconds since the last fresh frame (since opening, if none came yet). Always 0 for a video file."""
+        if self.is_file:
+            return 0.0
+        return time.monotonic() - self._fresh_at
+
+    @property
+    def stale(self) -> bool:
+        """True when a live source has sent no fresh frame for `stale_after` seconds."""
+        return self.age > self.stale_after
+
+    def reopen(self) -> bool:
+        """Release the source and open it again with the same requested width and height.
+
+        Returns False if it cannot be opened. True means it opened, not that it
+        sends frames: the source stays `stale` until the new capture delivers a
+        fresh one. Either way the object stays usable: read() keeps returning the
+        last frame until a fresh one arrives, and reopen() can be called again."""
+        self._stop_pump()
+        self.cap.release()
+        self.cap = cv2.VideoCapture(self.source)
+        if not self.cap.isOpened():
+            return False
+        self._request_size()
+        if not self.is_file:
+            self._start_pump()
+        return True
+
+    @property
     def size(self) -> tuple[int, int]:
         return (int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
 
     def release(self):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=1)
+        self._stop_pump()
         self.cap.release()
 
     def __enter__(self):

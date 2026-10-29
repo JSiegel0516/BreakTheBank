@@ -4,8 +4,9 @@
     python read.py --source 1                        # another camera or a capture card
     python read.py --source round1.mp4 --log round1.csv --no-display
     python read.py --list-cameras                    # which number is which camera?
+    python read.py --preprocess auto                 # contrast help for a dim or washed-out table
 
-Per frame:  camera -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
+Per frame:  camera -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
 
 Every event (placed, hidden, returned, renamed, duplicate, round over) is printed
 as it happens, and appended to --log as CSV if given. Without a trained model it runs
@@ -19,7 +20,21 @@ each seat's hand.
 
 Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
       v counter or seats view | l legend and key list
-      r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames | q quit
+      r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames
+      c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
+      Shift+V show the raw camera frame or the preprocessed one | q quit
+
+The detector always gets the preprocessed frame (cardReader/preprocess.py); the
+window shows it too unless Shift+V switches to the raw frame. s always saves the
+raw frame.
+
+If a live camera sends no new frame for two seconds (a cable pulled, the phone
+locked), the window says "no signal" over the last frame and the tracker waits.
+Press c to reopen the same source.
+
+The bottom bar shows the fps, the smoothed detect milliseconds, and the preprocess
+mode with its milliseconds. On quit the average milliseconds per stage are printed: read (the newest
+camera frame), preprocess, detect, and draw (the overlay and the window).
 
 This file only owns the command line, the camera, and the window. What happens
 per frame and per key is cardReader/reader.py; the overlay is cardReader/hud.py.
@@ -38,12 +53,42 @@ import numpy as np
 import settings
 from cardReader.camera import Camera, parse_source, snapshot_cameras
 from cardReader.hud import DealtCards, Hud
+from cardReader.preprocess import MODES, PreprocessConfig, enhance
 from cardReader.provenance import live_model
 from cardReader.reader import LOG_HEADER, Reader
 from cardReader.seats import MAX_PLAYERS, SeatLayout
 from cardReader.tracker import CardTracker, TrackerConfig
 
 WINDOW = "card reader"
+STAGES = ("read", "preprocess", "detect", "draw")  # the timed parts of one pass of the loop
+
+
+class StageTimer:
+    """Milliseconds spent in each stage of the loop: smoothed like the fps for the bottom
+    bar, and averaged over the whole run for the summary printed on quit."""
+
+    def __init__(self):
+        self.smoothed = dict.fromkeys(STAGES, 0.0)
+        self._total = dict.fromkeys(STAGES, 0.0)
+        self._count = dict.fromkeys(STAGES, 0)
+
+    def add(self, stage: str, ms: float):
+        self.smoothed[stage] = ms if self._count[stage] == 0 else 0.9 * self.smoothed[stage] + 0.1 * ms
+        self._total[stage] += ms
+        self._count[stage] += 1
+
+    def lap(self, stage: str, since: float) -> float:
+        """Record the time from `since` (a time.perf_counter() value) to now. Returns now."""
+        now = time.perf_counter()
+        self.add(stage, 1000 * (now - since))
+        return now
+
+    def averages(self) -> dict[str, float]:
+        """Mean milliseconds per stage; 0 for a stage never timed."""
+        return {stage: self._total[stage] / max(self._count[stage], 1) for stage in STAGES}
+
+    def summary(self) -> str:
+        return ", ".join(f"{stage} {ms:.1f} ms" for stage, ms in self.averages().items())
 
 
 def list_cameras():
@@ -78,6 +123,18 @@ def list_cameras():
     print("then run: python read.py --source <number>   (or set CAMERA_SOURCE in settings.py)")
 
 
+def reconnect(cam: Camera, hud: Hud, source):
+    """Reopen the camera, e.g. after a cable or power interruption. Prints and flashes how it went."""
+    print(f"reconnecting to source {source} ...")
+    if cam.reopen():
+        W, H = cam.size
+        print(f"reconnected to source {source} at {W}x{H}")
+        hud.flash("camera reconnected")
+    else:
+        print(f"could not reopen source {source}: check the cable or wake the phone, then press C again")
+        hud.flash("reconnect failed: press C to try again", 2.5)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default=settings.CAMERA_SOURCE, help="camera index, video file, or stream URL")
@@ -91,6 +148,8 @@ def main():
     ap.add_argument("--players", type=int, default=None,
                     help=f"player seats, 1 to {MAX_PLAYERS} "
                          "(default: the count used last, else PLAYERS in settings.py)")
+    ap.add_argument("--preprocess", choices=MODES, default=settings.PREPROCESS,
+                    help="contrast help before detection (default: PREPROCESS in settings.py; key P cycles it)")
     ap.add_argument("--log", default=None, help="append every event to this CSV file")
     ap.add_argument("--no-display", action="store_true")
     ap.add_argument("--list-cameras", action="store_true", help="show a snapshot from every camera, then exit")
@@ -134,32 +193,68 @@ def main():
 
         tracker = CardTracker(TrackerConfig.from_settings(settings, W))
         hud = Hud()
-        reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log)
+        reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log,
+                        preprocess=args.preprocess)
+        preprocess_config = PreprocessConfig.from_settings(settings)
         if not args.no_display:
             cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)  # resizable, so a 4K feed fits on a laptop screen
             cv2.setMouseCallback(WINDOW, reader.editor.on_mouse)
+        timer = StageTimer()
         t_last, fps = time.time(), 0.0
+        signal_lost = False
         try:
             while True:
+                start = time.perf_counter()
                 ok, frame = cam.read()
-                if not ok:
-                    if cam.is_file:
-                        break
-                    time.sleep(0.01)
+                timer.lap("read", start)
+                if not ok and cam.is_file:
+                    break
+                if not ok and not cam.stale:
+                    time.sleep(0.01)  # a live source still starting up
                     continue
-                dets = detector(frame) if detector else []
-                reader.process(frame, dets)
+                if not ok:
+                    frame = np.zeros((H, W, 3), np.uint8)  # it never sent a frame: say so over black
+
+                # A stale camera repeats its last frame: nothing new to detect, so the tracker is left alone.
+                no_signal = cam.stale
+                if no_signal and not signal_lost:
+                    print(f"no signal from source {args.source}: press C in the window to reconnect")
+                elif signal_lost and not no_signal:
+                    print(f"signal back from source {args.source}")
+                signal_lost = no_signal
+
+                start = time.perf_counter()
+                enhanced = enhance(frame, reader.preprocess, preprocess_config)
+                timer.lap("preprocess", start)
+                dets = []
+                if no_signal:
+                    time.sleep(0.01)
+                else:
+                    if detector:
+                        start = time.perf_counter()
+                        dets = detector(enhanced)
+                        timer.lap("detect", start)
+                    reader.process(frame, dets)
 
                 now = time.time()
                 fps = 0.9 * fps + 0.1 / max(now - t_last, 1e-6)
                 t_last = now
                 if args.no_display:
                     continue
+                start = time.perf_counter()
                 dealt = DealtCards(tracker.shoe_locked, tracker.shoe_pending, tracker.shoe_duplicates,
                                    tracker.shoe_unrevealed)
-                cv2.imshow(WINDOW, hud.draw(frame, dets, tracker.round, fps, reader.layout, reader.count,
-                                            capture_mode=detector is None, editor=reader.editor, dealt=dealt))
-                if not reader.handle_key(cv2.waitKey(1) & 0xFF, frame):
+                shown = enhanced if reader.show_enhanced else frame
+                showing_raw = shown is not enhanced  # the window shows something other than what was detected
+                cv2.imshow(WINDOW, hud.draw(shown, dets, tracker.round, fps, reader.layout, reader.count,
+                                            capture_mode=detector is None, editor=reader.editor, dealt=dealt,
+                                            stage_ms=timer.smoothed, no_signal=no_signal,
+                                            preprocess=reader.preprocess, showing_raw=showing_raw))
+                key = cv2.waitKey(1) & 0xFF
+                timer.lap("draw", start)
+                if key == ord("c") and not cam.is_file:  # read.py owns the camera, so C is handled here
+                    reconnect(cam, hud, args.source)
+                elif not reader.handle_key(key, frame):  # the raw frame, so S saves what the camera sent
                     break
         finally:
             cam.release()
@@ -167,6 +262,7 @@ def main():
             count = reader.count
             print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
             print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
+            print(f"average time per frame: {timer.summary()}")
 
 
 if __name__ == "__main__":

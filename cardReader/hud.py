@@ -22,7 +22,11 @@
     * a legend at the bottom of the sidebar explaining the colours of the
       current view, then every key (key L hides it). In the counter view it is
       left out when it does not fit below the grid.
-    * bottom bar: the main keys, fps, and short messages such as "new round"
+    * bottom bar: the main keys, fps, detect milliseconds, the preprocess mode
+      and its milliseconds ("showing raw" when the raw camera frame is shown,
+      key Shift+V), and short messages such as "new round"
+    * "no signal: press C to reconnect" across the video when the camera has
+      stopped sending frames
 
 Colours follow the cards: red for hearts and diamonds, white for spades and
 clubs, amber for face-down cards. Text and line sizes scale with the frame
@@ -56,7 +60,9 @@ DUPLICATE = (255, 60, 255)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 KEYS = "[V] view    [L] legend/keys    [R] round    [Shift+R] shoe    [Q] quit"  # the bottom bar
 KEY_LIST = [("1-7", "players"), ("E", "edit zones"), ("V", "switch view"), ("L", "hide legend"),
-            ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"), ("Q", "quit")]
+            ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"), ("C", "reconnect camera"),
+            ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("Q", "quit")]
+NO_SIGNAL = "no signal: press C to reconnect"
 # Legend entries per view: (swatch kind, colour, meaning). Kinds are drawn by Hud._swatch.
 SEATS_LEGEND = [("box", RED, "hearts, diamonds"), ("box", WHITE, "spades, clubs"),
                 ("box", AMBER, "face down"), ("thin", GREY, "not confirmed yet"),
@@ -111,6 +117,21 @@ def count_cue(true: float) -> tuple[str, tuple]:
     return "neutral", WHITE
 
 
+def status_text(fps: float, stage_ms: dict[str, float] | None, capture_mode: bool,
+                preprocess: str = "off", showing_raw: bool = False) -> str:
+    """The right end of the bottom bar: fps, the smoothed detect milliseconds, the preprocess
+    mode and its milliseconds, and "showing raw" when the window shows the raw camera frame
+    instead of the preprocessed one the detector gets."""
+    stage_ms = stage_ms or {}
+    detect_ms, preprocess_ms = stage_ms.get("detect", 0.0), stage_ms.get("preprocess", 0.0)
+    status = f"{fps:4.1f} fps  detect {detect_ms:.1f} ms  prep {preprocess} {preprocess_ms:.1f} ms"
+    if showing_raw:
+        status += "  showing raw"
+    if capture_mode:
+        status = "CAPTURE MODE (no model)    " + status
+    return status
+
+
 def seat_title(name: str) -> str:
     return "DEALER" if name == DEALER else name
 
@@ -137,12 +158,18 @@ class Hud:
 
     def draw(self, frame: np.ndarray, dets: list[Detection], cards: list[Card], fps: float,
              layout: SeatLayout, count: ShoeCount, capture_mode: bool = False,
-             editor: ZoneEditor | None = None, dealt: DealtCards | None = None) -> np.ndarray:
+             editor: ZoneEditor | None = None, dealt: DealtCards | None = None,
+             stage_ms: dict[str, float] | None = None, no_signal: bool = False,
+             preprocess: str = "off", showing_raw: bool = False) -> np.ndarray:
         """Return the frame with the overlay, plus the sidebar on its right. The frame is not changed.
 
         cards: every card of the round, hidden ones included, in placement order.
         editor: the zone editor, drawn with handles while it is active.
-        dealt: the shoe's cards for the counter view's grid (None: an empty grid)."""
+        dealt: the shoe's cards for the counter view's grid (None: an empty grid).
+        stage_ms: smoothed milliseconds per stage; "detect" and "preprocess" go in the bottom bar.
+        no_signal: the camera has stopped sending frames; says so over the video.
+        preprocess, showing_raw: the preprocess mode, and whether `frame` is the raw camera
+        frame rather than the preprocessed one; both are named in the bottom bar."""
         view = frame.copy()
         W = view.shape[1]
         self.s = min(max(W / 1600, 0.6), 2.5)  # 1.2 at 1080p, 2.4 at 4K
@@ -164,6 +191,8 @@ class Hud:
         for card in cards:
             box = None if card.hidden else self._card_box(card, dets)
             placed.append(self._card_tag(view, card, box, placed))
+        if no_signal:
+            self._no_signal(view)
 
         side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
         y = self._count_block(side, count)
@@ -179,7 +208,8 @@ class Hud:
                 bottom = self._legend(side, bottom)
             self._seat_blocks(side, Table(layout).hands(cards), y, bottom)
         canvas = np.hstack([view, side])
-        self._bottom_bar(canvas, fps, capture_mode, W)
+        status = status_text(fps, stage_ms, capture_mode, preprocess, showing_raw)
+        self._bottom_bar(canvas, status, capture_mode, W)
         return canvas
 
     def _text(self, img, text, org, scale, colour):
@@ -490,17 +520,23 @@ class Hud:
         self._chip(img, card, x + self.pad // 2, y + tag_h // 2)
         return x, y, x + tag_w, y + tag_h
 
-    def _bottom_bar(self, img, fps: float, capture_mode: bool, video_w: int):
-        """Keys and fps across the whole window; messages centred over the video."""
+    def _no_signal(self, img):
+        """The no-signal message in a dark panel across the middle of the video."""
+        H, W = img.shape[:2]
+        scale = min(1.2, 0.8 * W / self._size(NO_SIGNAL, 1.0)[0])  # shrink to fit a small video
+        w, h, base = self._size(NO_SIGNAL, scale)
+        x, y = (W - w) // 2, (H + h) // 2
+        self._panel(img, x - 2 * self.pad, y - h - 2 * self.pad, x + w + 2 * self.pad, y + base + 2 * self.pad, 0.85)
+        self._text(img, NO_SIGNAL, (x, y), scale, AMBER)
+
+    def _bottom_bar(self, img, status: str, capture_mode: bool, video_w: int):
+        """Keys and the status (fps, timings) across the whole window; messages centred over the video."""
         H, W = img.shape[:2]
         _, kh, base = self._size(KEYS, 0.5)
         bar_h = kh + base + 2 * self.pad
         self._panel(img, 0, H - bar_h, W, H, alpha=0.75)
         ty = H - self.pad - base
         self._text(img, KEYS, (self.pad, ty), 0.5, WHITE)
-        status = f"{fps:4.1f} fps"
-        if capture_mode:
-            status = "CAPTURE MODE (no model)    " + status
         status_w = self._size(status, 0.5)[0]
         self._text(img, status, (W - status_w - self.pad, ty), 0.5, AMBER if capture_mode else GREY)
 
