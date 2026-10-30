@@ -29,6 +29,30 @@ def test_draw_returns_video_plus_sidebar_with_hands_tags_and_edit_handles():
     assert frame.sum() == 0                          # the input frame is not drawn on
 
 
+@pytest.mark.parametrize(("W", "H"), [(640, 360), (1280, 720), (3840, 2160)])
+def test_draw_without_the_sidebar_is_the_video_width_with_the_same_overlay(W, H):
+    layout = SeatLayout(3, W, H)
+    p1 = layout.seats[1].polygon.mean(axis=0)
+    cards = [Card(1, "KH", float(p1[0]), float(p1[1]), 1)]
+    frame = np.zeros((H, W, 3), np.uint8)
+    with_sidebar = Hud().draw(frame, [], cards, 30.0, layout, shoe_count(["KH"]))
+    video_only = Hud().draw(frame, [], cards, 30.0, layout, shoe_count(["KH"]), sidebar=False)
+    assert video_only.shape == (H, W, 3)
+    assert (video_only[:H // 2] == with_sidebar[:H // 2, :W]).all()   # tags and zones as before
+    assert (video_only[-10:] != frame[-10:]).any()                    # the bottom bar is drawn
+    assert frame.sum() == 0
+
+
+def test_pop_flash_returns_the_latest_message_once():
+    hud = Hud()
+    assert hud.pop_flash() is None
+    hud.flash("new round")
+    hud.flash("camera reconnected", 2.5)
+    assert hud.pop_flash() == ("camera reconnected", 2.5)
+    assert hud.pop_flash() is None
+    assert hud._message == "camera reconnected"              # still shown in the window until it times out
+
+
 def test_boxes_take_the_colour_of_their_bound_card_and_g_hides_the_unmatched():
     W, H = 1280, 720
     layout = SeatLayout(3, W, H)

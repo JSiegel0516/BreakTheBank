@@ -1,5 +1,7 @@
+import json
 import sys
 import time
+import urllib.request
 from types import ModuleType, SimpleNamespace
 
 import cv2
@@ -8,7 +10,8 @@ import pytest
 
 import read
 from cardReader.cards import Detection
-from cardReader.hud import Hud
+from cardReader.hud import SIDEBAR, Hud
+from cardReader.sidebar.server import SidebarServer
 from read import STAGES, StageTimer, fps_note, reconnect
 
 
@@ -212,6 +215,175 @@ def test_draining_the_mouse_stops_at_a_key_or_when_the_time_is_up(monkeypatch):
     start = time.perf_counter()
     assert read.wait_key_draining_mouse(20) == -1
     assert time.perf_counter() - start >= 0.02 and len(calls) > 1
+
+
+class FakeServer:
+    """Stands in for SidebarServer: records what read.py publishes."""
+
+    def __init__(self, host, port):
+        self.host, self.port, self.published, self.closed = host, port, [], False
+        self.url = f"http://{host}:{port}/"
+
+    def publish(self, snapshot):
+        self.published.append(snapshot)
+
+    def drain_actions(self):
+        return []
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize("web", [False, True])
+def test_web_moves_the_sidebar_to_the_page_and_publishes_every_frame(monkeypatch, capsys, tmp_path, web):
+    servers, widths = [], []
+    draw = read.Hud.draw
+
+    def watched_draw(self, *args, **kw):
+        canvas = draw(self, *args, **kw)
+        widths.append(canvas.shape[1])
+        return canvas
+
+    monkeypatch.setattr(read.Hud, "draw", watched_draw)
+    monkeypatch.setattr(read, "SidebarServer", lambda *a: servers.append(FakeServer(*a)) or servers[-1])
+    keys = [255, ord("r"), 255, ord("q")]
+    run_reader(monkeypatch, tmp_path, FakeCamera(), keys, lambda frame: [], *(["--web"] if web else []))
+
+    if not web:
+        assert servers == [] and widths == [640 + round(SIDEBAR * 640)] * 4
+        return
+    server = servers[0]
+    assert (server.host, server.port, server.closed) == ("127.0.0.1", read.settings.WEB_PORT, True)
+    assert f"dashboard at http://127.0.0.1:{read.settings.WEB_PORT}/" in capsys.readouterr().out
+    assert widths == [640] * 4
+    assert len(server.published) == 4
+    flashes = [snapshot["flash"] for snapshot in server.published]
+    assert flashes == [None, None, {"text": "new round: numbering restarts at 1", "seconds": 1.5}, None]
+
+
+class RecordingServer(SidebarServer):
+    """A real dashboard server that also keeps every snapshot read.py publishes."""
+
+    def __init__(self, host, port):
+        super().__init__(host, port)
+        self.published = []
+
+    def publish(self, snapshot):
+        self.published.append(snapshot)
+        super().publish(snapshot)
+
+
+class PostingCamera(FakeCamera):
+    """A live camera that presses page buttons: each action in posts[n] is POSTed to the dashboard
+    just before read n, so several can wait for the reader at once."""
+
+    def __init__(self, servers, posts):
+        super().__init__()
+        self.servers, self.posts = servers, posts
+
+    def read(self):
+        for action in self.posts.get(self.reads + 1, []):
+            body = json.dumps({"action": action}).encode()
+            request = urllib.request.Request(self.servers[0].url + "action", data=body,
+                                             headers={"Content-Type": "application/json"})
+            assert urllib.request.urlopen(request, timeout=5).status == 204
+        return super().read()
+
+
+def run_with_page(monkeypatch, tmp_path, posts, keys, *args, detect=lambda frame: []):
+    """Run read.main() with a real dashboard on a free port, pressing page buttons per `posts`.
+    Returns (the server, the key codes Reader.handle_key received other than 255, the camera)."""
+    servers, handled = [], []
+    handle_key = read.Reader.handle_key
+
+    def watched_handle_key(self, key, frame):
+        if key != 255:
+            handled.append(key)
+        return handle_key(self, key, frame)
+
+    monkeypatch.setattr(read.Reader, "handle_key", watched_handle_key)
+    def open_server(host, port):  # a free port in place of WEB_PORT, so the test never clashes with a running reader
+        servers.append(RecordingServer(host, 0))
+        return servers[-1]
+
+    monkeypatch.setattr(read, "SidebarServer", open_server)
+    cam = PostingCamera(servers, posts)
+    run_reader(monkeypatch, tmp_path, cam, keys, detect, "--web", *args)
+    return servers[0], handled, cam
+
+
+def test_page_buttons_reach_the_key_handler_and_flash_like_their_keys(monkeypatch, capsys, tmp_path):
+    posts = {2: ["new_round"], 3: ["players_5"], 4: ["reconnect"], 5: ["dance"], 6: ["quit"]}
+    server, handled, cam = run_with_page(monkeypatch, tmp_path, posts, [255] * 10)
+
+    assert handled == [ord("r"), ord("5"), ord("q")]       # reconnect is read.py's, like the C key
+    assert cam.reopened == 1
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["new round: numbering restarts at 1", "5 players: template layout", "camera reconnected"]
+    assert server.published[-1]["players"] == 5
+    assert "ignored unknown page action 'dance'" in capsys.readouterr().out
+
+
+def test_no_display_with_web_runs_from_the_page_alone_and_quits_from_it(monkeypatch, tmp_path):
+    drawn = []
+    monkeypatch.setattr(read.Hud, "draw", lambda *a, **kw: drawn.append(1))
+    server, handled, cam = run_with_page(monkeypatch, tmp_path, {3: ["new_shoe"], 4: ["quit"]}, [], "--no-display")
+
+    assert handled == [ord("R"), ord("q")]                  # no window: cv2.waitKey is never called
+    assert drawn == [] and cam.reads == 4
+    assert [snapshot["flash"] for snapshot in server.published][-1] == {"text": "new shoe: count reset to 0",
+                                                                         "seconds": 1.5}
+
+
+def test_buttons_pressed_together_each_flash_on_the_page(monkeypatch, tmp_path):
+    posts = {2: ["new_round", "preprocess", "grey_boxes"], 6: ["quit"]}
+    server, handled, _ = run_with_page(monkeypatch, tmp_path, posts, [255] * 10, "--preprocess", "gamma")
+
+    assert handled == [ord("r"), ord("p"), ord("g"), ord("q")]
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["new round: numbering restarts at 1", "preprocess: clahe", "unmatched boxes hidden"]
+
+
+def test_queued_turns_and_a_turn_then_players_each_get_the_frame_the_turn_left(monkeypatch, tmp_path):
+    readers, turns, player_changes = [], [], []
+    turn, set_players = read.Reader.turn, read.Reader.set_players
+
+    def watched_turn(self, quarter_turns, width, height):
+        readers.append(self)
+        turns.append((width, height))
+        return turn(self, quarter_turns, width, height)
+
+    def watched_set_players(self, n, width, height):
+        player_changes.append((n, width, height))
+        return set_players(self, n, width, height)
+
+    monkeypatch.setattr(read.Reader, "turn", watched_turn)
+    monkeypatch.setattr(read.Reader, "set_players", watched_set_players)
+    cam_reads = []
+
+    def detect(frame):  # a KH at (100, 50) on the upright 640x360 frame for 8 frames, then nothing
+        cam_reads.append(1)
+        return [Detection("KH", 0.9, 100, 50)] if len(cam_reads) <= 8 else []
+
+    posts = {9: ["turn_right", "turn_right"], 12: ["turn_right", "players_4"], 14: ["quit"]}
+    run_with_page(monkeypatch, tmp_path, posts, [255] * 20, detect=detect)
+
+    assert turns == [(640, 360), (360, 640), (640, 360)]  # each turn sees the frame the one before left
+    assert player_changes == [(4, 360, 640)]                # three quarter turns leave the frame 360 wide
+    reader = readers[0]
+    assert (reader.layout.width, reader.layout.height, reader.layout.players) == (360, 640, 4)
+    (card,) = reader.tracker.round
+    assert (card.label, card.x, card.y) == ("KH", 50, 539)  # (100, 50) turned 180 is (539, 309), then 90 more
+
+
+def test_a_taken_port_stops_the_reader_with_a_message():
+    first = SidebarServer("127.0.0.1", 0)
+    try:
+        port = int(first.url.rsplit(":", 1)[1].strip("/"))
+        with pytest.raises(SystemExit, match="set WEB_PORT in settings.py to a free port"):
+            read.start_web("127.0.0.1", port)
+    finally:
+        first.close()
 
 
 def test_preprocess_flag_only_takes_a_known_mode(monkeypatch, capsys):

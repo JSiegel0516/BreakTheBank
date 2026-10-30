@@ -43,6 +43,9 @@ def test_shipped_settings_are_valid():
     ("PREPROCESS_CLAHE_TILES", 0, "whole number of 1 or more"),
     ("CAMERA_ROTATION", 45, "one of 0, 90, 180, 270"),
     ("CAMERA_ROTATION", 90.0, "one of 0, 90, 180, 270"),
+    ("WEB_PORT", 0, "whole number from 1 to 65535"),
+    ("WEB_PORT", 70000, "whole number from 1 to 65535"),
+    ("WEB_PORT", "8765", "whole number from 1 to 65535"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:

@@ -51,6 +51,7 @@ MATCH_DISTANCE = 0.03      # fraction of frame width; detections closer than thi
 LABEL_WINDOW_SECONDS = 1.5  # a card's name is the vote over its reads in the last this long, so a card
                             # turned face up (a hole card) changes from BACK to its name in about half that
 ROUND_END_SECONDS = 3.0    # no card visible for this long ends the round
+WEB_PORT = 8765            # port of the browser dashboard (read.py --web); change it if another program uses it
 
 # Preprocessing: contrast help for dim or washed-out tables (key P in read.py cycles the mode).
 PREPROCESS = "auto"        # "off", "gamma" (brighten), "clahe" (local contrast), or "auto" (gamma by brightness).
@@ -98,7 +99,8 @@ def validate(config) -> None:
         (("CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
-        (("CAMERA_ROTATION",), lambda v: _is_whole(v) and v in (0, 90, 180, 270), "one of 0, 90, 180, 270"),
+        (("WEB_PORT",), lambda v: _is_whole(v) and 1 <= v <= 65535, "a whole number from 1 to 65535"),
+        (("CAMERA_ROTATION",),lambda v: _is_whole(v) and v in (0, 90, 180, 270), "one of 0, 90, 180, 270"),
         (("PREPROCESS",), lambda v: v in MODES, "one of " + ", ".join(repr(mode) for mode in MODES)),
         (("PREPROCESS_BRIGHTEN_GAMMA", "PREPROCESS_DARKEN_GAMMA", "PREPROCESS_CLAHE_CLIP"),
          lambda v: _is_number(v) and v > 0, "a number above 0"),

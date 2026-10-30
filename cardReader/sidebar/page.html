@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BreakTheBank card reader</title>
+<link rel="icon" href="data:,">  <!-- no icon, so the browser does not ask the server for one -->
+
+<style>
+  :root {
+    --panel: #191919;
+    --card: #222;
+    --text: #f2f2f2;
+    --grey: #969696;
+    --dim: #5f5f5f;
+    --badge: #ffdc00;
+    --amber: #ffbe00;
+    --red: #ff4646;
+    --ink-red: #d4161b;
+    --green: #5adc5a;
+    --seat: #78dcff;
+    --duplicate: #ff3cff;
+    /* one row of the Cards Left grid: 15 rows (suits, 13 ranks, face down) fill the screen height */
+    --row: clamp(2rem, calc((100vh - 7rem) / 15), 5rem);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--panel); color: var(--text); }
+  body { font: 16px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main {
+    display: grid;
+    gap: 1rem;
+    padding: 1rem;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "count" "deck" "seats" "keys" "status";
+  }
+  @media (min-width: 900px) {
+    main {
+      min-height: 100vh;
+      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+      grid-template-rows: auto 1fr auto auto;
+      grid-template-areas: "deck count" "deck seats" "deck keys" "status status";
+    }
+  }
+  @media (max-width: 899px) {
+    :root { --row: clamp(2rem, 8.5vw, 3.5rem); }
+  }
+  section { background: var(--card); border-radius: .6rem; padding: .8rem 1rem; min-width: 0; }
+  h2 { margin: 0 0 .5rem; font-size: .8rem; font-weight: 600; letter-spacing: .08em; color: var(--grey); }
+
+  #count { grid-area: count; }
+  .headline { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
+  .true { font-size: 3.6rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .cue { font-size: 1.3rem; }
+  .favours-player { color: var(--green); }
+  .favours-dealer { color: var(--red); }
+  .favours-neither { color: var(--text); }
+  .figures { display: flex; gap: 2rem; margin-top: .6rem; font-size: 1.3rem; flex-wrap: wrap; }
+  .figures span { color: var(--grey); margin-right: .4rem; }
+
+  #deck { grid-area: deck; font-size: calc(var(--row) * .5); }
+  .grid {
+    display: grid;
+    grid-template-columns: 2.2em 2em repeat(4, minmax(0, 6em)) 2.4em;
+    justify-content: center;
+    column-gap: .35em;
+  }
+  .grid > div { height: var(--row); display: flex; align-items: center; justify-content: center; }
+  .shade { grid-column: 1 / -1; height: auto; border-radius: .25em; }
+  .rank { justify-content: flex-end; font-weight: 700; }
+  .left { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .left.none { color: var(--dim); }
+  .grid > .tile {
+    position: relative;
+    width: 100%;
+    height: calc(var(--row) - .3em);
+    align-self: center;
+    border-radius: .3em;
+    background: #fff;
+    color: #111;
+    font-weight: 700;
+    gap: .1em;
+    isolation: isolate;
+  }
+  .tile.red { color: var(--ink-red); }
+  .tile.pending { box-shadow: inset 0 0 0 .14em var(--badge); }
+  /* the slash and the cross sit behind the rank and suit, so both stay readable */
+  .tile.pending::before, .tile.locked::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-size: 100% 100%;
+  }
+  .tile.pending::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'%3E%3Cline x1='0' y1='10' x2='10' y2='0' stroke='%23111' stroke-width='7' vector-effect='non-scaling-stroke'/%3E%3Cline x1='0' y1='10' x2='10' y2='0' stroke='%23ffdc00' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
+  }
+  .tile.locked { background: rgba(255, 70, 70, .16); color: #b89a9a; }
+  .tile.locked::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'%3E%3Cline x1='0' y1='0' x2='10' y2='10' stroke='%23ff4646' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3Cline x1='0' y1='10' x2='10' y2='0' stroke='%23ff4646' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
+  }
+  .tile.duplicate { outline: .14em solid var(--duplicate); outline-offset: .1em; }
+  .unrevealed { margin-top: .4em; text-align: center; color: var(--grey); }
+  .unrevealed.some { color: var(--amber); }
+
+  #seats { grid-area: seats; }
+  .edit { border: 2px solid var(--badge); border-radius: .5rem; padding: .5rem .8rem; margin-bottom: .8rem; }
+  .edit b { color: var(--badge); }
+  .hand {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr) auto auto;
+    grid-template-areas: "seat cards total hint";
+    align-items: center;
+    gap: .6rem;
+    padding: .45rem 0;
+    border-top: 1px solid #333;
+    font-size: 1.25rem;
+  }
+  .hand:first-of-type { border-top: 0; }
+  .hand .seat { grid-area: seat; }
+  .hand .cards { grid-area: cards; }
+  .hand .total { grid-area: total; }
+  .hand .hint { grid-area: hint; }
+  .seat { font-weight: 700; color: var(--seat); }
+  .hand.dealer .seat { color: var(--amber); }
+  .hand.other .seat { color: var(--grey); }
+  .cards { display: flex; flex-wrap: wrap; gap: .3rem .8rem; }
+  .chip { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
+  .order {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.6em; height: 1.6em; border-radius: 50%;
+    background: var(--badge); color: #000; font-size: .75em; font-weight: 700;
+  }
+  .chip.hidden { color: var(--grey); }
+  .chip.hidden .order { background: var(--dim); }
+  .name.red { color: var(--red); }
+  .name.back { color: var(--amber); }
+  .chip.hidden .name { color: var(--grey); }
+  .total { font-weight: 700; text-align: right; white-space: nowrap; }
+  .total.empty { color: var(--dim); font-weight: 400; }
+  .hint {
+    min-width: 4.6em; padding: .15em .5em; border-radius: .4em;
+    text-align: center; font-weight: 700; text-transform: uppercase; color: #000;
+  }
+  .hint.none { visibility: hidden; }
+  .hint.hit { background: var(--amber); }
+  .hint.stand { background: var(--green); }
+  .hint.double { background: var(--seat); }
+  .hint.split { background: var(--duplicate); }
+  @media (max-width: 599px) {
+    /* the seat, total and hint share the first line and the cards go below it; the seat
+       keeps its full name, the total wraps in the space left, and a seat with no hint
+       gives its space to the total */
+    .hand { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "seat total hint" "cards cards cards"; }
+    .hand .seat { white-space: nowrap; }
+    .hand .total { white-space: normal; overflow-wrap: anywhere; }
+    .hand .hint.none { display: none; }
+  }
+
+  #keys { grid-area: keys; }
+  .keylist { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: .4rem .8rem; }
+  kbd {
+    display: inline-block; min-width: 2.2em; margin-right: .5em; padding: .05em .4em;
+    border: 1px solid var(--dim); border-radius: .3em; text-align: center;
+    color: var(--badge); font: inherit; font-weight: 700;
+  }
+  .key { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 0; min-height: 2.6rem; padding: .3rem .5rem; }
+  .keylist button {
+    font: inherit; color: var(--text); background: #2e2e2e;
+    border: 1px solid #444; border-radius: .4rem; cursor: pointer;
+  }
+  .keylist button:hover { border-color: var(--badge); }
+  .keylist button:active { background: #444; }
+  button.key { text-align: left; }
+  .key.window { color: var(--grey); }
+  .key.choices { grid-column: 1 / -1; }
+  .choices .label { margin-right: 1rem; }
+  .choices button { min-width: 2.6rem; min-height: 2.4rem; margin-right: .4rem; font-weight: 700; }
+  .choices button.current { background: var(--badge); border-color: var(--badge); color: #000; }
+
+  #status {
+    grid-area: status;
+    display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1.5rem;
+    padding: .5rem 1rem; color: var(--grey); font-variant-numeric: tabular-nums;
+  }
+  .alert { color: var(--amber); font-weight: 700; }
+  .flash { color: var(--badge); font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <section id="count"><h2>TRUE COUNT</h2><div id="countBody">waiting for read.py ...</div></section>
+  <section id="deck"><h2>CARDS LEFT</h2><div id="deckBody"></div></section>
+  <section id="seats"><h2 id="seatsTitle">HANDS</h2><div id="seatsBody"></div></section>
+  <section id="keys"><h2>KEYS (press them in the video window, or use the buttons; grey ones work in the window only)</h2><div id="keysBody" class="keylist"></div></section>
+  <footer id="status"></footer>
+</main>
+<script>
+  // Suit glyphs from their code points, so this file stays plain ASCII. FE0E asks for
+  // the text form of the glyph rather than an emoji.
+  const glyph = (code) => String.fromCodePoint(code, 0xFE0E);
+  const SUIT = { S: glyph(0x2660), H: glyph(0x2665), D: glyph(0x2666), C: glyph(0x2663) };
+  const RED_SUITS = new Set(["H", "D"]);
+  const SHADE = { "1": "rgba(90, 220, 90, .14)", "0": "rgba(150, 150, 150, .12)", "-1": "rgba(255, 70, 70, .14)" };
+  const HI_LO_COLOUR = { "1": "var(--green)", "0": "var(--grey)", "-1": "var(--red)" };
+  const CUE_CLASS = { "favours player": "favours-player", "favours dealer": "favours-dealer", "neutral": "favours-neither" };
+
+  let latest = null;
+  let flash = null;          // the message currently shown in the status line
+  let flashTimer = null;
+  let connected = false;
+
+  function esc(text) {
+    return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[c]);
+  }
+
+  function isRed(label) {
+    return RED_SUITS.has(label.slice(-1));
+  }
+
+  function cardName(label) {
+    if (label === "BACK") return "BACK";
+    return esc(label.slice(0, -1)) + SUIT[label.slice(-1)];
+  }
+
+  function renderCount(count) {
+    const tone = CUE_CLASS[count.cue];
+    return `
+      <div class="headline ${tone}"><span class="true">${esc(count.headline)}</span>
+        <span class="cue">${esc(count.cue)}</span></div>
+      <div class="figures">
+        <div><span>running</span>${esc(count.running)}</div>
+        <div><span>left</span>${count.cards_left}/${count.deck_size}</div>
+      </div>`;
+  }
+
+  function renderDeck(grid, unrevealed) {
+    const header = ["", ""].concat(["S", "H", "D", "C"].map((suit) =>
+      `<span style="color: ${RED_SUITS.has(suit) ? "var(--red)" : "var(--text)"}">${SUIT[suit]}</span>`
+    ), [`<span style="color: var(--grey); font-size: .7em">left</span>`]);
+    let cells = header.map((html) => `<div>${html}</div>`).join("");
+    // Every cell below the header is placed explicitly, so the shading strip can sit under its row.
+    grid.forEach((row, i) => {
+      const line = i + 2;
+      const value = String(row.hi_lo);
+      cells += `<div class="shade" style="grid-area: ${line} / 1 / ${line + 1} / -1; background: ${SHADE[value]}"></div>`;
+      cells += `<div class="rank" style="grid-area: ${line} / 1">${esc(row.rank)}</div>`;
+      cells += `<div style="grid-area: ${line} / 2; color: ${HI_LO_COLOUR[value]}">`
+        + `${row.hi_lo > 0 ? "+" : ""}${row.hi_lo}</div>`;
+      row.cards.forEach((card, column) => {
+        const classes = ["tile", card.state];
+        if (RED_SUITS.has(card.suit)) classes.push("red");
+        if (card.duplicate) classes.push("duplicate");
+        cells += `<div class="${classes.join(" ")}" style="grid-area: ${line} / ${column + 3}"`
+          + ` title="${esc(card.name)}: ${card.state}">${esc(card.rank)}${SUIT[card.suit]}</div>`;
+      });
+      cells += `<div class="left${row.left ? "" : " none"}" style="grid-area: ${line} / 7">${row.left}</div>`;
+    });
+    return `<div class="grid">${cells}</div>
+      <div class="unrevealed${unrevealed ? " some" : ""}">face down, never revealed: ${unrevealed}</div>`;
+  }
+
+  function renderChip(card) {
+    const nameClass = card.label === "BACK" ? "back" : (isRed(card.label) ? "red" : "");
+    return `<span class="chip${card.hidden ? " hidden" : ""}"><span class="order">${card.order}</span>`
+      + `<span class="name ${nameClass}">${cardName(card.label)}</span></span>`;
+  }
+
+  function renderSeats(snapshot) {
+    let html = "";
+    if (snapshot.edit_help.length) {
+      html += `<div class="edit"><b>EDIT ZONES</b> (in the video window)<br>${snapshot.edit_help.map(esc).join("<br>")}</div>`;
+    }
+    for (const hand of snapshot.hands) {
+      const empty = !hand.cards.length;
+      html += `<div class="hand ${hand.kind}">
+        <div class="seat">${esc(hand.seat)}</div>
+        <div class="cards">${hand.cards.map(renderChip).join("")}</div>
+        <div class="total${empty ? " empty" : ""}">${esc(hand.total)}</div>
+        <div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div>
+      </div>`;
+    }
+    return html;
+  }
+
+  // One line per key: a button when the page has one, a row of buttons for 1-7 with the
+  // current player count filled in, and a grey line for a key that works in the window only.
+  function renderKeys(keys, players) {
+    return keys.map((entry) => {
+      const label = `<kbd>${esc(entry.key)}</kbd>${esc(entry.label)}`;
+      if (entry.buttons.length === 1) {
+        return `<button class="key" data-action="${esc(entry.buttons[0].action)}">${label}</button>`;
+      }
+      if (entry.buttons.length > 1) {
+        const choices = entry.buttons.map((button) => {
+          const current = button.text === String(players) ? " class=\"current\"" : "";
+          return `<button data-action="${esc(button.action)}"${current}>${esc(button.text)}</button>`;
+        });
+        return `<div class="key choices"><span class="label">${label}</span>${choices.join("")}</div>`;
+      }
+      return `<div class="key window">${label}</div>`;
+    }).join("");
+  }
+
+  function postAction(action) {
+    if (action === "quit" && !confirm("Quit the card reader?")) return;
+    fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) })
+      .then((response) => {
+        if (!response.ok) showFlash({ text: "the reader did not take that button", seconds: 2 });
+      })
+      .catch(() => { connected = false; })
+      .finally(render);
+  }
+
+  function renderStatus(snapshot) {
+    const parts = [];
+    if (!connected) parts.push(`<span class="alert">not connected: is read.py --web running?</span>`);
+    if (snapshot) {
+      const t = snapshot.timing;
+      if (snapshot.capture_mode) parts.push(`<span class="alert">CAPTURE MODE (no model)</span>`);
+      if (snapshot.no_signal) parts.push(`<span class="alert">no signal: press C to reconnect</span>`);
+      parts.push(`<span>${t.fps.toFixed(1)} fps</span>`);
+      parts.push(`<span>detect ${t.detect_ms.toFixed(1)} ms</span>`);
+      parts.push(`<span>prep ${esc(snapshot.preprocess)} ${t.preprocess_ms.toFixed(1)} ms</span>`);
+      if (snapshot.showing_raw) parts.push(`<span>showing raw</span>`);
+    }
+    if (flash) parts.push(`<span class="flash">${esc(flash)}</span>`);
+    return parts.join("");
+  }
+
+  // A section is only rewritten when its HTML changed: rewriting the keys on every
+  // heartbeat would replace a button between press and release and lose the click.
+  const written = new Map();
+  function setHtml(id, html) {
+    if (written.get(id) === html) return;
+    written.set(id, html);
+    document.getElementById(id).innerHTML = html;
+  }
+
+  function render() {
+    setHtml("status", renderStatus(latest));
+    if (!latest) return;
+    setHtml("countBody", renderCount(latest.count));
+    setHtml("deckBody", renderDeck(latest.grid, latest.unrevealed));
+    document.getElementById("seatsTitle").textContent = `HANDS (${latest.players} player${latest.players > 1 ? "s" : ""})`;
+    setHtml("seatsBody", renderSeats(latest));
+    setHtml("keysBody", renderKeys(latest.keys, latest.players));
+  }
+
+  function showFlash(message) {
+    flash = message.text;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { flash = null; render(); }, message.seconds * 1000);
+  }
+
+  const events = new EventSource("/events");
+  events.onopen = () => { connected = true; render(); };
+  events.onerror = () => { connected = false; render(); };
+  events.onmessage = (event) => {
+    latest = JSON.parse(event.data);
+    connected = true;
+    if (latest.flash) showFlash(latest.flash);
+    render();
+  };
+  document.getElementById("keysBody").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (button) postAction(button.dataset.action);
+  });
+  render();
+</script>
+</body>
+</html>
