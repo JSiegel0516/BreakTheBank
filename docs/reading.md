@@ -79,23 +79,25 @@ view. The Cards Left view's colours are in the table above.
 
 The bottom bar lists the main keys; the legend lists them all.
 
-| Key | Action |
-|---|---|
-| `1` to `7` | number of players; loads your saved layout for that count, or the template |
-| `E` | edit zones with the mouse; press `E` again to save them and lock |
-| `V` | switch the sidebar between the Cards Left view and the Game view; the tabs and a message name the new one |
-| `L` | show or hide the legend and key list |
-| `G` | show or hide the thin grey boxes, the detections not matched to a confirmed card |
-| `R` | new round: forget the table, numbering restarts at 1, the count is kept |
-| `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
-| `S` | save the current frame to `data/raw/frames/` for labelling |
-| `C` | reconnect the camera: reopen the same source after a cable or power interruption |
-| `P` | next preprocess mode: off, gamma, clahe, auto (see [Dim or washed-out tables](#dim-or-washed-out-tables)) |
-| `Shift+V` | show the raw camera frame, or the preprocessed frame the detector gets |
-| `<` / `>` | turn the view a quarter turn anticlockwise / clockwise; the message names the `CAMERA_ROTATION` that keeps it (see [Setting up the camera](#setting-up-the-camera)) |
-| `Q` | quit (or Ctrl+C in the terminal) |
+| Key | Action | Page button |
+|---|---|---|
+| `1` to `7` | number of players; loads your saved layout for that count, or the template | yes, one per count |
+| `E` | edit zones with the mouse; press `E` again to save them and lock | no |
+| `V` | switch the sidebar between the Cards Left view and the Game view; the tabs and a message name the new one | no |
+| `L` | show or hide the legend and key list | no |
+| `G` | show or hide the thin grey boxes, the detections not matched to a confirmed card | yes |
+| `R` | new round: forget the table, numbering restarts at 1, the count is kept | yes |
+| `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 | yes |
+| `S` | save the current frame to `data/raw/frames/` for labelling | no |
+| `C` | reconnect the camera: reopen the same source after a cable or power interruption | yes |
+| `P` | next preprocess mode: off, gamma, clahe, auto (see [Dim or washed-out tables](#dim-or-washed-out-tables)) | yes |
+| `Shift+V` | show the raw camera frame, or the preprocessed frame the detector gets | yes |
+| `<` / `>` | turn the view a quarter turn anticlockwise / clockwise; the message names the `CAMERA_ROTATION` that keeps it (see [Setting up the camera](#setting-up-the-camera)) | yes, one each |
+| `Q` | quit (or Ctrl+C in the terminal) | yes, after a confirmation |
 
 Keys work when the reader window is selected. The window can be resized.
+With `--web`, the page's buttons (see [Browser dashboard](#browser-dashboard))
+do exactly what their keys do, with the same message.
 Every event is also printed in the terminal, with the seat and the count:
 
 ```
@@ -152,10 +154,78 @@ a misread or a reshuffle nobody marked with `Shift+R`. The count is not changed.
 - `--players 5` sets the starting number of seats (`PLAYERS` in `settings.py`).
 - `--log round.csv` appends every event to a CSV, with its seat and the running count.
 - `--preprocess auto` picks the starting preprocess mode (`PREPROCESS` in `settings.py`): `off`, `gamma`, `clahe`, or `auto`.
-- `--no-display` runs without the window; stop it with Ctrl+C.
+- `--no-display` runs without the window; stop it with Ctrl+C. With `--web` as well,
+  the page is the whole interface, and its `Q` button quits.
+- `--web` moves the sidebar to a browser page (see [Browser dashboard](#browser-dashboard)).
+- `--web-host 0.0.0.0` serves that page to other devices on the network too.
 
 macOS asks for camera permission the first time OpenCV opens a camera from a
 terminal or VS Code. Grant it under System Settings > Privacy & Security > Camera.
+
+### Browser dashboard
+
+```
+python read.py --web                        # page at http://127.0.0.1:8765/
+python read.py --web --web-host 0.0.0.0     # a phone or tablet on the same Wi-Fi can open it too
+python read.py --no-display --web           # no window at all: the page is the whole interface
+```
+
+The window's sidebar is 30% of the video's width, and its text scales with the
+video, so on a laptop screen it is cramped. With `--web` the window shows only
+the video, its tags and zones, and the bottom bar. The reader prints
+`dashboard at http://127.0.0.1:8765/`; open that address in any browser. The
+page holds what the sidebar did, with real fonts, and reflows to fit the browser
+window without scrolling sideways:
+
+| On the page | Meaning |
+|---|---|
+| True count | the Hi-Lo true count in large type with whom it favours, then the running count and cards left (`39/52`) |
+| Cards Left | the largest part of the page: one row per rank with its Hi-Lo value, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a faint red tint. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
+| Hands | one line per seat: its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out |
+| Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
+| Keys | every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. `E`, `V`, `L`, and `S` are grey: they work in the window only |
+| Status line | frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
+
+The page needs no reload. It changes within a frame of the reader, and a message
+shorter than a frame still appears once. The reader sends the page an update
+only when something on it changed, plus one every half second so the frames
+per second stay current. If the reader stops, the status line says
+`not connected`, and the page catches up by itself once the reader is back.
+
+**Buttons.** A button does exactly what its key does, with the same message on
+the page and in the window: new round, new shoe, players, reconnect, and so on.
+The reader acts on it at its next frame. Several presses at once, or a button
+and a key together, are taken one per frame in order, so each sees what the one
+before did (a second turn turns the already-turned view) and each message
+shows. `Q` asks for confirmation first, since
+quitting cannot be undone from the page. Zone editing (`E`) and saving frames
+(`S`) need the window.
+
+**Without a window.** `--no-display --web` runs the reader with no window: the
+page shows everything and its buttons drive it. Quit with the page's `Q` button,
+or Ctrl+C in the terminal. Use it when the computer at the table has no screen
+to spare, or to watch from a phone across the room.
+
+`V` and `L` change only the window's sidebar, so with `--web` they do nothing
+you can see. Without `--web` the window looks exactly as before.
+
+**Port.** The page is served on `WEB_PORT` in `settings.py` (8765). If another
+program has it, the reader stops with
+`could not serve the page on 127.0.0.1:8765 (...): set WEB_PORT in settings.py to a free port`.
+
+**On a phone or tablet.** By default only this computer can open the page.
+`--web-host 0.0.0.0` lets any device on the same network open it, with no
+password, so use it only on a network you trust. Then:
+
+1. Find this computer's address. On macOS, run `ipconfig getifaddr en0` (Wi-Fi),
+   or see System Settings > Wi-Fi > Details. It looks like `192.168.1.23`.
+2. On the phone, open `http://192.168.1.23:8765/` (your address, then the port).
+3. If it does not load, macOS may be blocking incoming connections: allow
+   Python under System Settings > Network > Firewall > Options.
+
+The page shows no video, so the phone needs little bandwidth. The phone's
+buttons work like the keys on the computer, so anyone who can open the page can
+also start a new shoe or quit the reader.
 
 ### Setting up the camera
 
@@ -332,6 +402,65 @@ true count means the remaining cards are rich in tens and aces.
 - **Decks left never drops below a quarter deck** (13 cards). Near the end of the
   deck, dividing by a sliver of a deck would make the true count huge: with one
   card left and a running count of -1 it reads -4, not -52.
+
+### Basic strategy hints
+
+`cardReader/strategy.py` suggests a play for each player hand against the
+dealer's up card: `hit`, `stand`, `double` or `split`. The
+[browser dashboard](#browser-dashboard) shows it at the end of each player seat's line. The up card is the
+dealer's first face-up card. There is no hint when the hand has a face-down
+card, fewer than two cards, is bust or is a blackjack, or when the dealer has no
+face-up card. Split hands are not separated yet, so after a split the hint is for
+all the seat's cards together.
+
+The table is the common multi-deck one, with these rules:
+
+- The dealer stands on soft 17.
+- Double on any first two cards. With three or more cards, `D` becomes hit and
+  `Ds` becomes stand.
+- Double after a split is allowed.
+- No surrender.
+
+`H` hit, `S` stand, `P` split, `D` double (else hit), `Ds` double (else stand).
+
+**Hard totals**
+
+| Player | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | A |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 8 or less | H | H | H | H | H | H | H | H | H | H |
+| 9 | H | D | D | D | D | H | H | H | H | H |
+| 10 | D | D | D | D | D | D | D | D | H | H |
+| 11 | D | D | D | D | D | D | D | D | D | H |
+| 12 | H | H | S | S | S | H | H | H | H | H |
+| 13 to 16 | S | S | S | S | S | H | H | H | H | H |
+| 17 or more | S | S | S | S | S | S | S | S | S | S |
+
+**Soft totals** (an ace counted as 11)
+
+| Player | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | A |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A,2 and A,3 (13, 14) | H | H | H | D | D | H | H | H | H | H |
+| A,4 and A,5 (15, 16) | H | H | D | D | D | H | H | H | H | H |
+| A,6 (17) | H | D | D | D | D | H | H | H | H | H |
+| A,7 (18) | S | Ds | Ds | Ds | Ds | S | S | H | H | H |
+| A,8 or more (19 to 21) | S | S | S | S | S | S | S | S | S | S |
+
+**Pairs** (two cards of the same value, so J,Q is a pair of tens)
+
+| Player | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | A |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2,2 and 3,3 | P | P | P | P | P | P | H | H | H | H |
+| 4,4 | H | H | H | P | P | H | H | H | H | H |
+| 5,5 | D | D | D | D | D | D | D | D | H | H |
+| 6,6 | P | P | P | P | P | H | H | H | H | H |
+| 7,7 | P | P | P | P | P | P | H | H | H | H |
+| 8,8 and A,A | P | P | P | P | P | P | P | P | P | P |
+| 9,9 | P | P | P | P | P | S | P | P | S | S |
+| 10,10 | S | S | S | S | S | S | S | S | S | S |
+
+The count assumes one deck, but this table is the multi-deck one. The two
+differ in a handful of close plays, such as hard 11 against an ace, which
+doubles in single deck.
 
 ### Rules the tracker assumes
 

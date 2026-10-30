@@ -34,6 +34,10 @@
     * "no signal: press C to reconnect" across the video when the camera has
       stopped sending frames
 
+draw(..., sidebar=False) leaves the sidebar out: the window is the video and
+the bottom bar only, for when the browser dashboard (cardReader/sidebar/)
+shows the count, the grid, and the hands instead.
+
 Colours follow the cards: red for hearts and diamonds, white for spades and
 clubs (black on a mini card's white face), amber for face-down cards. Text and
 line sizes scale with the frame width so the overlay stays readable from 720p to 4K.
@@ -70,6 +74,8 @@ KEY_LIST = [("1-7", "players"), ("E", "edit zones"), ("V", "switch view"), ("L",
             ("G", "grey boxes"), ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"),
             ("C", "reconnect camera"), ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"),
             ("<", "turn left"), (">", "turn right"), ("Q", "quit")]
+EDIT_HELP = ["drag a corner: reshape", "drag a +: add a corner", "right-click a corner: remove it",
+             "drag inside: move the zone", "right-click inside: reset the zone", "E: save and lock"]
 NO_SIGNAL = "no signal: press C to reconnect"
 VIEWS = {"cards_left": "Cards Left", "game": "Game"}  # sidebar view id -> name, in tab order
 # Legend entries per view: (swatch kind, colour, meaning). Kinds are drawn by Hud._swatch;
@@ -105,6 +111,11 @@ class DealtCards:
     pending: set[str] = field(default_factory=set)     # counted this round
     duplicates: set[str] = field(default_factory=set)  # reported as a duplicate this shoe
     unrevealed: int = 0                                # face-down cards dealt and never turned over
+
+    @classmethod
+    def from_tracker(cls, tracker) -> DealtCards:
+        """The shoe's cards as a CardTracker holds them."""
+        return cls(tracker.shoe_locked, tracker.shoe_pending, tracker.shoe_duplicates, tracker.shoe_unrevealed)
 
     def state(self, name: str) -> str:
         """The grid state of one face name: "locked", "pending", or "unseen"."""
@@ -167,6 +178,7 @@ class Hud:
     def __init__(self):
         self._message = ""
         self._message_until = 0.0
+        self._unsent_flash: tuple[str, float] | None = None
         self.show_legend = True
         self.show_unmatched = True  # False: thin grey boxes are not drawn (key G)
         self.view = "cards_left"  # a key of VIEWS: what the sidebar shows below the count
@@ -174,13 +186,20 @@ class Hud:
     def flash(self, text: str, seconds: float = 1.5):
         """Show a short message above the bottom bar."""
         self._message, self._message_until = text, time.time() + seconds
+        self._unsent_flash = (text, seconds)
+
+    def pop_flash(self) -> tuple[str, float] | None:
+        """The latest (text, seconds) passed to flash since the last call, or None. For the
+        browser dashboard, which must show each message once even if it lasts under a frame."""
+        unsent, self._unsent_flash = self._unsent_flash, None
+        return unsent
 
     def draw(self, frame: np.ndarray, dets: list[Detection], cards: list[Card], fps: float,
              layout: SeatLayout, count: ShoeCount, capture_mode: bool = False,
              editor: ZoneEditor | None = None, dealt: DealtCards | None = None,
              stage_ms: dict[str, float] | None = None, no_signal: bool = False,
              preprocess: str = "off", showing_raw: bool = False,
-             bound: list[Card | None] | None = None) -> np.ndarray:
+             bound: list[Card | None] | None = None, sidebar: bool = True) -> np.ndarray:
         """Return the frame with the overlay, plus the sidebar on its right. The frame is not changed.
 
         cards: every card of the round, hidden ones included, in placement order.
@@ -193,7 +212,8 @@ class Hud:
         stage_ms: smoothed milliseconds per stage; "detect" and "preprocess" go in the bottom bar.
         no_signal: the camera has stopped sending frames; says so over the video.
         preprocess, showing_raw: the preprocess mode, and whether `frame` is the raw camera
-        frame rather than the preprocessed one; both are named in the bottom bar."""
+        frame rather than the preprocessed one; both are named in the bottom bar.
+        sidebar: False returns the video with its overlay and bottom bar only, as wide as the frame."""
         view = frame.copy()
         W = view.shape[1]
         self.s = min(max(W / 1600, 0.6), 2.5)  # 1.2 at 1080p, 2.4 at 4K
@@ -218,6 +238,10 @@ class Hud:
             placed.append(self._card_tag(view, card, box, placed))
         if no_signal:
             self._no_signal(view)
+        status = status_text(fps, stage_ms, capture_mode, preprocess, showing_raw)
+        if not sidebar:
+            self._bottom_bar(view, status, capture_mode, W)
+            return view
 
         side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
         y = self._count_block(side, count, self._view_tabs(side))
@@ -233,7 +257,6 @@ class Hud:
                 bottom = self._legend(side, bottom)
             self._seat_blocks(side, Table(layout).hands(cards), y, bottom)
         canvas = np.hstack([view, side])
-        status = status_text(fps, stage_ms, capture_mode, preprocess, showing_raw)
         self._bottom_bar(canvas, status, capture_mode, W)
         return canvas
 
@@ -318,9 +341,7 @@ class Hud:
 
     def _edit_help(self, side, bottom: int) -> int:
         """Mouse controls for edit mode, in the sidebar so no handle is ever covered. Returns its top."""
-        lines = [("EDIT ZONES", BADGE), ("drag a corner: reshape", WHITE), ("drag a +: add a corner", WHITE),
-                 ("right-click a corner: remove it", WHITE), ("drag inside: move the zone", WHITE),
-                 ("right-click inside: reset the zone", WHITE), ("E: save and lock", WHITE)]
+        lines = [("EDIT ZONES", BADGE)] + [(text, WHITE) for text in EDIT_HELP]
         lh = self._size("Ag", 0.6)[1] + self.pad
         top = bottom - len(lines) * lh - self.pad
         cv2.rectangle(side, (0, top), (side.shape[1], bottom), (60, 50, 0), -1)
