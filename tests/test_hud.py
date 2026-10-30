@@ -256,4 +256,8 @@ def test_each_grid_cell_is_a_mini_card_that_shows_its_state(W, H):
 
 
 def test_rotation_keys_are_listed():
-    assert ("<", "turn left") in KEY_LIST and (">", "turn right") in KEY_LIST
+    assert ("< >", "turn view") in KEY_LIST
+
+
+def test_rescan_key_is_listed_and_on_the_bottom_bar():
+    assert ("X", "rescan round") in KEY_LIST and "[X] rescan" in KEYS

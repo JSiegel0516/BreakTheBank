@@ -99,6 +99,21 @@ def test_a_reused_number_starts_a_new_round(tmp_path):
     assert {r: [p.card for p in placements.values()] for r, placements in read.items()} == {1: ["10H"], 2: ["4D"]}
 
 
+def test_a_rescan_scores_the_round_once_with_the_cards_read_again(tmp_path):
+    first = [("placed", 1, "10H", "P1", -1), ("placed", 2, "9C", "P2", -1), ("placed", 3, "KS", "dealer", -2)]
+    again = [("placed", 1, "10H", "P1", -1), ("placed", 2, "6C", "P2", 0), ("placed", 3, "KS", "dealer", -1)]
+    read, count = read_log(log_file(tmp_path, *first, ("rescan", "", "", "", 0), *again,
+                                    ("round_over", "", "", "", -1), ("placed", 1, "4D", "P1", 0)))
+    assert {r: [p.card for p in placements.values()] for r, placements in read.items()} == {
+        1: ["10H", "6C", "KS"], 2: ["4D"]}
+    assert count == 0
+
+
+def test_a_rescan_before_any_card_changes_nothing(tmp_path):
+    read, _ = read_log(log_file(tmp_path, ("rescan", "", "", "", 0), ("placed", 1, "10H", "P1", -1)))
+    assert {r: [p.card for p in placements.values()] for r, placements in read.items()} == {1: ["10H"]}
+
+
 def test_wrong_seat_is_listed_but_not_an_error(tmp_path):
     result = evaluate(tmp_path, "round,order,card,seat\n1,1,10H,P2\n", ("placed", 1, "10H", "P1", -1))
     assert kinds(result) == [("wrong seat", 1, 1)]
@@ -158,3 +173,22 @@ def test_a_log_written_by_the_reader_is_scored(tmp_path):
     result = score(expected, read, count)
     assert kinds(result) == [("wrong rank", 2, 1)]
     assert (result.correct, result.count_read, result.count_expected) == (2, 0, 1)
+
+
+def test_a_rescan_right_after_r_keeps_the_round_r_ended(tmp_path):
+    path = tmp_path / "log.csv"
+    with open(path, "w", newline="") as file:
+        log = csv.writer(file)
+        tracker = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20)
+        reader = Reader(tracker, SeatLayout(3, 640, 360), Hud(), tmp_path / "seats.json", tmp_path / "frames", log=log)
+        frame = np.zeros((360, 640, 3), np.uint8)
+        for _ in range(3):
+            reader.process(frame, [Detection("5H", 0.9, 100, 100)])
+        for _ in range(5):
+            reader.process(frame, [])                    # swept, before the round ends on its own
+        reader.handle_key(ord("r"), frame)               # R logs nothing
+        reader.handle_key(ord("x"), frame)               # nothing placed this round yet
+        for _ in range(3):
+            reader.process(frame, [Detection("6C", 0.9, 300, 100)])
+    read, _ = read_log(path)
+    assert {r: [p.card for p in placements.values()] for r, placements in read.items()} == {1: ["5H"], 2: ["6C"]}

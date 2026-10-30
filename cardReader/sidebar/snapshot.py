@@ -24,12 +24,12 @@ BUTTONS = {
     "1-7": [(f"players_{n}", str(n)) for n in range(1, MAX_PLAYERS + 1)],
     "G": [("grey_boxes", "g")],
     "R": [("new_round", "r")],
+    "X": [("rescan", "x")],
     "Shift+R": [("new_shoe", "R")],
     "C": [("reconnect", "c")],
     "P": [("preprocess", "p")],
     "Shift+V": [("raw_or_enhanced", "V")],
-    "<": [("turn_left", "<")],
-    ">": [("turn_right", ">")],
+    "< >": [("turn_left", "<"), ("turn_right", ">")],
     "Q": [("quit", "q")],
 }
 ACTION_KEYS = {action: ord(key) for buttons in BUTTONS.values() for action, key in buttons}  # name -> key code

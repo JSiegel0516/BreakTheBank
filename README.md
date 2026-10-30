@@ -21,8 +21,9 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
 2. Point a camera straight down at the table (see [Setting up the camera](docs/reading.md#setting-up-the-camera)).
 3. Activate the environment (`source .venv/bin/activate`), then run `python read.py`.
    Place cards one at a time. Each gets a number in the order placed.
-4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared;
-   press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
+4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared.
+   If a card is misread, press `X` before the round ends to read the round again; earlier
+   rounds stay counted. Press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
    `no signal`, reconnect the camera's cable or wake the phone and press `C` to reopen it.
    In a dim room or under uneven light, press `P` to cycle the preprocess modes (off, gamma,
    clahe, auto) and `Shift+V` to compare with the raw camera frame. See

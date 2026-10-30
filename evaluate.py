@@ -18,6 +18,8 @@ was never turned over as BACK.
 In the log, a round ends at each round_over event. A placed event whose number
 was already used in the round also starts a new one, since pressing r and
 appending a second read.py run to the same log write no event of their own.
+A rescan row (key x) drops the cards of the round in progress, and the cards
+placed after it fill that same round again.
 Each card's name is the one it was placed with, or its last renamed name.
 Cards are matched by round and placement number, so a missed card shifts the
 numbers of the cards after it in that round.
@@ -92,6 +94,11 @@ def read_log(path: Path) -> tuple[Rounds, int]:
             running_count = _whole_number(event["running_count"], path, line)
             kind = event["event"]
             if kind == "round_over":
+                current = {}
+                continue
+            if kind == "rescan":  # the round in progress is read again under the same number
+                if current:
+                    del rounds[len(rounds)]
                 current = {}
                 continue
             if kind not in ("placed", "renamed"):

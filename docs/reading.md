@@ -87,6 +87,7 @@ The bottom bar lists the main keys; the legend lists them all.
 | `L` | show or hide the legend and key list | no |
 | `G` | show or hide the thin grey boxes, the detections not matched to a confirmed card | yes |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept | yes |
+| `X` | rescan: forget this round's cards and read the table again; the count keeps only earlier rounds | yes |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 | yes |
 | `S` | save the current frame to `data/raw/frames/` for labelling | no |
 | `C` | reconnect the camera: reopen the same source after a cable or power interruption | yes |
@@ -146,6 +147,15 @@ leaves its hand; the count is not changed.
 A `duplicate` line means a face card was placed (or renamed) under a name already
 counted this shoe in an earlier round. One deck holds one of each card, so it is
 a misread or a reshuffle nobody marked with `Shift+R`. The count is not changed.
+
+To fix a misread while the round is still open, press `X` to rescan the round.
+The reader forgets every card of this round and takes this round's names back
+out of the count, then reads the cards on the table again, numbered from 1.
+Names counted in earlier rounds stay counted. Pressing `R` instead locks the
+wrong name into the count. A rescan cannot undo a round that has already ended,
+whether by `R` or by clearing the table. A card left on the table from an
+earlier round is placed again after a rescan, so it shows as a `duplicate`
+(face up) or is taken off cards left a second time (face down).
 
 - `--source 0` picks the camera. With an iPhone as a Continuity Camera, OpenCV
   usually numbers it 0 and the built-in camera 1; try the other number if the
@@ -546,6 +556,9 @@ round 1 #3: expected KS, read KH (wrong suit)
 
 - Rounds in the log end at each `round_over`. Pressing `R` logs nothing, so a
   card placed under a number already used in the round also starts a new one.
+- Pressing `X` logs a `rescan` row. The cards of the round in progress are
+  dropped, and the cards read after it are scored as that same round. Before
+  the round's first card, `X` logs nothing, so the round `R` just ended is kept.
 - A renamed card is scored under its last name.
 - Cards are matched by round and number. A missed card shifts the numbers after
   it, so the rest of that round shows as wrong names.

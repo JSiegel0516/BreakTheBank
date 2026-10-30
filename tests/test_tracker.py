@@ -324,6 +324,69 @@ def test_new_round_with_cards_still_down_renumbers_them():
     assert tr.shoe_seen == ["QS", "4H"]  # not counted again
 
 
+def test_rescan_uncounts_this_rounds_names_and_keeps_earlier_ones_in_order():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("QS", 50, 50), det("4H", 300, 50)], 3)
+    run(tr, [], 5)                      # swept away
+    tr.new_round()
+    run(tr, [det("9C", 50, 50), det("2D", 300, 50)], 3)
+    frame = tr.frame
+    tr.rescan()
+    assert tr.shoe_seen == ["QS", "4H"]
+    assert (tr.shoe_pending, tr.shoe_locked) == (set(), {"QS", "4H"})
+    assert tr.round == [] and tr.tracks == {} and tr.bound == [] and tr.frame == frame
+
+
+def test_rescan_restores_the_unrevealed_and_duplicates_of_the_round_start():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20)
+    run(tr, [det("BACK", 50, 50), det("KH", 300, 50)], 3)
+    run(tr, [], 20)                     # round over: one face-down card dealt, KH locked
+    run(tr, [det("BACK", 50, 200), det("KH", 300, 200)], 3)
+    assert (tr.shoe_unrevealed, tr.shoe_duplicates) == (2, {"KH"})
+    tr.rescan()
+    assert (tr.shoe_unrevealed, tr.shoe_duplicates) == (1, set())
+
+
+def test_cards_on_the_table_come_back_after_a_rescan_numbered_from_1_and_counted_once():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("9C", 50, 50)], 3)
+    run(tr, [det("9C", 50, 50), det("6D", 300, 50)], 3)
+    run(tr, [det("9C", 50, 50), det("BACK", 300, 50)], 1)
+    tr.rescan()
+    assert run(tr, [det("6D", 300, 50), det("9C", 50, 50)], 1) == []  # confirmed again from scratch
+    ev = run(tr, [det("6D", 300, 50), det("9C", 50, 50)], 1)
+    assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("placed", 1, "6D"), ("placed", 2, "9C")]
+    assert tr.shoe_seen == ["6D", "9C"] and tr.shoe_unrevealed == 0
+
+
+def test_name_read_again_after_a_rescan_is_not_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("9C", 50, 50)], 3)
+    tr.rescan()
+    ev = run(tr, [det("9C", 50, 50)], 2)
+    assert [e.kind for e in ev] == ["placed"] and tr.shoe_duplicates == set()
+
+
+def test_new_round_after_a_rescan_locks_the_names_read_again():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("9C", 50, 50)], 3)
+    tr.rescan()
+    run(tr, [det("6C", 50, 50)], 2)
+    tr.new_round()
+    assert (tr.shoe_seen, tr.shoe_pending, tr.shoe_locked) == (["6C"], set(), {"6C"})
+
+
+def test_rescan_tells_whether_this_round_placed_a_card():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("9C", 50, 50)], 1)                      # seen, not yet confirmed
+    assert tr.rescan() is False
+    run(tr, [det("9C", 50, 50)], 2)
+    tr.new_round()
+    assert tr.rescan() is False
+    run(tr, [det("6C", 300, 50)], 2)
+    assert tr.rescan() is True
+
+
 def test_face_down_cards_are_not_counted():
     tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
     run(tr, [det("BACK", 50, 50), det("9S", 300, 50)], 3)

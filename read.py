@@ -33,7 +33,8 @@ page is the only way to drive the reader; its Q button quits.
 
 Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
       v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
-      r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames
+      r new round | x rescan this round (fix a misread) | Shift+R new shoe (count back to 0)
+      s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
       Shift+V show the raw camera frame or the preprocessed one
       < > turn the view a quarter turn anticlockwise or clockwise | q quit

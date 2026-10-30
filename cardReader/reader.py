@@ -17,7 +17,10 @@ Events are printed as they happen and appended to the CSV log as
     time, frame, event, order, card, seat, running_count, x, y
 A duplicate event (a name already counted in an earlier round) and a removed
 event (a card hidden too long) are logged like the rest, with the card's seat
-where it was last seen; neither changes the count.
+where it was last seen; neither changes the count. Key X (rescan) logs one
+rescan row, with the running count after the rescan and no card, so
+evaluate.py reads the round again under the same number. A rescan before the
+round's first card logs nothing, since there is nothing to read again.
 """
 from __future__ import annotations
 
@@ -112,6 +115,15 @@ class Reader:
             self.tracker.new_round()
             print("--- new round ---")
             self.hud.flash("new round: numbering restarts at 1")
+        elif k == ord("x"):
+            placed_this_round = self.tracker.rescan()
+            self.count = self._recount()
+            print("--- rescan: this round is read again ---")
+            self.hud.flash("rescan: reading this round again")
+            # R logs nothing, so a rescan row before this round's first card would drop the round R ended.
+            if self.log and placed_this_round:
+                self.log.writerow([f"{time.time():.3f}", self.tracker.frame, "rescan", "", "", "",
+                                   self.count.running, "", ""])
         elif k == ord("R"):
             self.tracker.new_shoe()
             self.count = self._recount()
