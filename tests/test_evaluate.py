@@ -78,6 +78,13 @@ def test_rename_fixes_the_name(tmp_path):
     assert (result.correct, result.problems) == (2, [])
 
 
+def test_removed_card_is_still_scored_and_its_number_is_not_reused(tmp_path):
+    expected = "round,order,card\n1,1,10H\n1,2,6C\n1,3,4D\n"
+    result = evaluate(tmp_path, expected, ("placed", 1, "10H", "P1", -1), ("placed", 2, "6C", "P2", 0),
+                      ("removed", 1, "10H", "P1", 0), ("placed", 3, "4D", "P1", 1))
+    assert (result.cards_read, result.correct, result.problems) == (3, 3, [])
+
+
 def test_multiple_rounds_split_at_round_over(tmp_path):
     expected = "round,order,card\n1,1,10H\n1,2,6C\n2,1,4D\n2,2,AS\n"
     result = evaluate(tmp_path, expected, ("placed", 1, "10H", "P1", -1), ("placed", 2, "6C", "P2", 0),

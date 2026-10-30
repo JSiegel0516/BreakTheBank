@@ -9,7 +9,7 @@ import pytest
 import read
 from cardReader.cards import Detection
 from cardReader.hud import Hud
-from read import STAGES, StageTimer, reconnect
+from read import STAGES, StageTimer, fps_note, reconnect
 
 
 class FakeCamera:
@@ -39,6 +39,7 @@ def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args):
     """Run read.main() on a fake camera and detector with no real window, pressing one of `keys` per frame.
     args: extra command-line arguments. Saved frames go to tmp_path / "frames"."""
     monkeypatch.setattr(read, "Camera", lambda *a: cam)
+    detect.device_used = "mps"
     detector = ModuleType("cardReader.detector")
     detector.Detector = lambda *a: detect
     monkeypatch.setitem(sys.modules, "cardReader.detector", detector)
@@ -77,8 +78,23 @@ def test_stale_camera_shows_no_signal_feeds_nothing_to_the_tracker_and_c_reconne
     assert [no_signal for stale, no_signal in seen if stale] == [True, True, True]   # reads 5 to 7, until C
     assert (False, "fed") in seen and (False, False) in seen
     out = capsys.readouterr().out
+    assert f"model {tmp_path / 'x.pt'} on mps" in out
     assert "no signal from source" in out and "reconnected to source" in out
     assert "average time per frame: read" in out and "detect" in out
+
+
+def test_quit_summary_prints_the_measured_fps_when_far_from_the_setting(monkeypatch, capsys, tmp_path):
+    run_reader(monkeypatch, tmp_path, FakeCamera(), [255, 255, ord("q")], lambda frame: [])
+    out = capsys.readouterr().out                           # a fake camera runs far faster than 12.4 fps
+    assert "fps, but FPS in settings.py is 12.4" in out
+
+
+def test_fps_note_is_empty_within_a_fifth_of_the_setting():
+    assert fps_note(12.4, 12.4) == ""
+    assert fps_note(14.8, 12.4) == "" and fps_note(10.0, 12.4) == ""
+    assert fps_note(30.0, 12.4) == ("measured 30.0 fps, but FPS in settings.py is 12.4: "
+                                    "set FPS to about 30.0 so the *_SECONDS settings take the time they say")
+    assert fps_note(9.0, 12.4).startswith("measured 9.0 fps")
 
 
 def test_detector_gets_the_preprocessed_frame_shift_v_shows_the_raw_one_and_s_saves_raw(monkeypatch, tmp_path):
@@ -103,6 +119,52 @@ def test_detector_gets_the_preprocessed_frame_shift_v_shows_the_raw_one_and_s_sa
     saved = list((tmp_path / "frames").glob("frame_*.jpg"))
     assert len(saved) == 1
     assert abs(int(cv2.imread(str(saved[0]))[0, 0, 0]) - raw) <= 2
+
+
+def test_editing_detects_every_third_frame_reuses_the_cards_and_drains_the_mouse(monkeypatch, tmp_path):
+    cam = FakeCamera()
+    detected, fed, drained = [], [], []
+    process, drain = read.Reader.process, read.wait_key_draining_mouse
+
+    def detect(frame):
+        detected.append(cam.reads)
+        return [Detection("5H", 0.9, 100, 100)]
+
+    def watched_process(self, frame, dets):
+        fed.append(len(dets))
+        return process(self, frame, dets)
+
+    def watched_drain(budget_ms):
+        drained.append(cam.reads)
+        return drain(budget_ms)
+
+    monkeypatch.setattr(read.Reader, "process", watched_process)
+    monkeypatch.setattr(read, "wait_key_draining_mouse", watched_drain)
+    monkeypatch.setattr(read.settings, "SEATS_FILE", str(tmp_path / "seats.json"))
+    keys = [255, ord("e")] + [255] * 5 + [ord("e"), 255, ord("q")]  # E after read 2 starts editing, after 8 ends it
+    run_reader(monkeypatch, tmp_path, cam, keys, detect)
+
+    assert detected == [1, 2, 4, 7, 9, 10]   # every frame, then one in three while editing, then every frame again
+    assert fed == [1] * 10                  # frames without a detection pass reuse the last cards
+    assert drained == [3, 4, 5, 6, 7, 8]
+    assert (tmp_path / "seats.json").exists()
+
+
+def test_draining_the_mouse_stops_at_a_key_or_when_the_time_is_up(monkeypatch):
+    calls = []
+
+    def wait_key(ms):
+        calls.append(ms)
+        time.sleep(0.002)
+        return ord("v") if len(calls) == 3 else -1
+
+    monkeypatch.setattr(read.cv2, "waitKey", wait_key)
+    assert read.wait_key_draining_mouse(1000) == ord("v") and calls == [1, 1, 1]
+    calls.clear()
+    monkeypatch.setattr(read.cv2, "waitKey", lambda ms: calls.append(ms) or -1)
+    start = time.perf_counter()
+    assert read.wait_key_draining_mouse(20) == -1
+    assert time.perf_counter() - start >= 0.02 and len(calls) > 1
 
 
 def test_preprocess_flag_only_takes_a_known_mode(monkeypatch, capsys):

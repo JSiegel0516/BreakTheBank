@@ -8,18 +8,19 @@
 
 Per frame:  camera -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
 
-Every event (placed, hidden, returned, renamed, duplicate, round over) is printed
+Every event (placed, hidden, returned, removed, renamed, duplicate, round over) is printed
 as it happens, and appended to --log as CSV if given. Without a trained model it runs
 in capture mode: it shows the live feed and lets you press 's' to save frames
 for labelling.
 
-The sidebar starts in the counter view, a rank by suit grid of the deck: a card
-counted this round is slashed (pending), one counted in an earlier round is
-crossed off (locked), and a duplicate is ringed. Press v for the seats view,
-each seat's hand.
+Tabs at the top of the sidebar name the two views, CARDS LEFT and GAME, and
+highlight the current one. It starts in the Cards Left view, a rank by suit grid
+of the deck: a card counted this round is slashed (pending), one counted in an
+earlier round is crossed off (locked), and a duplicate is ringed. Press v for
+the Game view, each seat's hand.
 
 Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
-      v counter or seats view | l legend and key list
+      v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
       r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
       Shift+V show the raw camera frame or the preprocessed one | q quit
@@ -34,7 +35,13 @@ Press c to reopen the same source.
 
 The bottom bar shows the fps, the smoothed detect milliseconds, and the preprocess
 mode with its milliseconds. On quit the average milliseconds per stage are printed: read (the newest
-camera frame), preprocess, detect, and draw (the overlay and the window).
+camera frame), preprocess, detect, and draw (the overlay and the window). When the fps
+averaged over the run is more than a fifth away from FPS in settings.py, both are printed:
+the tracker's *_SECONDS settings are turned into frames at FPS, so FPS should match.
+
+While editing zones (key E) the detector runs on one frame in EDIT_DETECT_EVERY and the
+cards found are reused in between, and each frame spends EDIT_MOUSE_MS handling the mouse
+(counted in draw), so a drag starts where it was clicked even when detection is slow.
 
 This file only owns the command line, the camera, and the window. What happens
 per frame and per key is cardReader/reader.py; the overlay is cardReader/hud.py.
@@ -61,6 +68,21 @@ from cardReader.tracker import CardTracker, TrackerConfig
 
 WINDOW = "card reader"
 STAGES = ("read", "preprocess", "detect", "draw")  # the timed parts of one pass of the loop
+EDIT_DETECT_EVERY = 3  # while editing zones, detect on one frame in this many and reuse its detections between
+EDIT_MOUSE_MS = 40     # while editing zones, time per frame spent handling mouse events
+
+
+def wait_key_draining_mouse(budget_ms: float) -> int:
+    """Call cv2.waitKey(1) until budget_ms have passed or a key is pressed; returns that key, else -1.
+
+    The macOS Cocoa backend handles one queued mouse event per waitKey call (each takes about
+    12 ms) and reports the pointer where it is when the event is handled. With one call per slow
+    frame, a click is handled after the pointer has left the handle, so the drag misses."""
+    deadline = time.perf_counter() + budget_ms / 1000
+    while True:
+        key = cv2.waitKey(1)
+        if key != -1 or time.perf_counter() >= deadline:
+            return key
 
 
 class StageTimer:
@@ -89,6 +111,15 @@ class StageTimer:
 
     def summary(self) -> str:
         return ", ".join(f"{stage} {ms:.1f} ms" for stage, ms in self.averages().items())
+
+
+def fps_note(measured: float, expected: float) -> str:
+    """The quit summary's warning when the measured fps is more than a fifth away from FPS in
+    settings.py, which turns every *_SECONDS setting into frames; "" when they are close enough."""
+    if abs(measured - expected) <= 0.2 * expected:
+        return ""
+    return (f"measured {measured:.1f} fps, but FPS in settings.py is {expected}: "
+            f"set FPS to about {measured:.1f} so the *_SECONDS settings take the time they say")
 
 
 def list_cameras():
@@ -168,7 +199,7 @@ def main():
         detector = Detector(args.model, args.imgsz, args.conf, args.device)
         live = live_model(settings.PROJECT_ROOT / settings.LIVE_MODEL_DIR)
         is_live = Path(args.model).resolve() == (settings.PROJECT_ROOT / settings.MODEL_PATH).resolve()
-        print(f"model {args.model}" + (f" (live model: {live})" if live and is_live else ""))
+        print(f"model {args.model} on {detector.device_used}" + (f" (live model: {live})" if live and is_live else ""))
     else:
         print(f"no model at {args.model}: running in capture mode (press s to save frames)")
 
@@ -202,6 +233,8 @@ def main():
         timer = StageTimer()
         t_last, fps = time.time(), 0.0
         signal_lost = False
+        dets, frames_processed = [], 0
+        run_start = time.perf_counter()
         try:
             while True:
                 start = time.perf_counter()
@@ -226,15 +259,16 @@ def main():
                 start = time.perf_counter()
                 enhanced = enhance(frame, reader.preprocess, preprocess_config)
                 timer.lap("preprocess", start)
-                dets = []
                 if no_signal:
+                    dets = []
                     time.sleep(0.01)
                 else:
-                    if detector:
+                    if detector and (not reader.editor.active or frames_processed % EDIT_DETECT_EVERY == 0):
                         start = time.perf_counter()
                         dets = detector(enhanced)
                         timer.lap("detect", start)
                     reader.process(frame, dets)
+                    frames_processed += 1
 
                 now = time.time()
                 fps = 0.9 * fps + 0.1 / max(now - t_last, 1e-6)
@@ -247,10 +281,12 @@ def main():
                 shown = enhanced if reader.show_enhanced else frame
                 showing_raw = shown is not enhanced  # the window shows something other than what was detected
                 cv2.imshow(WINDOW, hud.draw(shown, dets, tracker.round, fps, reader.layout, reader.count,
+                                            bound=tracker.bound,
                                             capture_mode=detector is None, editor=reader.editor, dealt=dealt,
                                             stage_ms=timer.smoothed, no_signal=no_signal,
                                             preprocess=reader.preprocess, showing_raw=showing_raw))
-                key = cv2.waitKey(1) & 0xFF
+                key = wait_key_draining_mouse(EDIT_MOUSE_MS) if reader.editor.active else cv2.waitKey(1)
+                key &= 0xFF
                 timer.lap("draw", start)
                 if key == ord("c") and not cam.is_file:  # read.py owns the camera, so C is handled here
                     reconnect(cam, hud, args.source)
@@ -263,6 +299,10 @@ def main():
             print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
             print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
             print(f"average time per frame: {timer.summary()}")
+            run_seconds = time.perf_counter() - run_start
+            note = fps_note(frames_processed / run_seconds, settings.FPS) if frames_processed else ""
+            if note:
+                print(note)
 
 
 if __name__ == "__main__":

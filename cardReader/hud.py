@@ -4,24 +4,28 @@
       edit mode (key E) every corner gets a white handle, every edge a '+' to add
       a corner, the zone last clicked is tinted, and the bottom of the sidebar
       explains the mouse controls.
-    * every corner index the detector sees: thin grey box until the tracker
-      confirms the card, then a box in the card's colour
+    * every corner index the detector sees: a box in the card's colour when the
+      tracker has matched it to a confirmed card, even on a frame that misreads
+      its name; otherwise a thin grey box, not matched to a confirmed card yet
+      (key G hides these)
     * a tag on each card of the round: its placement number in a yellow badge,
       then its name. A hidden (covered) card keeps a grey tag where it was last seen.
     * a sidebar to the right of the video, so nothing covers the table. It
-      starts with the Hi-Lo count: the true count as the headline, a word on
-      whom it favours, then the running count and cards left (e.g. 38/52).
-      Below that it shows one of two views (key V switches):
-        - counter: the deck as a grid, one row per rank (2 to A, shaded by
+      starts with a tab strip naming the two views, CARDS LEFT and GAME, with
+      the current one highlighted and a [V] hint (key V switches). Below it is
+      the Hi-Lo count: the true count as the headline, a word on whom it
+      favours, then the running count and cards left (e.g. 38/52). Then the
+      current view:
+        - Cards Left: the deck as a grid, one row per rank (2 to A, shaded by
           Hi-Lo group) and one column per suit. A card counted this round has a
           yellow slash (pending), one counted in an earlier round is crossed
           off (locked), and a name reported as a duplicate this shoe is ringed
           in magenta. Each row ends with how many of that rank are left, and
           a line below gives the face-down cards never revealed.
-        - seats: each seat's total and its cards in placement order
+        - Game: each seat's total and its cards in placement order
     * a legend at the bottom of the sidebar explaining the colours of the
-      current view, then every key (key L hides it). In the counter view it is
-      left out when it does not fit below the grid.
+      current view, then every key (key L hides it). In the Cards Left view it
+      is left out when it does not fit below the grid.
     * bottom bar: the main keys, fps, detect milliseconds, the preprocess mode
       and its milliseconds ("showing raw" when the raw camera frame is shown,
       key Shift+V), and short messages such as "new round"
@@ -60,18 +64,19 @@ DUPLICATE = (255, 60, 255)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 KEYS = "[V] view    [L] legend/keys    [R] round    [Shift+R] shoe    [Q] quit"  # the bottom bar
 KEY_LIST = [("1-7", "players"), ("E", "edit zones"), ("V", "switch view"), ("L", "hide legend"),
-            ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"), ("C", "reconnect camera"),
-            ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("Q", "quit")]
+            ("G", "grey boxes"), ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"),
+            ("C", "reconnect camera"), ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("Q", "quit")]
 NO_SIGNAL = "no signal: press C to reconnect"
+VIEWS = {"cards_left": "Cards Left", "game": "Game"}  # sidebar view id -> name, in tab order
 # Legend entries per view: (swatch kind, colour, meaning). Kinds are drawn by Hud._swatch.
-SEATS_LEGEND = [("box", RED, "hearts, diamonds"), ("box", WHITE, "spades, clubs"),
-                ("box", AMBER, "face down"), ("thin", GREY, "not confirmed yet"),
+GAME_LEGEND = [("box", RED, "hearts, diamonds"), ("box", WHITE, "spades, clubs"),
+                ("box", AMBER, "face down"), ("thin", GREY, "not matched to a card"),
                 ("badge", BADGE, "placement number"), ("badge", DIM, "covered, still counted"),
                 ("line", AMBER, "dealer zone"), ("line", SEAT_LINE, "player zone")]
-COUNTER_LEGEND = [("pending", BADGE, "pending: this round"), ("locked", WHITE, "locked: earlier round"),
-                  ("duplicate", DUPLICATE, "duplicate: misread?"), ("shade", GREEN, "2 to 6: +1"),
-                  ("shade", GREY, "7 to 9: 0"), ("shade", RED, "10 to A: -1")]
-GRID_RANKS = RANKS[1:] + RANKS[:1]  # 2 to 10, J, Q, K, A: the rows of the counter grid
+CARDS_LEFT_LEGEND = [("pending", BADGE, "pending: this round"), ("locked", WHITE, "locked: earlier round"),
+                     ("duplicate", DUPLICATE, "duplicate: misread?"), ("shade", GREEN, "2 to 6: +1"),
+                     ("shade", GREY, "7 to 9: 0"), ("shade", RED, "10 to A: -1")]
+GRID_RANKS = RANKS[1:] + RANKS[:1]  # 2 to 10, J, Q, K, A: the rows of the Cards Left grid
 HI_LO_SHADE = {1: GREEN, 0: GREY, -1: RED}
 SHADE_ALPHA = 0.2  # how strongly a Hi-Lo row is tinted
 # Suit symbols built from filled shapes, since OpenCV text has no suit glyphs. Units are the
@@ -87,7 +92,7 @@ SUIT_SHAPES = {
 
 @dataclass
 class DealtCards:
-    """What the counter grid shows. Names are face labels such as "10H"."""
+    """What the Cards Left grid shows. Names are face labels such as "10H"."""
     locked: set[str] = field(default_factory=set)      # counted before this round began
     pending: set[str] = field(default_factory=set)     # counted this round
     duplicates: set[str] = field(default_factory=set)  # reported as a duplicate this shoe
@@ -132,6 +137,11 @@ def status_text(fps: float, stage_ms: dict[str, float] | None, capture_mode: boo
     return status
 
 
+def view_tabs(view: str) -> list[tuple[str, bool]]:
+    """The sidebar's tab labels in order, each with whether it is the current view."""
+    return [(name.upper(), view_id == view) for view_id, name in VIEWS.items()]
+
+
 def seat_title(name: str) -> str:
     return "DEALER" if name == DEALER else name
 
@@ -150,7 +160,8 @@ class Hud:
         self._message = ""
         self._message_until = 0.0
         self.show_legend = True
-        self.view = "counter"  # "counter" or "seats": what the sidebar shows below the count
+        self.show_unmatched = True  # False: thin grey boxes are not drawn (key G)
+        self.view = "cards_left"  # a key of VIEWS: what the sidebar shows below the count
 
     def flash(self, text: str, seconds: float = 1.5):
         """Show a short message above the bottom bar."""
@@ -160,12 +171,17 @@ class Hud:
              layout: SeatLayout, count: ShoeCount, capture_mode: bool = False,
              editor: ZoneEditor | None = None, dealt: DealtCards | None = None,
              stage_ms: dict[str, float] | None = None, no_signal: bool = False,
-             preprocess: str = "off", showing_raw: bool = False) -> np.ndarray:
+             preprocess: str = "off", showing_raw: bool = False,
+             bound: list[Card | None] | None = None) -> np.ndarray:
         """Return the frame with the overlay, plus the sidebar on its right. The frame is not changed.
 
         cards: every card of the round, hidden ones included, in placement order.
+        bound: per detection, in the order of dets, the confirmed card it belongs to or None
+        (CardTracker.bound). A bound box takes its card's colour even when this frame misreads
+        its name; any other box is thin grey, drawn only while show_unmatched is set. A
+        detection without an entry, or every detection when bound is None, is not bound.
         editor: the zone editor, drawn with handles while it is active.
-        dealt: the shoe's cards for the counter view's grid (None: an empty grid).
+        dealt: the shoe's cards for the Cards Left view's grid (None: an empty grid).
         stage_ms: smoothed milliseconds per stage; "detect" and "preprocess" go in the bottom bar.
         no_signal: the camera has stopped sending frames; says so over the video.
         preprocess, showing_raw: the preprocess mode, and whether `frame` is the raw camera
@@ -179,12 +195,13 @@ class Hud:
 
         editing = editor is not None and editor.active
         self._seat_outlines(view, layout, editor if editing else None)
-        visible = {c.label for c in cards if not c.hidden}
-        for det in dets:
+        bound = bound or []
+        for i, det in enumerate(dets):
+            card = bound[i] if i < len(bound) else None
             x1, y1, x2, y2 = map(int, det.box)
-            if det.label in visible:
-                cv2.rectangle(view, (x1, y1), (x2, y2), card_colour(det.label), self.thick)
-            else:
+            if card is not None:
+                cv2.rectangle(view, (x1, y1), (x2, y2), card_colour(card.label), self.thick)
+            elif self.show_unmatched:
                 cv2.rectangle(view, (x1, y1), (x2, y2), GREY, 1)
 
         placed: list[tuple] = []
@@ -195,11 +212,11 @@ class Hud:
             self._no_signal(view)
 
         side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
-        y = self._count_block(side, count)
+        y = self._count_block(side, count, self._view_tabs(side))
         bottom = side.shape[0] - self._bar_height()
         if editing:
             bottom = self._edit_help(side, bottom)
-        if self.view == "counter":
+        if self.view == "cards_left":
             grid_bottom = self._deck_grid(side, dealt or DealtCards(), y, bottom)
             if self.show_legend:
                 self._legend(side, bottom, ceiling=grid_bottom)
@@ -258,7 +275,7 @@ class Hud:
             self._text(img, title, (x, y), 0.6, colour)
         if editor is None:
             return
-        r = max(6, editor.handle_radius() * 2 // 3)
+        r = max(6, editor.handle_radius() // 2)  # drawn smaller than the grab area
         for seat in layout.seats:
             for cx, cy in ZoneEditor.midpoints(seat.polygon):  # '+': drag to add a corner
                 plus_r = max(4, r * 2 // 3)
@@ -290,7 +307,7 @@ class Hud:
     def _legend(self, side, bottom: int, ceiling: int = 0) -> int:
         """The current view's colours, then every key, each in two columns above `bottom`.
         Returns its top. If it would reach above `ceiling`, nothing is drawn and `bottom` is returned."""
-        entries = COUNTER_LEGEND if self.view == "counter" else SEATS_LEGEND
+        entries = CARDS_LEFT_LEGEND if self.view == "cards_left" else GAME_LEGEND
         scale = 0.45
         _, th, _ = self._size("Ag", scale)
         row_h = max(th, self.r) + self.pad
@@ -342,16 +359,40 @@ class Hud:
         else:  # "pending" or "locked": a grid cell in that state
             self._cell_mark(side, kind, False, x, y1, w, y2 - y1)
 
-    def _count_block(self, side, count: ShoeCount) -> int:
-        """The Hi-Lo count at the top of the sidebar: the true count as the headline with whom it
-        favours, then the running count and cards left. Returns the y below it."""
+    def _view_tabs(self, side) -> int:
+        """The tab strip at the top of the sidebar: one tab per view, the current one filled
+        in yellow, then a [V] hint. Labels shrink to fit a narrow sidebar. Returns the y below it."""
+        tabs = view_tabs(self.view)
+        hint = "[V]"
+        hint_w, th, _ = self._size(hint, 0.5)
+        side_w = side.shape[1]
+        tab_w = (side_w - 3 * self.pad - hint_w) // len(tabs)
+        widest = max(self._size(label, 0.5)[0] for label, _ in tabs)
+        scale = 0.5 * min(1.0, (tab_w - self.pad) / widest)
+        top, bottom = self.pad, 3 * self.pad + th
+        text_y = top + self.pad + th
+        for i, (label, active) in enumerate(tabs):
+            x1 = self.pad + i * tab_w
+            x2 = x1 + tab_w - self.pad // 2
+            if active:
+                cv2.rectangle(side, (x1, top), (x2, bottom), BADGE, -1)
+            else:
+                cv2.rectangle(side, (x1, top), (x2, bottom), DIM, 1)
+            label_w = self._size(label, scale)[0]
+            self._text(side, label, (x1 + (x2 - x1 - label_w) // 2, text_y), scale, (0, 0, 0) if active else GREY)
+        self._text(side, hint, (side_w - self.pad - hint_w, text_y), 0.5, DIM)
+        return bottom
+
+    def _count_block(self, side, count: ShoeCount, top: int) -> int:
+        """The Hi-Lo count below `top`: the true count as the headline with whom it favours,
+        then the running count and cards left. Returns the y below it."""
         cue, colour = count_cue(count.true)
         title_h = self._size("TRUE COUNT", 0.5)[1]
         headline = f"{count.true:+.1f}"
         headline_w, headline_h, _ = self._size(headline, 1.5)
         small_h = self._size("Ag", 0.55)[1]
 
-        y = 2 * self.pad + title_h
+        y = top + 2 * self.pad + title_h
         self._text(side, "TRUE COUNT", (self.pad, y), 0.5, GREY)
         y += self.pad + headline_h
         self._text(side, headline, (self.pad, y), 1.5, colour)
@@ -368,7 +409,7 @@ class Hud:
         return y
 
     def _deck_grid(self, side, dealt: DealtCards, y: int, bottom: int) -> int:
-        """The counter view between y and bottom: a suit header, one row per rank, then the
+        """The Cards Left view between y and bottom: a suit header, one row per rank, then the
         face-down cards never revealed. Rows shrink to fit. Returns the y below it."""
         side_w = side.shape[1]
         lines = len(GRID_RANKS) + 2  # suit header, ranks, unrevealed line
@@ -411,7 +452,7 @@ class Hud:
         return end + row_h
 
     def _cell_mark(self, side, state: str, duplicate: bool, x: int, y: int, w: int, h: int):
-        """One card of the counter grid in the w x h cell at (x, y). state is a DealtCards.state:
+        """One card of the Cards Left grid in the w x h cell at (x, y). state is a DealtCards.state:
         plain if unseen, a slash if pending, crossed off if locked. A duplicate is ringed in DUPLICATE."""
         inset = max(1, h // 8)
         x1, y1, x2, y2 = x + inset, y + inset, x + w - inset, y + h - inset

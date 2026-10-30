@@ -61,7 +61,8 @@ be reviewed and reverted on its own.
 - Boxes go around the corner index of a face-up card and around the whole
   card for `BACK`.
 - Distances in `settings.py` are fractions of the frame width, times in
-  frames. `TrackerConfig.from_settings` converts them.
+  seconds at `FPS`. `TrackerConfig.from_settings` converts them to pixels and
+  frames.
 - No new dependency without a line in the PR saying why. Add it with
   `uv add <package>` so `pyproject.toml` and `uv.lock` change together.
 

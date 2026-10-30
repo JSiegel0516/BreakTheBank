@@ -12,8 +12,9 @@ how to preprocess each frame for the detector and which frame to show.
 
 Events are printed as they happen and appended to the CSV log as
     time, frame, event, order, card, seat, running_count, x, y
-A duplicate event (a name already counted in an earlier round) is logged like
-the rest, with the card's seat; it does not change the count.
+A duplicate event (a name already counted in an earlier round) and a removed
+event (a card hidden too long) are logged like the rest, with the card's seat
+where it was last seen; neither changes the count.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ import numpy as np
 
 from .blackjack import ShoeCount, shoe_count
 from .cards import Detection, Event
-from .hud import Hud
+from .hud import VIEWS, Hud
 from .preprocess import MODES
 from .seats import MAX_PLAYERS, SeatLayout, ZoneEditor
 from .table import Table
@@ -95,9 +96,12 @@ class Reader:
             self.toggle_edit()
         elif k == ord("l"):
             self.hud.show_legend = not self.hud.show_legend
+        elif k == ord("g"):
+            self.hud.show_unmatched = not self.hud.show_unmatched
+            self.hud.flash("unmatched boxes shown" if self.hud.show_unmatched else "unmatched boxes hidden")
         elif k == ord("v"):
-            self.hud.view = "seats" if self.hud.view == "counter" else "counter"
-            self.hud.flash(f"{self.hud.view} view")
+            self.hud.view = "game" if self.hud.view == "cards_left" else "cards_left"
+            self.hud.flash(f"{VIEWS[self.hud.view]} view")
         elif k == ord("r"):
             self.tracker.new_round()
             print("--- new round ---")

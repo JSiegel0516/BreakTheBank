@@ -94,6 +94,79 @@ def test_card_returning_keeps_its_number_and_is_not_recounted():
     assert tr.shoe_seen == ["KH", "5C", "9D"]                 # KH counted once
 
 
+def test_card_hidden_too_long_is_removed_but_stays_counted():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=5)
+    run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
+    ev = run(tr, [det("5C", 300, 200)], 3 + 4)               # hidden after 3 misses, 4 frames short of expiry
+    assert [e.kind for e in ev] == ["hidden"]
+    ev = tr.update([det("5C", 300, 200)])
+    assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("removed", 1, "KH")]
+    assert [(c.order, c.label) for c in tr.round] == [(2, "5C")]
+    assert tr.shoe_seen == ["KH", "5C"] and shoe_count(tr.shoe_seen).running == 0
+
+
+def test_card_returning_before_the_expiry_keeps_its_number():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=8)
+    run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
+    run(tr, [det("5C", 300, 200)], 3 + 6)
+    ev = run(tr, [det("5C", 300, 200), det("KH", 50, 200)], 3)  # back on the expiry frame
+    assert [(e.kind, e.card.order) for e in ev] == [("returned", 1)]
+
+
+def test_card_placed_after_a_removal_gets_a_fresh_number():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=2)
+    run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
+    run(tr, [det("5C", 300, 200)], 10)                       # KH removed
+    ev = run(tr, [det("5C", 300, 200), det("9D", 500, 200)], 3)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 3)]
+    assert [c.order for c in tr.round] == [2, 3]
+
+
+def test_card_that_comes_back_after_removal_is_placed_again_but_not_recounted():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=2)
+    run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
+    run(tr, [det("5C", 300, 200)], 10)                       # KH removed
+    ev = run(tr, [det("5C", 300, 200), det("KH", 50, 200)], 3)
+    assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("placed", 3, "KH")]
+    assert tr.shoe_seen == ["KH", "5C"]
+
+
+def test_hidden_frames_zero_removes_a_card_as_soon_as_it_is_hidden():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=0)
+    run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
+    ev = run(tr, [det("5C", 300, 200)], 3)
+    assert [(e.kind, e.frame) for e in ev] == [("hidden", tr.frame), ("removed", tr.frame)]
+    assert [c.label for c in tr.round] == ["5C"]
+
+
+def test_round_ends_after_every_card_was_removed():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, hidden_frames=2)
+    run(tr, [det("KH", 50, 200), det("4S", 300, 200)], 3)
+    ev = run(tr, [], 3 + 9)                 # hidden after 3 frames, removed 2 later, round over 9 after hidden
+    assert [e.kind for e in ev] == ["hidden", "hidden", "removed", "removed", "round_over"]
+    assert tr.round == []
+    run(tr, [det("8C", 50, 200)], 3)
+    assert [(c.order, c.label) for c in tr.table()] == [(1, "8C")]  # numbering restarts
+
+
+def test_removed_face_down_card_stays_off_cards_left():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=2)
+    run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
+    run(tr, [det("9S", 300, 100)], 10)
+    assert [c.label for c in tr.round] == ["9S"]
+    assert tr.shoe_unrevealed == 1
+
+
+def test_removed_card_hands_its_count_to_a_card_sharing_its_name():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, label_window=10, round_end_frames=100,
+                     hidden_frames=2)
+    run(tr, [det("9H", 50, 200), det("6H", 300, 200)], 3)
+    run(tr, [det("9H", 50, 200), det("9H", 300, 200)], 8)   # the second card is renamed to 9H too
+    run(tr, [det("9H", 300, 200)], 10)                      # the first is picked up
+    assert [(c.order, c.label, c.counted) for c in tr.round] == [(2, "9H", True)]
+    assert tr.shoe_seen == ["9H"]
+
+
 def test_face_card_returning_elsewhere_is_still_the_same_card():
     tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100)
     run(tr, [det("QS", 50, 200), det("2D", 300, 200)], 3)
@@ -431,7 +504,33 @@ def test_config_object_and_keyword_overrides_agree():
     assert (a.cfg.confirm_frames, a.cfg.match_dist, a.cfg.drop_frames) == (3, 10, 7)
 
     class S:  # the fields settings.py provides
-        CONFIRM_FRAMES, CONFIRM_WINDOW, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 15, 20, 0.8, 0.7
-        STILL_DISTANCE, DROP_FRAMES, MATCH_DISTANCE, ROUND_END_FRAMES, LABEL_WINDOW = 0.01, 30, 0.05, 90, 45
+        FPS, CONFIRM_SECONDS, CONFIRM_WINDOW_SECONDS, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 10, 0.01, 1.0, 0.8, 0.7
+        STILL_DISTANCE, DROP_SECONDS, MATCH_DISTANCE, ROUND_END_SECONDS = 0.01, 3.0, 0.05, 9.0
+        LABEL_WINDOW_SECONDS, HIDDEN_SECONDS = 4.5, 0
     cfg = TrackerConfig.from_settings(S, 2000)
     assert (cfg.still_distance, cfg.match_dist, cfg.label_window) == (20.0, 100.0, 45)
+    # CONFIRM_SECONDS rounds to 0 frames and is raised to 1
+    assert (cfg.confirm_frames, cfg.confirm_window, cfg.drop_frames, cfg.round_end_frames) == (1, 10, 30, 90)
+    assert cfg.hidden_frames == 0                        # 0 s: removed as soon as hidden, not raised to 1 frame
+
+
+def test_shipped_settings_convert_to_frames_at_the_shipped_fps():
+    import settings
+    from cardReader.tracker import TrackerConfig
+    cfg = TrackerConfig.from_settings(settings, 1920)
+    assert (cfg.confirm_frames, cfg.confirm_window) == (6, 9)
+    assert (cfg.drop_frames, cfg.label_window, cfg.round_end_frames, cfg.hidden_frames) == (12, 19, 37, 62)
+
+
+def test_bound_gives_each_detection_its_confirmed_card_even_when_misread():
+    tr = CardTracker(confirm_frames=3, drop_frames=5, match_dist=20)
+    tr.update([det("6H", 100, 100)])
+    assert tr.bound == [None]                            # seen once: not confirmed yet
+    run(tr, [det("6H", 100, 100)], 2)
+    card = tr.round[0]
+    assert tr.bound == [card]
+    tr.update([det("9H", 101, 100), det("KS", 400, 300)])  # a one-frame misread, and a new corner elsewhere
+    assert tr.bound[0] is card and card.label == "6H"
+    assert tr.bound[1] is None
+    tr.update([])
+    assert tr.bound == []

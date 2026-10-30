@@ -28,9 +28,14 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
    clahe, auto) and `Shift+V` to compare with the raw camera frame. See
    [Dim or washed-out tables](docs/reading.md#dim-or-washed-out-tables); glare that turns a
    card's index pure white cannot be fixed in software.
-5. The sidebar starts in the counter view: a rank by suit grid that crosses off each card
-   dealt this shoe. Press `V` to switch to each seat's hand, and `L` to hide the legend
-   and key list. All keys are in [docs/reading.md](docs/reading.md#keys).
+5. The tabs at the top of the sidebar name its two views, CARDS LEFT and GAME, with the
+   current one highlighted. It starts in the Cards Left view: a rank by suit grid that
+   crosses off each card dealt this shoe. Press `V` for the Game view, each seat's hand,
+   and `L` to hide the legend and key list. All keys are in [docs/reading.md](docs/reading.md#keys).
+6. A covered card turns grey and stays in its hand. After 5 seconds out of sight
+   (`HIDDEN_SECONDS` in `settings.py`) it counts as picked up: it leaves its hand but stays
+   in the count. Every time in `settings.py` is in seconds; set `FPS` to the speed your
+   reader runs at (see [Tuning the reader](docs/reading.md#tuning-the-reader)).
 
 ## How it works
 

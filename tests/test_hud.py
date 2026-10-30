@@ -3,7 +3,7 @@ import pytest
 
 from cardReader.blackjack import shoe_count
 from cardReader.cards import Card, Detection
-from cardReader.hud import KEY_LIST, KEYS, SIDEBAR, DealtCards, Hud, count_cue, status_text
+from cardReader.hud import GREY, KEY_LIST, KEYS, RED, SIDEBAR, DealtCards, Hud, count_cue, status_text, view_tabs
 from cardReader.seats import SeatLayout, ZoneEditor
 
 
@@ -26,10 +26,29 @@ def test_draw_returns_video_plus_sidebar_with_hands_tags_and_edit_handles():
     assert frame.sum() == 0                          # the input frame is not drawn on
 
 
+def test_boxes_take_the_colour_of_their_bound_card_and_g_hides_the_unmatched():
+    W, H = 1280, 720
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    six = Card(1, "6H", 120, 130, 1)
+    misread = [Detection("9H", 0.9, 120, 130, (100, 100, 140, 160))]  # the 6H's corner, read as 9H this frame
+    edge = (130, 100)                                                   # a pixel on the box's left edge
+    hud = Hud()
+    empty = hud.draw(frame, [], [six], 30.0, layout, shoe_count(["6H"]))
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[six])[edge]) == RED
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[None])[edge]) == GREY
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]))[edge]) == GREY
+    hud.show_unmatched = False
+    hidden = hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[None])
+    assert (hidden[edge] == empty[edge]).all()
+    assert tuple(hud.draw(frame, misread, [six], 30.0, layout, shoe_count(["6H"]), bound=[six])[edge]) == RED
+    assert ("G", "grey boxes") in KEY_LIST
+
+
 @pytest.mark.parametrize("legend", [True, False])
 @pytest.mark.parametrize("editing", [False, True])
-@pytest.mark.parametrize("view", ["counter", "seats"])
-@pytest.mark.parametrize(("W", "H"), [(640, 360), (1280, 720), (1920, 1080)])
+@pytest.mark.parametrize("view", ["cards_left", "game"])
+@pytest.mark.parametrize(("W", "H"), [(640, 360), (1280, 720), (1920, 1080), (3840, 2160)])
 def test_both_views_draw_pending_locked_and_duplicate_cards_at_every_size(W, H, view, editing, legend):
     layout = SeatLayout(3, W, H)
     p1 = layout.seats[1].polygon.mean(axis=0)
@@ -46,22 +65,41 @@ def test_both_views_draw_pending_locked_and_duplicate_cards_at_every_size(W, H, 
     assert frame.sum() == 0
 
 
-def test_counter_grid_shows_the_dealt_cards():
+def test_cards_left_grid_shows_the_dealt_cards():
     W, H = 1280, 720
     layout = SeatLayout(3, W, H)
     frame = np.zeros((H, W, 3), np.uint8)
     hud = Hud()
-    assert hud.view == "counter"
+    assert hud.view == "cards_left"
     empty = hud.draw(frame, [], [], 30.0, layout, shoe_count([]))
     dealt = hud.draw(frame, [], [], 30.0, layout, shoe_count([]), dealt=DealtCards(locked={"5D"}))
     assert (empty[:, W:] != dealt[:, W:]).any()
-    hud.view = "seats"
-    seats = hud.draw(frame, [], [], 30.0, layout, shoe_count([]), dealt=DealtCards(locked={"5D"}))
-    assert (seats[:, W:] != dealt[:, W:]).any()
-    assert (seats[:, :W] == dealt[:, :W]).all()        # the video side is the same in both views
+    hud.view = "game"
+    game = hud.draw(frame, [], [], 30.0, layout, shoe_count([]), dealt=DealtCards(locked={"5D"}))
+    assert (game[:, W:] != dealt[:, W:]).any()
+    assert (game[:, :W] == dealt[:, :W]).all()         # the video side is the same in both views
 
 
-@pytest.mark.parametrize("view", ["counter", "seats"])
+def test_view_tabs_name_both_views_and_mark_the_current_one():
+    assert view_tabs("cards_left") == [("CARDS LEFT", True), ("GAME", False)]
+    assert view_tabs("game") == [("CARDS LEFT", False), ("GAME", True)]
+
+
+@pytest.mark.parametrize(("W", "H"), [(1280, 720), (3840, 2160)])
+def test_the_header_shows_which_view_is_on(W, H):
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    hud = Hud()
+    cards_left = hud.draw(frame, [], [], 30.0, layout, shoe_count([]))
+    hud.view = "game"
+    game = hud.draw(frame, [], [], 30.0, layout, shoe_count([]))
+    tab_rows = slice(0, round(40 * hud.s))             # the tab strip, above the count block
+    assert (cards_left[tab_rows, W:] != game[tab_rows, W:]).any()
+    count_rows = slice(round(50 * hud.s), round(120 * hud.s))
+    assert (cards_left[count_rows, W:] == game[count_rows, W:]).all()  # the count below is the same
+
+
+@pytest.mark.parametrize("view", ["cards_left", "game"])
 def test_each_view_has_its_own_legend_and_l_hides_it(view):
     W, H = 1280, 720
     layout = SeatLayout(3, W, H)
@@ -73,7 +111,7 @@ def test_each_view_has_its_own_legend_and_l_hides_it(view):
     hidden = hud.draw(frame, [], [], 30.0, layout, shoe_count([]))
     assert (shown[:, W:] != hidden[:, W:]).any()
     hud.show_legend = True
-    hud.view = "seats" if view == "counter" else "counter"
+    hud.view = "game" if view == "cards_left" else "cards_left"
     other = hud.draw(frame, [], [], 30.0, layout, shoe_count([]))
     legend_rows = slice(H // 2, H)                     # the legend sits at the bottom of the sidebar
     assert (shown[legend_rows, W:] != other[legend_rows, W:]).any()

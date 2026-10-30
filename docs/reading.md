@@ -10,23 +10,25 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | On screen | Meaning |
 |---|---|
 | Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
-| Sidebar, top | the Hi-Lo true count in large type with whom it favours (`favours player`, `favours dealer`, `neutral`), then the running count and cards left (`38/52`) |
-| Sidebar, below | the counter view or the seats view; `V` switches between them (see below) |
+| Sidebar, top | tabs naming the two views, `CARDS LEFT` and `GAME`: the current one is filled in yellow, and `[V]` beside them is the key that switches (see below) |
+| Sidebar, under the tabs | the Hi-Lo true count in large type with whom it favours (`favours player`, `favours dealer`, `neutral`), then the running count and cards left (`38/52`) |
+| Sidebar, below | the Cards Left view or the Game view (see below) |
 | Yellow badge and name on a card | that card's placement number and name |
-| Grey badge and name | a hidden card: covered right now, but still in the hand and in the count |
-| Coloured boxes | the corner indices of confirmed cards: red for hearts and diamonds, white for spades and clubs, amber for face-down |
-| Thin grey boxes | detections the tracker has not confirmed yet (a card still moving, or a one-frame misread) |
+| Grey badge and name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
+| Coloured boxes | corner indices the tracker has matched to a confirmed card, in that card's colour: red for hearts and diamonds, white for spades and clubs, amber for face-down. A frame that misreads the corner (a 6H read as 9H) keeps the card's colour |
+| Thin grey boxes | detections not matched to a confirmed card: a card not confirmed yet, or a stray box away from every card. `G` hides them |
 | Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
 | Bottom bar | the main keys, frames per second, the milliseconds per frame spent detecting, and the preprocess mode with its milliseconds (`showing raw` when `Shift+V` shows the raw camera frame) |
 | `no signal: press C to reconnect` | the camera has sent no new frame for two seconds (see [Camera disconnects](#camera-disconnects)) |
 
 The number is the placement order within the round: 1 is the first card
-confirmed (seen for `CONFIRM_FRAMES` frames in a row), 2 the next, and so on. A
+confirmed (seen for `CONFIRM_SECONDS`, about half a second), 2 the next, and so on. A
 card that is covered keeps its number and comes back with it.
 
-### Counter view and seats view
+### Cards Left view and Game view
 
-The reader starts in the **counter view**: the whole deck as a grid, with one
+The tabs at the top of the sidebar always show which view is on. The reader
+starts in the **Cards Left view**: the whole deck as a grid, with one
 row per rank (2 to 10, J, Q, K, A) and one column per suit (spades, hearts,
 diamonds, clubs). It shows at a glance which cards have been dealt this shoe:
 
@@ -41,27 +43,29 @@ Rows are tinted by Hi-Lo group and labelled with its value: green for 2 to 6
 (+1), grey for 7 to 9 (0), red for 10 to A (-1). The column on the right gives
 how many cards of that rank are left. The line under the grid counts the
 face-down cards dealt and never turned over. `Shift+R` clears the grid. The
-grid assumes one 52-card deck. In the counter view the grid comes first: when
+grid assumes one 52-card deck. In the Cards Left view the grid comes first: when
 the window is too small for both, the legend is left out.
 
-The **seats view** lists each seat's total (`17`, `soft 18`, `BLACKJACK`,
+The **Game view** lists each seat's total (`17`, `soft 18`, `BLACKJACK`,
 `BUST (24)`, `9 +1 hidden`) and its cards in placement order. Cards outside
 every seat are listed as OTHER. The video, the card tags, and the zone editor
-look the same in both views.
+look the same in both views. A card hidden longer than `HIDDEN_SECONDS` (5 s)
+leaves its seat's hand in the Game view, and its total, but stays in the count
+and in the Cards Left grid (see [Rules the tracker assumes](#rules-the-tracker-assumes)).
 
 ### What the colours mean
 
 The legend at the bottom of the sidebar explains the colours of the current
-view. The counter view's colours are in the table above.
+view. The Cards Left view's colours are in the table above.
 
 | Colour | Where | Meaning |
 |---|---|---|
 | Red box or name | corner index, tags, sidebar | a confirmed heart or diamond (the suit colour, not an error) |
 | White box or name | same | a confirmed spade or club |
 | Amber box or name | same | a confirmed face-down card |
-| Thin grey box | corner index | something detected that has not passed the [confirmation checks](#rules-the-tracker-assumes) yet |
+| Thin grey box | corner index | a detection not matched to a confirmed card: it has not passed the [confirmation checks](#rules-the-tracker-assumes) yet, or it is away from every card (`G` hides these) |
 | Yellow badge | tags, sidebar | the card's placement number |
-| Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand and the count |
+| Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand until it is removed, and in the count |
 | Amber outline | zones | the dealer's zone |
 | Light blue outline | zones | a player's zone |
 | Yellow tint | zones, edit mode | the zone you last clicked |
@@ -75,8 +79,9 @@ The bottom bar lists the main keys; the legend lists them all.
 |---|---|
 | `1` to `7` | number of players; loads your saved layout for that count, or the template |
 | `E` | edit zones with the mouse; press `E` again to save them and lock |
-| `V` | switch the sidebar between the counter view and the seats view |
+| `V` | switch the sidebar between the Cards Left view and the Game view; the tabs and a message name the new one |
 | `L` | show or hide the legend and key list |
+| `G` | show or hide the thin grey boxes, the detections not matched to a confirmed card |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 |
 | `S` | save the current frame to `data/raw/frames/` for labelling |
@@ -107,10 +112,29 @@ count, then the average milliseconds per frame for each stage of the loop:
 average time per frame: read 0.4 ms, preprocess 0.1 ms, detect 31.2 ms, draw 6.8 ms
 ```
 
+When the frames per second averaged over the run are more than a fifth away
+from `FPS` in `settings.py`, a last line gives both:
+
+```
+measured 22.3 fps, but FPS in settings.py is 12.4: set FPS to about 22.3 so the *_SECONDS settings take the time they say
+```
+
+The tracker's times are set in seconds and turned into frames at `FPS`, so a
+wrong `FPS` makes every one of them run fast or slow (see [Tuning the reader](#tuning-the-reader)).
+
 `read` is taking the newest camera frame, `preprocess` the contrast help (see
 [Dim or washed-out tables](#dim-or-washed-out-tables)), `detect` the model, and
 `draw` the overlay and the window. The bottom bar shows the same detect and
 preprocess times, smoothed, while it runs.
+
+At start-up the model line names the device the detector runs on, as in
+`model models/cards/weights/best.pt on mps`: `mps` (Apple GPU), `cuda` (NVIDIA
+GPU), or `cpu`. `cpu` on a Mac with Apple silicon makes detect several times
+slower; try `--device mps`.
+
+A `removed` line means a hidden card stayed out of sight long enough to count
+as picked up (see [Rules the tracker assumes](#rules-the-tracker-assumes)). It
+leaves its hand; the count is not changed.
 
 A `duplicate` line means a face card was placed (or renamed) under a name already
 counted this shoe in an earlier round. One deck holds one of each card, so it is
@@ -249,6 +273,10 @@ each edge:
 | drag inside a zone | moves the whole zone, keeping its shape |
 | right-click inside a zone | resets it to the template shape, removing added corners |
 
+A click grabs the nearest handle within reach, which is a little wider than the
+drawn handle. A drag past the frame edge stops at the edge; a handle left on the
+right or bottom edge can be grabbed from just outside the video.
+
 Press `E` again to save and lock. Layouts are saved to `data/seats.json`, **one
 per player count**, and work at any camera resolution:
 
@@ -260,6 +288,8 @@ per player count**, and work at any camera resolution:
 - Delete `data/seats.json` to forget every saved layout.
 
 Cards keep being read while you edit, and each card's seat follows the zones as you move them.
+While editing, the detector runs on one frame in three (`EDIT_DETECT_EVERY` in
+`read.py`), so the window keeps handling the mouse even when detection is slow.
 
 **Hands.** Each seat's cards make one hand. Aces count 11 unless that busts,
 then 1. Face-down cards are left out of the total and shown as `+1 hidden`.
@@ -294,29 +324,37 @@ true count means the remaining cards are rich in tens and aces.
 
   | Check | Setting | Stops |
   |---|---|---|
-  | seen in `CONFIRM_FRAMES` of the last `CONFIRM_WINDOW` frames | 15 of 20 | flickering detections adding up over time |
+  | seen for `CONFIRM_SECONDS` of the last `CONFIRM_WINDOW_SECONDS` | 0.5 s of 0.7 s (6 of 9 frames) | flickering detections adding up over time |
   | the rank of its most common name has `CONFIRM_AGREEMENT` of all reads | 80% | a card being counted under a disputed rank |
   | the model's average confidence is at least `CONFIRM_CONFIDENCE` | 0.7 | weak, borderline detections |
   | the corner moved less than `STILL_DISTANCE` over those frames | 0.6% of the width | a card being counted while it is still being slid |
 
-  With the defaults a real card is confirmed about 0.7 s after it settles.
+  With the defaults a real card is confirmed about 0.5 s after it settles.
+  Frames are given at `FPS` = 12.4, the speed the reader runs at.
   Reads split between suits of one rank (10H and 10D) agree, since the suit
   changes neither the hand nor the count; the card shows its most common name.
 - **One deck.** Two sightings of the same face are the same card. This merges a
   card's corner indices, stops a stray misread from adding a duplicate, and means
   a card is counted once per shoe even if it leaves and comes back. A new card
   under a name counted in an earlier round prints as `duplicate`.
-- **Covered is not removed.** A card that disappears for `DROP_FRAMES` frames
-  becomes hidden: it keeps its number, stays in its hand, and is not counted again
-  when it reappears. A face card is recognised by its name anywhere on the table,
-  a face-down card by reappearing near where it was.
+- **Covered is not removed, at first.** A card that disappears for
+  `DROP_SECONDS` (1 s, 12 frames) becomes hidden: it keeps its number, stays in its hand, and is not
+  counted again when it reappears. A face card is recognised by its name anywhere
+  on the table, a face-down card by reappearing near where it was.
+- **Hidden too long is removed.** A card that stays hidden for
+  `HIDDEN_SECONDS` (5 s, 62 frames) was picked up, like a hand the dealer collects mid-round. It
+  leaves the round and its hand, and prints as `removed`, but stays in the count.
+  Its number is never given to another card. If it comes back later it is placed
+  under a new number and is not counted again. A face-down card that comes back
+  this way is taken off cards left a second time. `HIDDEN_SECONDS = 0` removes a
+  card as soon as it is hidden.
 - **The round ends when the table is cleared.** If no card is visible for
-  `ROUND_END_FRAMES` frames (about 3 seconds), the round is over and numbering
-  restarts. A hand briefly covering the whole table does not end it. `R` ends a
-  round immediately.
+  `ROUND_END_SECONDS` (3 s, 37 frames), the round is over and numbering
+  restarts. This holds when every card was removed first. A hand briefly
+  covering the whole table does not end it. `R` ends a round immediately.
 - **Every face-down card is a separate card.**
 - **A card's name can change, its number cannot.** The name is a vote over the
-  last `LABEL_WINDOW` frames of reads (1.5 s). A misread that corrects itself is
+  reads in the last `LABEL_WINDOW_SECONDS` (1.5 s, 19 frames). A misread that corrects itself is
   renamed in place, and prints as `renamed`. The count follows the new name, and
   a name stays counted while any card of the round still holds it.
 - **A hole card turned face up keeps its number.** The face-down box is drawn
@@ -373,32 +411,38 @@ round 1 #3: expected KS, read KH (wrong suit)
 ## Tuning the reader
 
 All of these are in `settings.py`. Change one at a time and watch the effect.
-A value out of range (a fraction above 1, `CONFIRM_FRAMES` larger than
-`CONFIRM_WINDOW`, and so on) stops `read.py` at start-up with a message naming it.
+A value out of range (a fraction above 1, `CONFIRM_SECONDS` larger than
+`CONFIRM_WINDOW_SECONDS`, and so on) stops `read.py` at start-up with a message naming it.
 
 | If you see this | Change | Why |
 |---|---|---|
 | Cards are missed or take a long time to appear | lower `CONFIDENCE` (e.g. 0.6 to 0.5) | the model accepts less certain boxes |
 | Wrong or phantom cards appear | raise `CONFIDENCE` (e.g. 0.6 to 0.7) | only confident boxes count |
 | Phantom or wrong cards get confirmed | raise `CONFIRM_CONFIDENCE` (0.7 to 0.8) or `CONFIRM_AGREEMENT` (0.8 to 0.9) | only consistent, confident reads count |
-| A flickering detection still gets confirmed | raise `CONFIRM_FRAMES` closer to `CONFIRM_WINDOW` (e.g. 18 of 20) | it must be seen almost every frame |
+| A flickering detection still gets confirmed | raise `CONFIRM_SECONDS` closer to `CONFIRM_WINDOW_SECONDS` (e.g. 0.6 s of 0.7 s, 7 of 9 frames) | it must be seen almost every frame |
 | A card is confirmed while still being slid | lower `STILL_DISTANCE` (0.006 to 0.004) | it must be stiller |
 | Real cards never get a number | lower `CONFIRM_CONFIDENCE` (to 0.6) or raise `STILL_DISTANCE` (to 0.01, a shaky camera) | a check is too strict for your setup |
-| Cards take too long to get their number | lower `CONFIRM_FRAMES` and `CONFIRM_WINDOW` together (e.g. 10 of 14) | confirms sooner, with more risk of flicker |
-| A covered card turns grey too quickly | raise `DROP_FRAMES` | it can stay hidden longer before it is marked hidden |
-| The round ends while cards are only covered | raise `ROUND_END_FRAMES` (e.g. 90 to 150) | the table must stay empty longer |
-| The next round starts too slowly after a sweep | lower `ROUND_END_FRAMES` | the empty table is noticed sooner |
+| Cards take too long to get their number | lower `CONFIRM_SECONDS` and `CONFIRM_WINDOW_SECONDS` together (e.g. 0.3 s of 0.5 s, 4 of 6 frames) | confirms sooner, with more risk of flicker |
+| A covered card turns grey too quickly | raise `DROP_SECONDS` (e.g. 1 s to 2 s, 12 to 25 frames) | it can stay out of sight longer before it is marked hidden |
+| A covered card is removed while still on the table | raise `HIDDEN_SECONDS` (e.g. 5 s to 10 s, 62 to 124 frames) | it can stay hidden longer before it counts as picked up |
+| A collected hand stays in the seats too long | lower `HIDDEN_SECONDS` (e.g. 5 s to 3 s, 62 to 37 frames); 0 removes at once | a hidden card counts as picked up sooner |
+| The round ends while cards are only covered | raise `ROUND_END_SECONDS` (e.g. 3 s to 5 s, 37 to 62 frames) | the table must stay empty longer |
+| The next round starts too slowly after a sweep | lower `ROUND_END_SECONDS` | the empty table is noticed sooner |
 | Cards land in the wrong seat | press `1` to `7` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
-| A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW` (45 to 30) | the name vote forgets old reads sooner |
-| A card's name flips back and forth | raise `LABEL_WINDOW` (45 to 90) | one bad second of reads cannot outvote the rest |
+| A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW_SECONDS` (1.5 s to 1 s, 19 to 12 frames) | the name vote forgets old reads sooner |
+| A card's name flips back and forth | raise `LABEL_WINDOW_SECONDS` (1.5 s to 3 s, 19 to 37 frames) | one bad second of reads cannot outvote the rest |
 | Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
 | The video is choppy (low fps) | lower `INPUT_SIZE` (e.g. 1280 to 960) | less work per frame |
 | Cards are missed in a very dim room | `PREPROCESS = "gamma"` (try with `P` first) | the shadows are always lifted, not only below `PREPROCESS_DARK_BELOW` |
 | `auto` switches on too late or too early | `PREPROCESS_DARK_BELOW` or `PREPROCESS_BRIGHT_ABOVE` | the mean grey level (0 to 255) at which it brightens or darkens |
 
-`CONFIRM_FRAMES`, `DROP_FRAMES`, and `ROUND_END_FRAMES` are counted in frames, so at 30 fps, 30
-frames is one second. If the fps is much lower, scale them down to match.
+The `*_SECONDS` settings are turned into frames once, at start-up:
+`max(1, round(seconds * FPS))`, so every one is at least a frame, except
+`HIDDEN_SECONDS = 0`. The frames in brackets above are at `FPS = 12.4`, the
+speed the reader runs at on the development Mac. If your reader runs at another
+speed, set `FPS` to it and every time keeps its meaning; the quit summary prints
+the measured fps when it is more than a fifth away from `FPS`.
 
 ## Troubleshooting
 
@@ -412,13 +456,15 @@ frames is one second. If the fps is much lower, scale them down to match.
 | `no signal: press C to reconnect` | the camera stopped sending frames | reconnect the cable or wake the phone, then press `C` (see [Camera disconnects](#camera-disconnects)) |
 | Bottom bar says CAPTURE MODE | no model at `MODEL_PATH` | check `models/cards/weights/best.pt` exists, or train one |
 | Cards on screen but none get a number | detections too weak, or the camera is too far | see [Tuning the reader](#tuning-the-reader); move the camera closer |
+| Thin grey boxes clutter the table | detections not matched to a confirmed card: cards still settling, or stray boxes | press `G` to hide them; a one-frame misread of a confirmed card's corner keeps the card's colour, not grey |
 | Keys do nothing | the terminal has focus, not the window | click the reader window first |
 | The window close button does not quit | OpenCV reopens the window | press `Q`, or Ctrl+C in the terminal |
 | Training stops with an out-of-memory error | batch too large for the GPU | `BATCH_SIZE = 4` in `settings.py` |
 | Training reports `device=cpu` and is very slow | wrong environment, or no GPU support | activate this project's `.venv`; on a Mac check `python -c "import torch; print(torch.backends.mps.is_available())"` |
 | An export says `skip ... boxes are whole cards` | it is labelled around whole cards, not corners | relabel the corners in Roboflow and export again |
 | Zones in odd places after starting | a layout saved earlier was loaded | press `E`, then right-click inside each zone to reset it, or delete `data/seats.json` |
-| Dragging misses the handles after resizing the window | the window is scaled | make the window its original size, or grab slightly inside the handle |
+| Dragging misses the handles in a resized or Retina window | the window is scaled, so handles are drawn smaller than they are in the video | press on the handle's centre; the grab area is wider than the drawn handle |
+| A drag does nothing, or starts away from where you pressed | on macOS the window reads the pointer when it handles the click, which waits for the detector | hold still for a moment after pressing; if it persists, raise `EDIT_DETECT_EVERY` in `read.py` |
 | `yolo val` results end up in `runs/detect/` | relative `project=` path | use `project="$PWD/models"` as in [Validate a model on its own](training.md#5-validate-a-model-on-its-own) |
 
 ## Known limitations
