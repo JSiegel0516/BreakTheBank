@@ -47,9 +47,13 @@ Memory, so a card is never counted twice:
     number and stays in the round. When it is seen again it is RETURNED, with
     the same number. A face card is recognised by its name anywhere on the
     table; a face-down card by reappearing near where it was.
+  * A card hidden for hidden_frames is REMOVED: it was picked up (a hand the
+    dealer collected mid-round). It leaves the round but stays in the shoe
+    count. Its number is not reused; if it comes back it is placed again
+    under a new number, and its name is not counted again.
   * The round ends when no card has been visible for round_end_frames (the
-    dealer has swept the table), or when new_round() is called. Numbers
-    restart at 1 for the next round.
+    dealer has swept the table, or every card was removed), or when
+    new_round() is called. Numbers restart at 1 for the next round.
   * shoe_seen lists every face card seen since the last shuffle, each once,
     in the order first seen. The Hi-Lo count is computed from it, so a card
     that leaves and comes back, even in a later round, is never counted again.
@@ -72,8 +76,9 @@ Memory, so a card is never counted twice:
   * new_shoe() clears shoe_seen, shoe_unrevealed, and shoe_duplicates after a
     reshuffle.
 
-All thresholds live in TrackerConfig; TrackerConfig.from_settings turns the
-fractions of the frame width in settings.py into pixels.
+All thresholds live in TrackerConfig, in frames and pixels.
+TrackerConfig.from_settings turns the seconds in settings.py into frames at
+settings.FPS, and the fractions of the frame width into pixels.
 """
 from __future__ import annotations
 
@@ -96,15 +101,22 @@ class TrackerConfig:
     match_dist: float = 40.0           # pixels: a detection closer than this to a track is that track
     round_end_frames: int = 90         # frames with no card visible before the round is over
     label_window: int | None = None    # frames the name vote looks back (None: every read ever)
+    hidden_frames: int | None = None   # frames a card may stay hidden before it is removed (None: never)
 
     @classmethod
     def from_settings(cls, s, frame_width: int) -> TrackerConfig:
-        """From settings.py, with distances given as fractions of the frame width."""
-        return cls(confirm_frames=s.CONFIRM_FRAMES, confirm_window=s.CONFIRM_WINDOW,
+        """From settings.py: distances are fractions of the frame width, times are seconds at s.FPS.
+
+        Each time becomes at least one frame, except HIDDEN_SECONDS, where 0 frames
+        removes a card on the frame it is hidden."""
+        def frames(seconds: float) -> int:
+            return max(1, round(seconds * s.FPS))
+
+        return cls(confirm_frames=frames(s.CONFIRM_SECONDS), confirm_window=frames(s.CONFIRM_WINDOW_SECONDS),
                    confirm_agreement=s.CONFIRM_AGREEMENT, confirm_confidence=s.CONFIRM_CONFIDENCE,
-                   still_distance=s.STILL_DISTANCE * frame_width, drop_frames=s.DROP_FRAMES,
-                   match_dist=s.MATCH_DISTANCE * frame_width, round_end_frames=s.ROUND_END_FRAMES,
-                   label_window=s.LABEL_WINDOW)
+                   still_distance=s.STILL_DISTANCE * frame_width, drop_frames=frames(s.DROP_SECONDS),
+                   match_dist=s.MATCH_DISTANCE * frame_width, round_end_frames=frames(s.ROUND_END_SECONDS),
+                   label_window=frames(s.LABEL_WINDOW_SECONDS), hidden_frames=round(s.HIDDEN_SECONDS * s.FPS))
 
 
 @dataclass
@@ -143,6 +155,7 @@ class CardTracker:
         self._seen_before_round = set(self.shoe_seen)
         self.round: list[Card] = []
         self._card_of = {}
+        self._next_order = 1  # placement numbers are never reused within a round, even after a removal
         self._empty_frames = 0
 
     def new_shoe(self):
@@ -167,9 +180,10 @@ class CardTracker:
         """Advance one frame with that frame's detections.
 
         Returns the events this frame caused: placed cards first, then renamed,
-        hidden, and returned cards in placement order, and round_over last. A
-        placed or renamed event is followed by duplicate when the card's name was
-        already counted before this round. round_over also starts a new round.
+        hidden, and returned cards in placement order, then removed cards, and
+        round_over last. A placed or renamed event is followed by duplicate when
+        the card's name was already counted before this round. A removed card
+        has left the round; round_over also starts a new round.
 
         Also sets bound: one entry per detection, in the same order, giving the
         confirmed card its track belongs to, or None while that track is not
@@ -192,7 +206,8 @@ class CardTracker:
             if card is None:
                 card = self._card_for(track)
                 if card is None:
-                    card = Card(len(self.round) + 1, track.label, track.cx, track.cy, self.frame)
+                    card = Card(self._next_order, track.label, track.cx, track.cy, self.frame)
+                    self._next_order += 1
                     self.round.append(card)
                     self._count(card)
                     if card.label == BACK and track.id not in self._dealt_backs:
@@ -209,6 +224,7 @@ class CardTracker:
             if not card_tracks:
                 if not card.hidden:
                     card.hidden = True
+                    card.hidden_since = self.frame
                     events.append(Event("hidden", card, self.frame))
                 continue
             votes = sum((track.votes for track in card_tracks), Counter())
@@ -224,10 +240,14 @@ class CardTracker:
                 card.hidden = False
                 events.append(Event("returned", card, self.frame))
             card.x, card.y = card_tracks[0].cx, card_tracks[0].cy
+        for card in self._expired_cards():
+            self._remove(card)
+            events.append(Event("removed", card, self.frame))
         self.bound = [self._card_of.get(track_id) for track_id in det_tracks]
 
-        all_hidden = bool(self.round) and not tracks_of
-        if all_hidden:
+        # Counts on after every card was removed, so a collected table still ends the round.
+        placed_this_round = self._next_order > 1
+        if placed_this_round and not tracks_of:
             self._empty_frames += 1
         else:
             self._empty_frames = 0
@@ -277,6 +297,25 @@ class CardTracker:
             if dist <= best_dist:
                 best, best_dist = card, dist
         return best
+
+    def _expired_cards(self) -> list[Card]:
+        """Cards of the round hidden for at least hidden_frames, in placement order."""
+        limit = self.cfg.hidden_frames
+        if limit is None:
+            return []
+        return [card for card in self.round if card.hidden and self.frame - card.hidden_since >= limit]
+
+    def _remove(self, card: Card):
+        """Take a card off the table. Its name stays in the shoe count.
+
+        A counted card hands the count to another card of the round with its
+        name, if there is one, so a later rename of that card still corrects it."""
+        self.round.remove(card)
+        if card.counted:
+            card.counted = False
+            holder = next((c for c in self.round if c.label == card.label), None)
+            if holder is not None:
+                holder.counted = True
 
     def _is_duplicate(self, label: str) -> bool:
         """A face name already counted before this round: one deck has only one such card."""

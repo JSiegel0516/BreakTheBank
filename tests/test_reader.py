@@ -54,6 +54,23 @@ def test_duplicate_is_logged_with_its_seat_and_leaves_the_count(tmp_path):
     assert r.count.running == -1
 
 
+def test_removed_card_is_printed_and_logged_and_leaves_the_count(tmp_path, capsys):
+    buf = io.StringIO()
+    tracker = CardTracker(confirm_frames=2, drop_frames=2, match_dist=20, hidden_frames=3)
+    r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               log=csv.writer(buf))
+    seat = r.layout.seats[1].polygon.mean(axis=0)  # inside P1
+    dets = [Detection("KD", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    for _ in range(2 + 3):
+        r.process(frame(), [])                     # hidden, then removed
+    assert r.tracker.round == [] and r.count.running == -1
+    assert "removed  #1   KD (P1)" in capsys.readouterr().out
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert rows[-1][2:7] == ["removed", "1", "KD", "P1", "-1"]
+
+
 def test_face_down_card_takes_one_card_off_cards_left(tmp_path):
     r = make_reader(tmp_path)
     dets = [Detection("BACK", 0.9, 100, 100), Detection("5H", 0.9, 300, 100)]
@@ -98,11 +115,11 @@ def test_round_shoe_legend_view_save_and_quit_keys(tmp_path):
     legend = r.hud.show_legend
     r.handle_key(ord("l"), frame())
     assert r.hud.show_legend is not legend
-    assert r.hud.view == "counter"
+    assert r.hud.view == "cards_left"
     r.handle_key(ord("v"), frame())
-    assert r.hud.view == "seats"
+    assert r.hud.view == "game" and r.hud._message == "Game view"
     r.handle_key(ord("v"), frame())
-    assert r.hud.view == "counter"
+    assert r.hud.view == "cards_left" and r.hud._message == "Cards Left view"
     r.handle_key(ord("s"), frame())
     assert len(list((tmp_path / "frames").glob("frame_*.jpg"))) == 1
     assert r.handle_key(ord("x"), frame()) is True       # unknown keys are ignored
@@ -122,7 +139,7 @@ def test_p_cycles_the_preprocess_modes_and_shift_v_toggles_the_displayed_frame(t
     assert r.show_enhanced is False and r.hud._message == "showing the raw camera frame"
     r.handle_key(ord("V"), frame())
     assert r.show_enhanced is True and r.hud._message == "showing the frame the detector sees"
-    assert r.hud.view == "counter"                       # Shift+V is not V
+    assert r.hud.view == "cards_left"                    # Shift+V is not V
 
 
 def test_g_hides_and_shows_the_unmatched_boxes(tmp_path):

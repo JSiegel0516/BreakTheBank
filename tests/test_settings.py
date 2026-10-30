@@ -19,8 +19,13 @@ def test_shipped_settings_are_valid():
 
 
 @pytest.mark.parametrize("name, value, allowed", [
-    ("CONFIRM_FRAMES", 0, "whole number of 1 or more"),
-    ("DROP_FRAMES", 2.5, "whole number of 1 or more"),
+    ("FPS", 0, "number above 0"),
+    ("CONFIRM_SECONDS", 0, "number above 0"),
+    ("CONFIRM_WINDOW_SECONDS", -0.7, "number above 0"),
+    ("DROP_SECONDS", "1", "number above 0"),
+    ("LABEL_WINDOW_SECONDS", 0, "number above 0"),
+    ("ROUND_END_SECONDS", -3.0, "number above 0"),
+    ("HIDDEN_SECONDS", -1, "number of 0 or more"),
     ("PLAYERS", 8, "whole number from 1 to 7"),
     ("CONFIDENCE", 1.5, "number from 0 to 1"),
     ("CONFIRM_CONFIDENCE", -0.1, "number from 0 to 1"),
@@ -44,9 +49,13 @@ def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, 
     assert allowed in str(error.value)
 
 
-def test_confirm_frames_cannot_exceed_the_window_they_are_counted_in():
-    with pytest.raises(ValueError, match="CONFIRM_FRAMES = 15 must be at most CONFIRM_WINDOW = 10"):
-        settings.validate(shipped(CONFIRM_WINDOW=10))
+def test_confirm_time_cannot_exceed_the_window_it_is_counted_in():
+    with pytest.raises(ValueError, match="CONFIRM_SECONDS = 0.5 must be at most CONFIRM_WINDOW_SECONDS = 0.4"):
+        settings.validate(shipped(CONFIRM_WINDOW_SECONDS=0.4))
+
+
+def test_hidden_seconds_zero_is_allowed():
+    settings.validate(shipped(HIDDEN_SECONDS=0))
 
 
 def test_auto_dark_threshold_must_be_below_the_bright_one():

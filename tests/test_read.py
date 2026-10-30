@@ -9,7 +9,7 @@ import pytest
 import read
 from cardReader.cards import Detection
 from cardReader.hud import Hud
-from read import STAGES, StageTimer, reconnect
+from read import STAGES, StageTimer, fps_note, reconnect
 
 
 class FakeCamera:
@@ -81,6 +81,20 @@ def test_stale_camera_shows_no_signal_feeds_nothing_to_the_tracker_and_c_reconne
     assert f"model {tmp_path / 'x.pt'} on mps" in out
     assert "no signal from source" in out and "reconnected to source" in out
     assert "average time per frame: read" in out and "detect" in out
+
+
+def test_quit_summary_prints_the_measured_fps_when_far_from_the_setting(monkeypatch, capsys, tmp_path):
+    run_reader(monkeypatch, tmp_path, FakeCamera(), [255, 255, ord("q")], lambda frame: [])
+    out = capsys.readouterr().out                           # a fake camera runs far faster than 12.4 fps
+    assert "fps, but FPS in settings.py is 12.4" in out
+
+
+def test_fps_note_is_empty_within_a_fifth_of_the_setting():
+    assert fps_note(12.4, 12.4) == ""
+    assert fps_note(14.8, 12.4) == "" and fps_note(10.0, 12.4) == ""
+    assert fps_note(30.0, 12.4) == ("measured 30.0 fps, but FPS in settings.py is 12.4: "
+                                    "set FPS to about 30.0 so the *_SECONDS settings take the time they say")
+    assert fps_note(9.0, 12.4).startswith("measured 9.0 fps")
 
 
 def test_detector_gets_the_preprocessed_frame_shift_v_shows_the_raw_one_and_s_saves_raw(monkeypatch, tmp_path):

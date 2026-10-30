@@ -8,18 +8,19 @@
 
 Per frame:  camera -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
 
-Every event (placed, hidden, returned, renamed, duplicate, round over) is printed
+Every event (placed, hidden, returned, removed, renamed, duplicate, round over) is printed
 as it happens, and appended to --log as CSV if given. Without a trained model it runs
 in capture mode: it shows the live feed and lets you press 's' to save frames
 for labelling.
 
-The sidebar starts in the counter view, a rank by suit grid of the deck: a card
-counted this round is slashed (pending), one counted in an earlier round is
-crossed off (locked), and a duplicate is ringed. Press v for the seats view,
-each seat's hand.
+Tabs at the top of the sidebar name the two views, CARDS LEFT and GAME, and
+highlight the current one. It starts in the Cards Left view, a rank by suit grid
+of the deck: a card counted this round is slashed (pending), one counted in an
+earlier round is crossed off (locked), and a duplicate is ringed. Press v for
+the Game view, each seat's hand.
 
 Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
-      v counter or seats view | l legend and key list | g show or hide the grey boxes
+      v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
       r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
       Shift+V show the raw camera frame or the preprocessed one | q quit
@@ -34,7 +35,9 @@ Press c to reopen the same source.
 
 The bottom bar shows the fps, the smoothed detect milliseconds, and the preprocess
 mode with its milliseconds. On quit the average milliseconds per stage are printed: read (the newest
-camera frame), preprocess, detect, and draw (the overlay and the window).
+camera frame), preprocess, detect, and draw (the overlay and the window). When the fps
+averaged over the run is more than a fifth away from FPS in settings.py, both are printed:
+the tracker's *_SECONDS settings are turned into frames at FPS, so FPS should match.
 
 While editing zones (key E) the detector runs on one frame in EDIT_DETECT_EVERY and the
 cards found are reused in between, and each frame spends EDIT_MOUSE_MS handling the mouse
@@ -108,6 +111,15 @@ class StageTimer:
 
     def summary(self) -> str:
         return ", ".join(f"{stage} {ms:.1f} ms" for stage, ms in self.averages().items())
+
+
+def fps_note(measured: float, expected: float) -> str:
+    """The quit summary's warning when the measured fps is more than a fifth away from FPS in
+    settings.py, which turns every *_SECONDS setting into frames; "" when they are close enough."""
+    if abs(measured - expected) <= 0.2 * expected:
+        return ""
+    return (f"measured {measured:.1f} fps, but FPS in settings.py is {expected}: "
+            f"set FPS to about {measured:.1f} so the *_SECONDS settings take the time they say")
 
 
 def list_cameras():
@@ -222,6 +234,7 @@ def main():
         t_last, fps = time.time(), 0.0
         signal_lost = False
         dets, frames_processed = [], 0
+        run_start = time.perf_counter()
         try:
             while True:
                 start = time.perf_counter()
@@ -286,6 +299,10 @@ def main():
             print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
             print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
             print(f"average time per frame: {timer.summary()}")
+            run_seconds = time.perf_counter() - run_start
+            note = fps_note(frames_processed / run_seconds, settings.FPS) if frames_processed else ""
+            if note:
+                print(note)
 
 
 if __name__ == "__main__":
