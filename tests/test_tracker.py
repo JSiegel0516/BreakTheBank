@@ -1,3 +1,7 @@
+import numpy as np
+import pytest
+
+from cardReader import camera
 from cardReader.blackjack import shoe_count
 from cardReader.tracker import CardTracker, Detection
 
@@ -534,3 +538,35 @@ def test_bound_gives_each_detection_its_confirmed_card_even_when_misread():
     assert tr.bound[1] is None
     tr.update([])
     assert tr.bound == []
+
+
+@pytest.mark.parametrize("quarter_turns", [1, 2, 3, -1])
+def test_rotate_turns_cards_and_tracks_with_the_frame(quarter_turns):
+    W, H = 64, 36
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=6.4, still_distance=0.64)
+    run(tr, [det("KH", 10, 5)], 3)
+    tr.update([det("2S", 40, 30)])                       # an unconfirmed track
+    tr.rotate(quarter_turns, W, H)
+
+    def turned(x, y):
+        """Where the pixel at (x, y) lands when the frame is turned like read.py turns it."""
+        marker = np.zeros((H, W), np.uint8)
+        marker[y, x] = 255
+        rows, cols = np.nonzero(camera.rotate(marker, quarter_turns))
+        return float(cols[0]), float(rows[0])
+
+    assert (tr.round[0].x, tr.round[0].y) == turned(10, 5)
+    assert sorted((t.cx, t.cy) for t in tr.tracks.values()) == sorted([turned(10, 5), turned(40, 30)])
+    new_w = H if quarter_turns % 2 else W
+    assert tr.cfg.match_dist == pytest.approx(0.1 * new_w) and tr.cfg.still_distance == pytest.approx(0.01 * new_w)
+
+
+def test_cards_keep_their_numbers_across_a_quarter_turn():
+    W, H = 640, 360
+    tr = CardTracker(confirm_frames=3, drop_frames=5, match_dist=20, still_distance=4)
+    run(tr, [det("KH", 100, 50), det("BACK", 500, 300)], 4)
+    tr.rotate(1, W, H)
+    events = run(tr, [det("KH", H - 1 - 50, 100), det("BACK", H - 1 - 300, 500)], 6)
+    assert events == []
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH"), (2, "BACK")]
+    assert tr.shoe_seen == ["KH"] and tr.shoe_unrevealed == 1

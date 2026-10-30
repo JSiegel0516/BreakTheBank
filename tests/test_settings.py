@@ -41,6 +41,8 @@ def test_shipped_settings_are_valid():
     ("PREPROCESS_BRIGHT_ABOVE", 300, "number from 0 to 255"),
     ("PREPROCESS_CLAHE_CLIP", 0, "number above 0"),
     ("PREPROCESS_CLAHE_TILES", 0, "whole number of 1 or more"),
+    ("CAMERA_ROTATION", 45, "one of 0, 90, 180, 270"),
+    ("CAMERA_ROTATION", 90.0, "one of 0, 90, 180, 270"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:

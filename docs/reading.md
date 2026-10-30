@@ -13,11 +13,12 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | Sidebar, top | tabs naming the two views, `CARDS LEFT` and `GAME`: the current one is filled in yellow, and `[V]` beside them is the key that switches (see below) |
 | Sidebar, under the tabs | the Hi-Lo true count in large type with whom it favours (`favours player`, `favours dealer`, `neutral`), then the running count and cards left (`38/52`) |
 | Sidebar, below | the Cards Left view or the Game view (see below) |
-| Yellow badge and name on a card | that card's placement number and name |
+| Yellow badge and name on a card | that card's placement number and name: the rank followed by the suit's shape (`BACK` for a face-down card) |
 | Grey badge and name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
 | Coloured boxes | corner indices the tracker has matched to a confirmed card, in that card's colour: red for hearts and diamonds, white for spades and clubs, amber for face-down. A frame that misreads the corner (a 6H read as 9H) keeps the card's colour |
 | Thin grey boxes | detections not matched to a confirmed card: a card not confirmed yet, or a stray box away from every card. `G` hides them |
 | Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
+| `camera turned to 90 degrees: CAMERA_ROTATION = 90 keeps it` | `<` or `>` turned the view a quarter turn (see [Setting up the camera](#setting-up-the-camera)) |
 | Bottom bar | the main keys, frames per second, the milliseconds per frame spent detecting, and the preprocess mode with its milliseconds (`showing raw` when `Shift+V` shows the raw camera frame) |
 | `no signal: press C to reconnect` | the camera has sent no new frame for two seconds (see [Camera disconnects](#camera-disconnects)) |
 
@@ -30,12 +31,15 @@ card that is covered keeps its number and comes back with it.
 The tabs at the top of the sidebar always show which view is on. The reader
 starts in the **Cards Left view**: the whole deck as a grid, with one
 row per rank (2 to 10, J, Q, K, A) and one column per suit (spades, hearts,
-diamonds, clubs). It shows at a glance which cards have been dealt this shoe:
+diamonds, clubs). Each cell is a small white card with its rank above its suit
+shape, red for hearts and diamonds and black for spades and clubs; when the
+window is small the rank is left out and the suit shape stays. It shows at a
+glance which cards have been dealt this shoe:
 
 | Cell | Meaning |
 |---|---|
-| Plain | not seen this shoe |
-| Yellow slash | pending: counted this round, so a corrected misread can still change it |
+| White card | not seen this shoe |
+| Yellow slash and border | pending: counted this round, so a corrected misread can still change it |
 | Grey, crossed off | locked: counted in an earlier round of this shoe |
 | Magenta ring | a `duplicate` was reported for this card this shoe (a misread, or a reshuffle without `Shift+R`) |
 
@@ -88,6 +92,7 @@ The bottom bar lists the main keys; the legend lists them all.
 | `C` | reconnect the camera: reopen the same source after a cable or power interruption |
 | `P` | next preprocess mode: off, gamma, clahe, auto (see [Dim or washed-out tables](#dim-or-washed-out-tables)) |
 | `Shift+V` | show the raw camera frame, or the preprocessed frame the detector gets |
+| `<` / `>` | turn the view a quarter turn anticlockwise / clockwise; the message names the `CAMERA_ROTATION` that keeps it (see [Setting up the camera](#setting-up-the-camera)) |
 | `Q` | quit (or Ctrl+C in the terminal) |
 
 Keys work when the reader window is selected. The window can be resized.
@@ -167,6 +172,16 @@ terminal or VS Code. Grant it under System Settings > Privacy & Security > Camer
   your hands. For a dim room see [Dim or washed-out tables](#dim-or-washed-out-tables).
 - Keep the camera still. Bumping it moves every card at once, and the tracker
   may count them as new cards.
+- The dealer's side of the table should be at the top of the picture. If the
+  camera is mounted sideways or upside down, press `>` (clockwise) or `<`
+  (anticlockwise) to turn the view a quarter turn at a time, instead of
+  remounting it. Detection, zones, tags, and frames saved with `S` all use the
+  turned picture. The message names the value to keep it, for example
+  `CAMERA_ROTATION = 90`; set that in `settings.py` (0, 90, 180, or 270) so the
+  reader starts there. Turn before dealing: cards already on the table turn
+  with the view and keep their numbers, but the zones are reloaded for the new
+  shape. Saved zones are stored as fractions of the picture, so after a
+  90-degree turn a saved layout may need a quick re-edit with `E`.
 
 **iPhone as a wireless webcam (Continuity Camera)**
 

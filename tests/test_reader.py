@@ -156,3 +156,54 @@ def test_reader_starts_in_the_mode_it_is_given(tmp_path):
                preprocess="clahe")
     r.handle_key(ord("p"), frame())
     assert r.preprocess == "auto"
+
+
+def test_angle_keys_turn_the_view_a_quarter_turn_and_wrap_around(tmp_path):
+    r = make_reader(tmp_path)
+    assert r.rotation == 0
+    r.handle_key(ord(">"), frame())
+    assert r.rotation == 1
+    assert r.hud._message == "camera turned to 90 degrees: CAMERA_ROTATION = 90 keeps it"
+    turned = np.zeros((W, H, 3), np.uint8)               # the next frame arrives turned
+    for _ in range(3):
+        r.handle_key(ord(">"), turned)
+        turned = np.zeros(turned.shape[1::-1] + (3,), np.uint8)
+    assert r.rotation == 0 and r.hud._message.startswith("camera turned to 0 degrees")
+    r.handle_key(ord("<"), frame())
+    assert r.rotation == 3 and r.hud._message == "camera turned to 270 degrees: CAMERA_ROTATION = 270 keeps it"
+
+
+def test_a_quarter_turn_reloads_the_layout_for_the_turned_size(tmp_path):
+    r = make_reader(tmp_path)
+    r.handle_key(ord("4"), frame())
+    r.handle_key(ord(">"), frame())
+    assert (r.layout.width, r.layout.height, r.layout.players) == (H, W, 4)
+    assert r.editor.layout is r.layout and r.table.layout is r.layout
+    assert (r.layout.seats[0].polygon == SeatLayout(4, H, W).seats[0].polygon).all()  # the template, not stretched
+    r.layout.seats[1].polygon += (5, 0)
+    r.layout.save(r.seats_file)
+    saved = r.layout.seats[1].polygon.copy()
+    r.handle_key(ord("<"), np.zeros((W, H, 3), np.uint8))
+    r.handle_key(ord(">"), frame())
+    assert np.abs(r.layout.seats[1].polygon - saved).max() <= 1  # the saved layout for 4 players
+
+
+def test_a_card_on_the_table_keeps_its_number_through_a_turn(tmp_path, capsys):
+    r = make_reader(tmp_path)
+    dets = [Detection("KH", 0.9, 100, 50)]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    r.handle_key(ord(">"), frame())
+    turned = np.zeros((W, H, 3), np.uint8)
+    capsys.readouterr()
+    for _ in range(3):
+        assert r.process(turned, [Detection("KH", 0.9, H - 1 - 50, 100)]) == []
+    assert [(c.order, c.label, c.x, c.y) for c in r.tracker.round] == [(1, "KH", H - 1 - 50, 100)]
+    assert r.tracker.cfg.match_dist == 20 * H / W
+
+
+def test_reader_starts_at_the_rotation_it_is_given(tmp_path):
+    r = Reader(CardTracker(), SeatLayout(3, H, W), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               rotation=1)
+    r.handle_key(ord(">"), np.zeros((W, H, 3), np.uint8))
+    assert r.rotation == 2 and "180 degrees" in r.hud._message

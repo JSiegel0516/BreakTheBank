@@ -33,6 +33,8 @@ LIVE_MODEL_DIR = "models/cards"               # holds LIVE.txt naming the promot
 CAMERA_SOURCE = "0"        # "0" = first camera. A capture card is often "1". A video path also works.
 CAMERA_WIDTH = None        # e.g. 3840. None = whatever the camera gives.
 CAMERA_HEIGHT = None       # e.g. 2160
+CAMERA_ROTATION = 0        # degrees the frame is turned clockwise before anything else: 0, 90, 180, or 270.
+                           # For a camera mounted sideways or upside down; keys < and > in read.py turn it live.
 INPUT_SIZE = 1280          # frame is resized to this width before detection. Bigger = reads smaller indices, slower.
 CONFIDENCE = 0.6           # detections below this score are ignored
 FPS = 12.4                 # frames per second the reader runs at; turns every *_SECONDS below into frames.
@@ -96,6 +98,7 @@ def validate(config) -> None:
         (("CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
+        (("CAMERA_ROTATION",), lambda v: _is_whole(v) and v in (0, 90, 180, 270), "one of 0, 90, 180, 270"),
         (("PREPROCESS",), lambda v: v in MODES, "one of " + ", ".join(repr(mode) for mode in MODES)),
         (("PREPROCESS_BRIGHTEN_GAMMA", "PREPROCESS_DARKEN_GAMMA", "PREPROCESS_CLAHE_CLIP"),
          lambda v: _is_number(v) and v > 0, "a number above 0"),

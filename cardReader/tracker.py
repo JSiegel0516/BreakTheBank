@@ -79,6 +79,10 @@ Memory, so a card is never counted twice:
 All thresholds live in TrackerConfig, in frames and pixels.
 TrackerConfig.from_settings turns the seconds in settings.py into frames at
 settings.FPS, and the fractions of the frame width into pixels.
+
+When the camera view is turned a quarter turn (keys < and > in read.py),
+rotate() turns every track and card with the frame and rescales the pixel
+thresholds to the new width, so cards on the table keep their numbers.
 """
 from __future__ import annotations
 
@@ -256,6 +260,25 @@ class CardTracker:
             self.new_round()
         return events
 
+    def rotate(self, quarter_turns: int, width: int, height: int):
+        """Follow the frame turned clockwise by quarter_turns (negative: anticlockwise), as camera.rotate turns it.
+
+        width, height: the frame size before the turn. Every track, its recent sightings, and every
+        card of the round move with the frame, so the next frame's detections land on them and no
+        card is placed again. still_distance and match_dist are rescaled to the new frame width."""
+        for _ in range(quarter_turns % 4):
+            for track in self.tracks.values():
+                track.cx, track.cy = _quarter_turn(track.cx, track.cy, height)
+                turned_hits = [(frame, conf, *_quarter_turn(x, y, height), label)
+                               for frame, conf, x, y, label in track.hits]
+                track.hits = deque(turned_hits, maxlen=track.hits.maxlen)
+            for card in self.round:
+                card.x, card.y = _quarter_turn(card.x, card.y, height)
+            still = self.cfg.still_distance
+            self.cfg = replace(self.cfg, match_dist=self.cfg.match_dist * height / width,
+                               still_distance=None if still is None else still * height / width)
+            width, height = height, width
+
     def table(self) -> list[Card]:
         """Cards visible right now, in the order they were placed."""
         return [c for c in self.round if not c.hidden]
@@ -427,6 +450,11 @@ class CardTracker:
             if max(offsets) > cfg.still_distance:
                 return False  # still moving
         return True
+
+
+def _quarter_turn(x: float, y: float, height: int) -> tuple[float, float]:
+    """Where (x, y) lands when a frame `height` pixels tall is turned a quarter turn clockwise."""
+    return height - 1 - y, x
 
 
 def _rank_group(label: str) -> str:
