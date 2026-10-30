@@ -122,8 +122,26 @@ def test_round_shoe_legend_view_save_and_quit_keys(tmp_path):
     assert r.hud.view == "cards_left" and r.hud._message == "Cards Left view"
     r.handle_key(ord("s"), frame())
     assert len(list((tmp_path / "frames").glob("frame_*.jpg"))) == 1
-    assert r.handle_key(ord("x"), frame()) is True       # unknown keys are ignored
+    assert r.handle_key(ord("z"), frame()) is True       # unknown keys are ignored
     assert r.handle_key(ord("q"), frame()) is False
+
+
+def test_x_rescans_the_round_recounts_and_logs_a_rescan_row(tmp_path, capsys):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    seat = r.layout.seats[1].polygon.mean(axis=0)
+    dets = [Detection("5H", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    assert r.count.running == 1
+    capsys.readouterr()
+    assert r.handle_key(ord("x"), frame()) is True
+    assert r.tracker.round == [] and r.tracker.shoe_seen == [] and r.count.running == 0
+    assert "--- rescan" in capsys.readouterr().out
+    assert r.hud._message.startswith("rescan")
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert len(rows[-1]) == len(LOG_HEADER)
+    assert rows[-1][1:] == [str(r.tracker.frame), "rescan", "", "", "", "0", "", ""]
 
 
 def test_p_cycles_the_preprocess_modes_and_shift_v_toggles_the_displayed_frame(tmp_path):

@@ -74,6 +74,7 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     keys = {entry["key"]: entry for entry in snapshot["keys"]}
     assert [(entry["key"], entry["label"]) for entry in snapshot["keys"]] == KEY_LIST
     assert keys["R"]["buttons"] == [{"action": "new_round", "text": "r"}]
+    assert keys["X"]["buttons"] == [{"action": "rescan", "text": "x"}]
     assert [button["text"] for button in keys["1-7"]["buttons"]] == ["1", "2", "3", "4", "5", "6", "7"]
     assert keys["E"]["buttons"] == keys["S"]["buttons"] == keys["V"]["buttons"] == keys["L"]["buttons"] == []
     assert (snapshot["preprocess"], snapshot["showing_raw"], snapshot["no_signal"]) == ("off", True, False)
@@ -140,7 +141,7 @@ def test_posted_actions_are_drained_in_order_and_bad_posts_are_refused(server):
 def test_every_button_presses_a_key_the_reader_handles():
     assert ACTION_KEYS["players_3"] == ord("3") and ACTION_KEYS["new_shoe"] == ord("R")
     assert set(ACTION_KEYS) == {f"players_{n}" for n in range(1, 8)} | {
-        "grey_boxes", "new_round", "new_shoe", "reconnect", "preprocess", "raw_or_enhanced",
+        "grey_boxes", "new_round", "rescan", "new_shoe", "reconnect", "preprocess", "raw_or_enhanced",
         "turn_left", "turn_right", "quit"}
     assert set(BUTTONS) <= {key for key, _ in KEY_LIST}
 

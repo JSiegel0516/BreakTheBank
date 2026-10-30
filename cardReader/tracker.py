@@ -73,6 +73,14 @@ Memory, so a card is never counted twice:
     counted again, and its name is added to shoe_duplicates. A card still on
     the table when the round began, and two corners of one card joining by
     name, are not duplicates.
+  * rescan() takes back a misread while the round is still open. It forgets
+    every card and track of this round and puts shoe_seen, shoe_unrevealed,
+    and shoe_duplicates back as they were when the round began, so only the
+    pending names leave the count. The cards on the table are then confirmed
+    again from scratch and numbered from 1. A round that already ended is
+    locked: rescan cannot reach back into it. A card still on the table from
+    an earlier round is placed again after a rescan, so it is reported as a
+    duplicate (face up) or added to shoe_unrevealed again (face down).
   * new_shoe() clears shoe_seen, shoe_unrevealed, and shoe_duplicates after a
     reshuffle.
 
@@ -157,6 +165,8 @@ class CardTracker:
         self._dealt_backs |= {track_id for track_id, card in self._card_of.items() if card.label == BACK}
         self._carried_tracks = set(self._card_of)  # tracks of cards still on the table as the round began
         self._seen_before_round = set(self.shoe_seen)
+        self._unrevealed_before_round = self.shoe_unrevealed
+        self._duplicates_before_round = set(self.shoe_duplicates)
         self.round: list[Card] = []
         self._card_of = {}
         self._next_order = 1  # placement numbers are never reused within a round, even after a removal
@@ -169,6 +179,28 @@ class CardTracker:
         self.shoe_duplicates: set[str] = set()  # face names reported as a duplicate this shoe
         self.new_round()
         self._dealt_backs = set()
+
+    def rescan(self) -> bool:
+        """Look at the table again: forget every card and track of this round, keep the rounds before it.
+
+        Names first counted this round leave the count; names counted earlier stay, in order.
+        shoe_unrevealed and shoe_duplicates go back to their values when the round began.
+        Cards on the table are confirmed again from scratch and numbered from 1.
+        Returns True when this round had placed a card, even one since removed: only then
+        was there anything to take back."""
+        placed_this_round = self._next_order > 1
+        self.shoe_seen = [name for name in self.shoe_seen if name in self._seen_before_round]
+        self.shoe_unrevealed = self._unrevealed_before_round
+        self.shoe_duplicates = set(self._duplicates_before_round)
+        self.tracks = {}
+        self._card_of = {}
+        self._dealt_backs = set()
+        self._carried_tracks = set()
+        self.bound = []
+        self.round = []
+        self._next_order = 1
+        self._empty_frames = 0
+        return placed_this_round
 
     @property
     def shoe_pending(self) -> set[str]:

@@ -282,8 +282,8 @@
     return html;
   }
 
-  // One line per key: a button when the page has one, a row of buttons for 1-7 with the
-  // current player count filled in, and a grey line for a key that works in the window only.
+  // One line per key: a button when the page has one, a row of buttons for 1-7 (with the
+  // current player count filled in) and for < >, and a grey line for a key that works in the window only.
   function renderKeys(keys, players) {
     return keys.map((entry) => {
       const label = `<kbd>${esc(entry.key)}</kbd>${esc(entry.label)}`;

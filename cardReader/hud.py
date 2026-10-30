@@ -69,11 +69,13 @@ BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
 DUPLICATE = (255, 60, 255)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
-KEYS = "[V] view    [L] legend/keys    [R] round    [Shift+R] shoe    [< >] turn    [Q] quit"  # the bottom bar
+# the bottom bar
+KEYS = "[V] view    [L] legend/keys    [R] round    [X] rescan    [Shift+R] shoe    [< >] turn    [Q] quit"
 KEY_LIST = [("1-7", "players"), ("E", "edit zones"), ("V", "switch view"), ("L", "hide legend"),
-            ("G", "grey boxes"), ("R", "new round"), ("Shift+R", "new shoe"), ("S", "save frame"),
+            ("G", "grey boxes"), ("R", "new round"), ("X", "rescan round"), ("Shift+R", "new shoe"),
+            ("S", "save frame"),
             ("C", "reconnect camera"), ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"),
-            ("<", "turn left"), (">", "turn right"), ("Q", "quit")]
+            ("< >", "turn view"), ("Q", "quit")]
 EDIT_HELP = ["drag a corner: reshape", "drag a +: add a corner", "right-click a corner: remove it",
              "drag inside: move the zone", "right-click inside: reset the zone", "E: save and lock"]
 NO_SIGNAL = "no signal: press C to reconnect"
