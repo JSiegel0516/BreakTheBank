@@ -140,3 +140,11 @@ def test_video_file_is_never_stale(captures, tmp_path):
         cam.stale_after = 0.0
         time.sleep(0.05)
         assert cam.is_file and cam.age == 0.0 and not cam.stale
+
+
+@pytest.mark.parametrize("quarter_turns", [0, 1, 2, 3, -1, 4])
+def test_rotate_turns_the_frame_clockwise_in_quarter_turns(quarter_turns):
+    frame = np.arange(2 * 3 * 3, dtype=np.uint8).reshape(2, 3, 3)
+    expected = np.rot90(frame, -quarter_turns)               # np.rot90 turns anticlockwise for positive k
+    assert (camera.rotate(frame, quarter_turns) == expected).all()
+    assert camera.rotate(frame, 0) is frame

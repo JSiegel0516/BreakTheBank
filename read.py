@@ -6,7 +6,7 @@
     python read.py --list-cameras                    # which number is which camera?
     python read.py --preprocess auto                 # contrast help for a dim or washed-out table
 
-Per frame:  camera -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
+Per frame:  camera -> rotate -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
 
 Every event (placed, hidden, returned, removed, renamed, duplicate, round over) is printed
 as it happens, and appended to --log as CSV if given. Without a trained model it runs
@@ -23,11 +23,17 @@ Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
       v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
       r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
-      Shift+V show the raw camera frame or the preprocessed one | q quit
+      Shift+V show the raw camera frame or the preprocessed one
+      < > turn the view a quarter turn anticlockwise or clockwise | q quit
 
 The detector always gets the preprocessed frame (cardReader/preprocess.py); the
 window shows it too unless Shift+V switches to the raw frame. s always saves the
 raw frame.
+
+Each camera frame is first turned by CAMERA_ROTATION in settings.py (0, 90, 180, or
+270 degrees clockwise), for a camera mounted sideways or upside down. < and > turn
+it live; the message names the CAMERA_ROTATION that keeps the new angle. Everything
+after uses the turned frame: detection, zones, tags, and the frame s saves.
 
 If a live camera sends no new frame for two seconds (a cable pulled, the phone
 locked), the window says "no signal" over the last frame and the tracker waits.
@@ -42,6 +48,8 @@ the tracker's *_SECONDS settings are turned into frames at FPS, so FPS should ma
 While editing zones (key E) the detector runs on one frame in EDIT_DETECT_EVERY and the
 cards found are reused in between, and each frame spends EDIT_MOUSE_MS handling the mouse
 (counted in draw), so a drag starts where it was clicked even when detection is slow.
+The frame after < or > is always detected, since reused cards would be in the old turn's
+coordinates.
 
 This file only owns the command line, the camera, and the window. What happens
 per frame and per key is cardReader/reader.py; the overlay is cardReader/hud.py.
@@ -58,7 +66,7 @@ import cv2
 import numpy as np
 
 import settings
-from cardReader.camera import Camera, parse_source, snapshot_cameras
+from cardReader.camera import Camera, parse_source, rotate, snapshot_cameras
 from cardReader.hud import DealtCards, Hud
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
 from cardReader.provenance import live_model
@@ -206,13 +214,15 @@ def main():
     cam = Camera(parse_source(args.source), args.width, args.height)
     W, H = cam.size
     print(f"source {args.source} at {W}x{H}")
+    rotation = settings.CAMERA_ROTATION // 90
+    view_w, view_h = (H, W) if rotation % 2 else (W, H)  # the frame size after the starting turn
 
     seats_file = settings.PROJECT_ROOT / settings.SEATS_FILE
-    layout = SeatLayout.load(seats_file, W, H, args.players)
+    layout = SeatLayout.load(seats_file, view_w, view_h, args.players)
     if layout is not None:
         print(f"loaded your saved {layout.players}-player zones from {settings.SEATS_FILE}")
     else:
-        layout = SeatLayout(args.players or settings.PLAYERS, W, H)
+        layout = SeatLayout(args.players or settings.PLAYERS, view_w, view_h)
 
     with ExitStack() as cleanup:  # closes the log file, if any, on the way out
         log = None
@@ -222,10 +232,10 @@ def main():
             if new_file:
                 log.writerow(LOG_HEADER)
 
-        tracker = CardTracker(TrackerConfig.from_settings(settings, W))
+        tracker = CardTracker(TrackerConfig.from_settings(settings, view_w))
         hud = Hud()
         reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log,
-                        preprocess=args.preprocess)
+                        preprocess=args.preprocess, rotation=rotation)
         preprocess_config = PreprocessConfig.from_settings(settings)
         if not args.no_display:
             cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)  # resizable, so a 4K feed fits on a laptop screen
@@ -234,6 +244,7 @@ def main():
         t_last, fps = time.time(), 0.0
         signal_lost = False
         dets, frames_processed = [], 0
+        dets_rotation = reader.rotation  # the turn the cached dets were detected at
         run_start = time.perf_counter()
         try:
             while True:
@@ -247,6 +258,7 @@ def main():
                     continue
                 if not ok:
                     frame = np.zeros((H, W, 3), np.uint8)  # it never sent a frame: say so over black
+                frame = rotate(frame, reader.rotation)
 
                 # A stale camera repeats its last frame: nothing new to detect, so the tracker is left alone.
                 no_signal = cam.stale
@@ -263,9 +275,12 @@ def main():
                     dets = []
                     time.sleep(0.01)
                 else:
-                    if detector and (not reader.editor.active or frames_processed % EDIT_DETECT_EVERY == 0):
+                    turned = dets_rotation != reader.rotation  # cached dets are in the old frame's coordinates
+                    editing_skip = reader.editor.active and frames_processed % EDIT_DETECT_EVERY != 0
+                    if detector and (turned or not editing_skip):
                         start = time.perf_counter()
                         dets = detector(enhanced)
+                        dets_rotation = reader.rotation
                         timer.lap("detect", start)
                     reader.process(frame, dets)
                     frames_processed += 1
@@ -290,7 +305,7 @@ def main():
                 timer.lap("draw", start)
                 if key == ord("c") and not cam.is_file:  # read.py owns the camera, so C is handled here
                     reconnect(cam, hud, args.source)
-                elif not reader.handle_key(key, frame):  # the raw frame, so S saves what the camera sent
+                elif not reader.handle_key(key, frame):  # turned but not preprocessed, so S saves what the camera sent
                     break
         finally:
             cam.release()

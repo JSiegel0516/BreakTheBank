@@ -1,9 +1,12 @@
+import re
+
+import cv2
 import numpy as np
 import pytest
 
 from cardReader.blackjack import shoe_count
 from cardReader.cards import Card, Detection
-from cardReader.hud import GREY, KEY_LIST, KEYS, RED, SIDEBAR, DealtCards, Hud, count_cue, status_text, view_tabs
+from cardReader.hud import GREY, KEY_LIST, KEYS, RED, SIDEBAR, WHITE, DealtCards, Hud, count_cue, status_text, view_tabs
 from cardReader.seats import SeatLayout, ZoneEditor
 
 
@@ -170,3 +173,63 @@ def test_draw_in_capture_mode_with_nothing_on_the_table():
     canvas = Hud().draw(np.zeros((H, W, 3), np.uint8), [], [], 0.0, SeatLayout(1, W, H), shoe_count([]),
                         capture_mode=True)
     assert canvas.shape[1] == W + round(SIDEBAR * W)
+
+
+NAMES = ["AS", "10H", "QD", "7C", "BACK"]
+
+
+@pytest.mark.parametrize("view", ["cards_left", "game"])
+@pytest.mark.parametrize(("W", "H"), [(640, 360), (1280, 720), (1920, 1080), (3840, 2160)])
+def test_card_names_draw_the_rank_and_suit_shape_never_a_suit_letter(monkeypatch, W, H, view):
+    layout = SeatLayout(3, W, H)
+    p1 = layout.seats[1].polygon.mean(axis=0)
+    cards = [Card(i + 1, name, float(p1[0]) + 60 * i, float(p1[1]), i + 1, hidden=name == "7C")
+             for i, name in enumerate(NAMES)]
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    hud = Hud()
+    hud.view = view
+    frame = np.zeros((H, W, 3), np.uint8)
+    bare = hud.draw(frame, [], [], 30.0, layout, shoe_count([]))
+    texts.clear()
+    tagged = hud.draw(frame, [], cards, 30.0, layout, shoe_count(["AS", "10H", "QD", "7C"], unrevealed=1),
+                      dealt=DealtCards(pending={"AS", "10H", "QD", "7C"}))
+    assert (bare[:, :W] != tagged[:, :W]).any()
+    assert not [text for text in texts if re.fullmatch(r"(10|[2-9AJQK])[SHDC]", text)]
+    assert {"A", "10", "Q", "7", "BACK"} <= set(texts)
+
+
+def test_a_name_is_as_wide_as_its_rank_and_suit_shape():
+    hud = Hud()
+    hud.draw(np.zeros((720, 1280, 3), np.uint8), [], [], 30.0, SeatLayout(3, 1280, 720), shoe_count([]))
+    assert hud._name_size("10H", 0.8)[0] > hud._size("10", 0.8)[0]
+    assert hud._name_size("10H", 0.8)[0] == hud._name_size("10S", 0.8)[0]
+    assert hud._name_size("BACK", 0.8) == hud._size("BACK", 0.8)
+    assert hud._name(np.zeros((50, 200, 3), np.uint8), "10H", 5, 25, 0.8, RED) == hud._name_size("10H", 0.8)[0]
+
+
+@pytest.mark.parametrize(("W", "H"), [(640, 360), (1280, 720), (3840, 2160)])
+def test_each_grid_cell_is_a_mini_card_that_shows_its_state(W, H):
+    hud = Hud()
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H), shoe_count([]))
+    h = round(26 * hud.s)
+    w = round(h * 2.5 / 3.5)
+    drawn = {}
+    for state, duplicate in [("unseen", False), ("pending", False), ("locked", False), ("unseen", True)]:
+        cell = np.full((h, w, 3), 25, np.uint8)
+        hud._cell_mark(cell, "KH", state, duplicate, 0, 0, w, h)
+        drawn[state, duplicate] = cell
+    assert (drawn["unseen", False] == WHITE).all(axis=2).any()           # a white card face
+    assert (drawn["unseen", False] == RED).all(axis=2).any()             # a heart in red
+    spade = np.full((h, w, 3), 25, np.uint8)
+    hud._cell_mark(spade, "KS", "unseen", False, 0, 0, w, h)
+    assert not (spade == RED).all(axis=2).any() and (spade == 0).all(axis=2).any()  # a spade in black
+    cells = list(drawn.values())
+    for i, a in enumerate(cells):
+        for b in cells[i + 1:]:
+            assert (a != b).any()
+
+
+def test_rotation_keys_are_listed():
+    assert ("<", "turn left") in KEY_LIST and (">", "turn right") in KEY_LIST

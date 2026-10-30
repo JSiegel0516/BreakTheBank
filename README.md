@@ -27,7 +27,9 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
    In a dim room or under uneven light, press `P` to cycle the preprocess modes (off, gamma,
    clahe, auto) and `Shift+V` to compare with the raw camera frame. See
    [Dim or washed-out tables](docs/reading.md#dim-or-washed-out-tables); glare that turns a
-   card's index pure white cannot be fixed in software.
+   card's index pure white cannot be fixed in software. If the camera is mounted sideways or
+   upside down, press `<` or `>` to turn the view a quarter turn, and set `CAMERA_ROTATION`
+   in `settings.py` to the value the message names so it starts that way.
 5. The tabs at the top of the sidebar name its two views, CARDS LEFT and GAME, with the
    current one highlighted. It starts in the Cards Left view: a rank by suit grid that
    crosses off each card dealt this shoe. Press `V` for the Game view, each seat's hand,

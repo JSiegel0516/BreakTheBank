@@ -121,6 +121,53 @@ def test_detector_gets_the_preprocessed_frame_shift_v_shows_the_raw_one_and_s_sa
     assert abs(int(cv2.imread(str(saved[0]))[0, 0, 0]) - raw) <= 2
 
 
+def test_frames_are_turned_by_the_setting_and_the_keys_before_detection_and_s_saves_them_turned(monkeypatch,
+                                                                                                  tmp_path):
+    monkeypatch.setattr(read.settings, "CAMERA_ROTATION", 90)
+    detected = []
+
+    def detect(frame):
+        detected.append(frame.shape[:2])
+        return []
+
+    keys = [ord("s"), ord(">"), 255, ord("q")]
+    run_reader(monkeypatch, tmp_path, FakeCamera(), keys, detect)
+
+    assert detected == [(640, 360)] * 2 + [(360, 640)] * 2  # 90 degrees from the setting, then 180 after >
+    saved = list((tmp_path / "frames").glob("frame_*.jpg"))
+    assert len(saved) == 1 and cv2.imread(str(saved[0])).shape[:2] == (640, 360)
+
+
+def test_a_turn_while_editing_detects_on_the_next_frame_so_cards_keep_their_numbers(monkeypatch, tmp_path):
+    cam = FakeCamera()
+    detected, fed, events = [], [], []
+    process = read.Reader.process
+
+    def detect(frame):
+        detected.append(cam.reads)
+        upright = frame.shape[:2] == (360, 640)
+        x, y = (100, 50) if upright else (359 - 50, 100)  # the same card, turned with the frame
+        return [Detection("KH", 0.9, x, y)]
+
+    def watched_process(self, frame, dets):
+        fed.append((frame.shape[:2], [(det.cx, det.cy) for det in dets]))
+        found = process(self, frame, dets)
+        events.extend((cam.reads, event.kind, event.card.order) for event in found if event.card)
+        return found
+
+    monkeypatch.setattr(read.Reader, "process", watched_process)
+    monkeypatch.setattr(read.settings, "SEATS_FILE", str(tmp_path / "seats.json"))
+    # 7 frames to place the card, E after read 8 starts editing, > after read 10 (a detect frame) turns
+    keys = [255] * 7 + [ord("e"), 255, ord(">")] + [255] * 6 + [ord("q")]
+    run_reader(monkeypatch, tmp_path, cam, keys, detect)
+
+    assert 11 in detected                                # the frame after the turn is detected, not skipped
+    turned = [dets for shape, dets in fed[10:]]
+    assert all(shape == (640, 360) for shape, _ in fed[10:]) and turned == [[(309, 100)]] * len(turned)
+    assert [kind for _, kind, _ in events] == ["placed"]  # no hidden, returned, or second placed event
+    assert events[0][2] == 1
+
+
 def test_editing_detects_every_third_frame_reuses_the_cards_and_drains_the_mouse(monkeypatch, tmp_path):
     cam = FakeCamera()
     detected, fed, drained = [], [], []

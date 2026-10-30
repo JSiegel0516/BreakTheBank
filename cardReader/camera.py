@@ -4,6 +4,9 @@ Live devices buffer frames. If detection runs slower than the camera, a plain
 read() loop falls further and further behind. So for live sources a background
 thread keeps draining the device and we only ever hand back the newest frame.
 Video files are read one frame at a time so nothing is skipped.
+
+rotate() turns a frame by quarter turns, for a camera mounted at an angle
+(CAMERA_ROTATION in settings.py, keys < and > in read.py).
 """
 from __future__ import annotations
 
@@ -12,7 +15,10 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
+# clockwise quarter turns -> cv2.rotate code
+ROTATE_CODES = {1: cv2.ROTATE_90_CLOCKWISE, 2: cv2.ROTATE_180, 3: cv2.ROTATE_90_COUNTERCLOCKWISE}
 
 class Camera:
     """One video source: a device index, a video file path, or a stream URL.
@@ -133,6 +139,15 @@ class Camera:
 
     def __exit__(self, *exc):
         self.release()
+
+
+def rotate(frame: np.ndarray, quarter_turns: int) -> np.ndarray:
+    """The frame turned clockwise by quarter_turns (negative: anticlockwise; 4 is a full turn).
+
+    A clockwise quarter turn of a W x H frame moves pixel (x, y) to (H - 1 - y, x).
+    No turn returns the frame itself; any other is a new array."""
+    turns = quarter_turns % 4
+    return frame if turns == 0 else cv2.rotate(frame, ROTATE_CODES[turns])
 
 
 def parse_source(text: str) -> int | str:
