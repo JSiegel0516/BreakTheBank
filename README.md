@@ -171,7 +171,10 @@ pytest
 
 [uv](https://docs.astral.sh/uv/) installs Python 3.12 itself if needed. The
 dependencies are listed in `pyproject.toml` and pinned in `uv.lock`; `uv sync`
-after pulling keeps everyone on the same versions.
+after pulling keeps everyone on the same versions. The commands above are for
+macOS and Linux. On Windows, activate with `.venv\Scripts\activate`; `uv sync`
+there installs a PyTorch build that uses NVIDIA cards, see
+[Training on a Windows PC](docs/training.md#training-on-a-windows-pc-with-an-nvidia-gpu).
 
 Every command in this README and in `docs/` assumes this project's virtual
 environment is active (`source .venv/bin/activate`, run from the project folder).

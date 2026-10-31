@@ -77,6 +77,8 @@ def main():
     from ultralytics import YOLO
 
     device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    gpu_name = f": {torch.cuda.get_device_name(0)}" if device == "cuda" else ""
+    print(f"training on {device}{gpu_name}")
     models_dir = ROOT / settings.MODELS_DIR
     # A bare name such as yolo11s.pt is downloaded into models/ the first time, not into the current folder.
     base = Path(args.base) if Path(args.base).parent != Path(".") else models_dir / args.base

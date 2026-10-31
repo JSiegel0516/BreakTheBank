@@ -426,6 +426,37 @@ the `pip install` above adds only what is missing.
 
 Download `models/cards/weights/best.pt` back into the same place locally.
 
+### Training on a Windows PC with an NVIDIA GPU
+
+A desktop graphics card trains faster than a laptop and, unlike free Colab,
+does not stop when nobody touches the browser. Commands below are for
+PowerShell; on Windows the environment is activated with
+`.venv\Scripts\activate` instead of `source .venv/bin/activate`, or skipped
+by putting `uv run` in front of each command.
+
+1. Install [uv](https://docs.astral.sh/uv/) and Git, then clone the repository.
+2. In the project folder run `uv sync`. On Windows this installs the CUDA 12.6
+   build of PyTorch, about 3 GB, which is what `pyproject.toml` asks for there.
+   The normal NVIDIA driver is enough; the CUDA toolkit is not needed.
+3. Check the card is seen. It must print the card's name, not an error:
+   ```
+   uv run python -c "import torch; print(torch.cuda.get_device_name(0))"
+   ```
+4. Get the labelled photos from the shared folder (see
+   [data/README.md](../data/README.md)), unpack them under `data\raw\`, and
+   run `uv run python train.py --check-data` until every line says `ok`.
+5. Train. The first line printed is `training on cuda: <card name>`; if it
+   says `cpu`, stop and repeat step 3.
+   ```
+   uv run python train.py --rebuild --epochs 150 --name n150
+   ```
+   Set Settings → System → Power → Screen and sleep so the PC never sleeps
+   while plugged in, or the run pauses with the machine.
+6. Bring the run back. Weights are not in git, so right-click
+   `models\n150`, choose Compress to ZIP, and move the zip to the machine that
+   will compare and promote it (the shared folder or a USB stick), unzipping
+   it into that machine's `models/`. Then follow [Comparing models](#comparing-models).
+
 ## Glossary
 
 - **Bounding box**: a rectangle around one object in an image. Here, around a card's corner index.
