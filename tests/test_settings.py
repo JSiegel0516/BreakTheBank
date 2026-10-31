@@ -18,6 +18,10 @@ def test_shipped_settings_are_valid():
     settings.validate(settings)
 
 
+def test_no_rotated_copies_is_valid():
+    settings.validate(shipped(TRAIN_ROTATED_COPIES=()))
+
+
 @pytest.mark.parametrize("name, value, allowed", [
     ("FPS", 0, "number above 0"),
     ("CONFIRM_SECONDS", 0, "number above 0"),
@@ -46,6 +50,11 @@ def test_shipped_settings_are_valid():
     ("WEB_PORT", 0, "whole number from 1 to 65535"),
     ("WEB_PORT", 70000, "whole number from 1 to 65535"),
     ("WEB_PORT", "8765", "whole number from 1 to 65535"),
+    ("TRAIN_ROTATED_COPIES", (45,), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", (90, 90), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", [90], "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", (0,), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", ([90],), "tuple of different angles from 90, 180, 270"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:

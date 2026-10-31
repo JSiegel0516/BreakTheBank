@@ -1,10 +1,28 @@
-"""benchmark.py: scoring and the level x mode loop, with the detector faked."""
+"""benchmark.py: scoring, the level x mode loop, and the confusion listing, with the detector faked."""
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
 
 import settings
-from benchmark import Label, Tally, relight, run, score, table, val_images
+from benchmark import (
+    Corner,
+    Label,
+    Tally,
+    aspect_bucket,
+    confusion_summary,
+    default_confusions_csv,
+    rank_swaps,
+    read_corners,
+    relight,
+    run,
+    score,
+    table,
+    val_images,
+    val_samples,
+    wrong_name_rows,
+)
 from cardReader.cards import Detection
 from cardReader.preprocess import PreprocessConfig
 
@@ -86,8 +104,62 @@ def test_val_images_reads_a_yolo_list_and_its_labels_in_pixels(tmp_path):
     assert image.shape == (100, 200, 3)
     assert labels == [Label("2S", 100, 25, 20, 20)]
     assert samples[1][1] == []                                       # an image with no label file has no corners
+    assert [path.name for path, _, _ in val_samples(data)] == ["a.jpg", "b.jpg", "c.jpg"]
 
 
 def test_val_images_says_where_to_get_the_dataset_when_it_is_missing(tmp_path):
     with pytest.raises(SystemExit, match="train.py --rebuild"):
         list(val_images(tmp_path / "realVal.yaml"))
+
+
+def test_aspect_bucket_splits_upright_diagonal_and_sideways():
+    assert aspect_bucket(Label("6H", 0, 0, 20, 30)) == "upright"       # 0.67
+    assert aspect_bucket(Label("6H", 0, 0, 24, 30)) == "diagonal"      # 0.8 is the edge, still diagonal
+    assert aspect_bucket(Label("6H", 0, 0, 30, 24)) == "diagonal"      # 1.25 likewise
+    assert aspect_bucket(Label("6H", 0, 0, 30, 20)) == "sideways"      # 1.5
+
+
+def test_read_corners_records_a_wrong_name_a_missed_corner_and_ignores_extras():
+    image = np.zeros((200, 600, 3), np.uint8)
+    labels = [Label("6H", 100, 100, 20, 30), Label("9S", 300, 100, 30, 20), Label("KD", 500, 100, 20, 30)]
+
+    def detector(frame):
+        assert frame is image                                  # the photo goes in unchanged
+        return [Detection("6H", 0.95, 102, 98), Detection("6S", 0.7, 301, 101), Detection("BACK", 0.8, 50, 180)]
+
+    corners = read_corners([("photos/e1_a.jpg", image, labels)], detector)
+    assert [(c.label.name, c.predicted, c.conf) for c in corners] == [
+        ("6H", "6H", 0.95), ("9S", "6S", 0.7), ("KD", None, None)]
+    assert all(c.image == "photos/e1_a.jpg" for c in corners)
+    assert wrong_name_rows(corners) == [["e1_a.jpg", "e1", "9S", "6S", "0.700", "30.0", "20.0", "1.50"]]
+
+
+def corner(name, predicted, w=20.0, h=30.0):
+    return Corner("e0_x.jpg", Label(name, 0, 0, w, h), predicted, None if predicted is None else 0.9)
+
+
+def test_rank_swaps_count_each_pair_both_ways_and_skip_suit_only_mistakes():
+    corners = [corner("6H", "9H"), corner("9S", "6C"), corner("7D", "9D"), corner("6H", "6S"),
+               corner("6H", "6H"), corner("QH", None)]
+    assert rank_swaps(corners) == [("6/9", 2), ("7/9", 1)]
+
+
+def test_summary_gives_totals_swaps_and_wrong_name_rates_by_aspect_and_width():
+    corners = [corner("6H", "9H", 20, 30), corner("6H", "6H", 20, 30),      # upright, one wrong of two found
+               corner("9S", "9S", 30, 20), corner("9S", None, 30, 20),      # sideways, one found, one missed
+               corner("KD", "KD", 40, 40), corner("KD", "KD", 60, 60)]      # diagonal
+    text = confusion_summary(corners)
+    assert "6 labelled, 5 found, 1 wrong names, 1 missed" in text
+    assert "6/9  1" in text
+    lines = {line.split()[0]: line.split()[1:] for line in text.splitlines() if line.strip()}
+    assert lines["upright"] == ["2", "2", "1", "50.0%", "0"]               # labelled found wrong wrong% missed
+    assert lines["sideways"] == ["2", "1", "0", "0.0%", "1"]
+    assert lines["diagonal"] == ["2", "2", "0", "0.0%", "0"]
+    assert lines["narrow"][0] == "20-20"                                    # widths 20 20 | 30 30 | 40 60
+    assert lines["narrow"][1:] == ["2", "2", "1", "50.0%", "0"]
+    assert lines["wide"][0] == "40-60"
+
+
+def test_confusions_csv_defaults_to_the_models_run_folder():
+    assert default_confusions_csv("models/cards/weights/best.pt") == Path("models/cards/confusions.csv")
+    assert default_confusions_csv("yolo11n.pt") == Path("confusions.csv")

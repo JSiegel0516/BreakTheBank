@@ -9,6 +9,7 @@ python train.py     # teach the detector what cards look like, using everything 
 python read.py      # read cards off the table, in placement order
 python evaluate.py --log round1.csv --expected round1Expected.csv   # score a logged run against the real cards
 python benchmark.py --limit 20   # does preprocessing help the model in dim or bright light?
+python benchmark.py --confusions # which names does the model get wrong, and on what boxes?
 ```
 
 ## Quick start
@@ -84,7 +85,7 @@ BreakTheBank/                 (the folder git clone creates)
 ├── train.py                  build the training set from data/raw, then train the detector
 ├── read.py                   the live reader: camera -> detector -> tracker -> ordered cards
 ├── evaluate.py               scores a read.py --log against the cards really dealt
-├── benchmark.py              accuracy and speed of each preprocess mode on darkened and brightened photos
+├── benchmark.py              accuracy and speed of each preprocess mode on darkened and brightened photos; --confusions lists wrong names
 ├── settings.py               every tunable number and path, with comments
 ├── pyproject.toml            dependencies, pytest and ruff config; uv.lock pins the exact versions
 ├── CONTRIBUTING.md           branch, test, PR: how changes get in
@@ -117,7 +118,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_camera.py        stale detection and reopening with a faked capture
 │   ├── test_preprocess.py    the preprocess modes: shape, auto's branches, colour kept
 │   ├── test_evaluate.py      scoring a log: missed, extra, wrong names, the count
-│   ├── test_benchmark.py     benchmark scoring and the level x mode loop with a faked detector
+│   ├── test_benchmark.py     benchmark scoring, the level x mode loop, and the confusion listing with a faked detector
 │   ├── test_hud.py           the overlay draws
 │   ├── test_dataset.py       combining exports: class remap, splits, skips
 │   ├── test_synthetic.py     card art, geometry, composed images

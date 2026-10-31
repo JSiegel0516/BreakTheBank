@@ -1,4 +1,6 @@
 """dataset.py: combining YOLO exports into data/dataset. No model involved."""
+import cv2
+import numpy as np
 import pytest
 
 from cardReader import dataset
@@ -111,3 +113,56 @@ def test_build_adds_synthetic_images_and_keeps_them_out_of_real_val(tmp_path):
 def test_build_refuses_an_empty_dataset(tmp_path):
     with pytest.raises(SystemExit, match="dataset is empty"):
         dataset.build(tmp_path / "out", tmp_path / "nothing", tmp_path / "noart", tmp_path / "nobg", 0, 0.15)
+
+
+@pytest.mark.parametrize("degrees, expected", [
+    (90, (0.75, 0.1, 0.4, 0.2)),     # clockwise: (1 - cy, cx, h, w)
+    (180, (0.9, 0.75, 0.2, 0.4)),
+    (270, (0.25, 0.9, 0.4, 0.2)),    # counter-clockwise: (cy, 1 - cx, h, w)
+])
+def test_rotate_box_maps_a_yolo_box_exactly(degrees, expected):
+    assert dataset.rotate_box(0.1, 0.25, 0.2, 0.4, degrees) == pytest.approx(expected)
+
+
+def photo_export(root):
+    """An export with a real 40 x 20 photo in train and in valid: white, with a black block at the top left."""
+    e = export(root, "ex", ["AS"], {"train": {"t": [(0, 0.125, 0.25)]}, "valid": {"v": [(0, 0.5, 0.5)]}})
+    image = np.full((20, 40, 3), 255, np.uint8)
+    image[0:10, 0:10] = 0
+    for split, stem in (("train", "t"), ("valid", "v")):
+        cv2.imwrite(str(e / split / "images" / f"{stem}.png"), image)
+        (e / split / "images" / f"{stem}.jpg").unlink()
+    return e
+
+
+def test_rotated_copies_of_real_train_photos_have_turned_pixels_and_boxes(tmp_path, capsys):
+    photo_export(tmp_path / "raw")
+    out = tmp_path / "out"
+    dataset.build(out, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 0, 0.15, rotated_copies=(90, 270))
+    labels = read_labels(out, "train")
+    assert set(labels) == {"e0_t.txt", "e0_r90_t.txt", "e0_r270_t.txt"}
+    assert set(read_labels(out, "val")) == {"e0_v.txt"}
+    turned = cv2.imread(str(out / "images" / "train" / "e0_r90_t.png"))
+    assert turned.shape == (40, 20, 3)
+    assert turned[0:10, 10:20].max() == 0 and turned[10:, :].min() == 255   # the block is now at the top right
+    assert not (out / "images" / "train" / "e0_r90_t.png").samefile(out / "images" / "train" / "e0_t.png")
+    assert int(labels["e0_r90_t.txt"][0]) == CLASS_TO_ID["AS"]
+    assert [float(v) for v in labels["e0_r90_t.txt"][1:]] == pytest.approx([0.75, 0.125, 0.04, 0.04])
+    assert [float(v) for v in labels["e0_r270_t.txt"][1:]] == pytest.approx([0.25, 0.875, 0.04, 0.04])
+    printed = capsys.readouterr().out
+    assert "rotated copies 2" in printed and "train 3 (2 rotated copies), val 1" in printed
+
+
+def test_rotated_copies_skip_val_and_synthetic_images_and_leave_real_val_unchanged(tmp_path):
+    photo_export(tmp_path / "raw")
+    plain, turned = tmp_path / "plain", tmp_path / "turned"
+    dataset.build(plain, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 4, 0.5)
+    dataset.build(turned, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 4, 0.5, rotated_copies=(90, 270))
+    names = {split: {p.name for p in (turned / "images" / split).iterdir()} for split in ("train", "val")}
+    assert {n for n in names["train"] if "_r" in n} == {"e0_r90_t.png", "e0_r270_t.png"}
+    assert not any("_r" in n for n in names["val"])
+    for split in ("train", "val"):
+        plain_synthetic = {p.name for p in (plain / "images" / split).glob("synth_*")}
+        assert plain_synthetic == {n for n in names[split] if n.startswith("synth_")}
+    plain_val = (plain / "realVal.txt").read_text().replace(str(plain.resolve()), "")
+    assert (turned / "realVal.txt").read_text().replace(str(turned.resolve()), "") == plain_val

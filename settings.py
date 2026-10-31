@@ -20,6 +20,8 @@ MANIFEST_FILE = "data/manifest.json"    # what data/raw should hold (train.py --
 # Training.
 SYNTHETIC_IMAGES = 2000    # synthetic images added to the dataset. 0 = real data only.
 VAL_FRACTION = 0.15        # share of images held out to measure accuracy
+TRAIN_ROTATED_COPIES = (90, 270)  # each real train photo is also added turned clockwise by these degrees (90, 180
+                                  # or 270), so corners are seen sideways. 180 adds nothing: cards show both ways up.
 BASE_WEIGHTS = "yolo11n.pt"   # pretrained starting point, downloaded automatically. yolo11s.pt is bigger and slower.
 EPOCHS = 100
 PATIENCE = 20          # stop early after this many epochs with no validation improvement. best.pt is kept either way.
@@ -80,7 +82,8 @@ def validate(config) -> None:
     """Check the values in a settings module: this one, or any object with the same names.
 
     Raises ValueError listing every invalid value with its allowed range."""
-    from cardReader.preprocess import MODES  # imported here so settings.py stays cheap to import
+    from cardReader.dataset import ROTATIONS  # imported here so settings.py stays cheap to import
+    from cardReader.preprocess import MODES
     from cardReader.seats import MAX_PLAYERS
 
     rules = [
@@ -96,6 +99,9 @@ def validate(config) -> None:
         (("STILL_DISTANCE", "MATCH_DISTANCE"),
          lambda v: _is_number(v) and 0 < v <= 1, "a fraction above 0 and at most 1"),
         (("VAL_FRACTION",), lambda v: _is_number(v) and 0 < v < 1, "a fraction above 0 and below 1"),
+        (("TRAIN_ROTATED_COPIES",),
+         lambda v: isinstance(v, tuple) and all(_is_whole(d) and d in ROTATIONS for d in v) and len(set(v)) == len(v),
+         "a tuple of different angles from 90, 180, 270, or () for none"),
         (("CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
