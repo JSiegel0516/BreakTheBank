@@ -452,6 +452,10 @@ by putting `uv run` in front of each command.
    ```
    Set Settings → System → Power → Screen and sleep so the PC never sleeps
    while plugged in, or the run pauses with the machine.
+   If the run dies with `out of memory` when the first epoch's validation
+   starts, the data-loading processes have used up the system memory, not the
+   graphics card. Each one loads its own copy of PyTorch on Windows. Add
+   `--workers 4` (or 2 on 16 GB of memory with other programs open).
 6. Bring the run back. Weights are not in git, so right-click
    `models\n150`, choose Compress to ZIP, and move the zip to the machine that
    will compare and promote it (the shared folder or a USB stick), unzipping
