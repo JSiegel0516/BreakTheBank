@@ -1,0 +1,30 @@
+Model 5 - 2026-10-31 - YOLO11n, real photos also turned 90 and 270 degrees (run name n150rot)
+
+What:      YOLO11n, up to 150 epochs, early-stopped at 75 (best epoch 55, patience 20),
+           1024 px, batch 8, 1.65 h on an NVIDIA GPU (Windows, device 0).
+           optimizer=auto picked SGD (lr0 0.01): over 10,000 updates with the larger
+           train split. Model 3 got AdamW (lr 0.000175) under the same setting.
+Data:      the model 3 exports, plus every real train photo again at 90 and 270 degrees
+           (TRAIN_ROTATED_COPIES, 3,068 copies, train only): 6,289 train / 633 val images.
+           Validation is the same 633 images as model 3; realVal.txt is the same 320 photos.
+Result:    full val (633 images):      P 0.985  R 0.983  mAP50 0.991  mAP50-95 0.784
+           (model 3, same 633:          P 0.979  R 0.978  mAP50 0.989  mAP50-95 0.780)
+
+Compared with model 3 on the same real-photo validation (data/dataset/realVal.yaml, 320 images,
+3,449 labelled corners), python benchmark.py --confusions (INPUT_SIZE 1280, CONFIDENCE 0.6,
+photos unchanged):
+                                       model 3                      model 5
+  found                                3,356                        3,386
+  wrong names                          18                           17
+  missed corners                       93                           63
+  rank swaps 6/9, 7/9                  3, 2                         2, 2
+  missed: upright / diagonal / sideways  38 / 32 / 23               30 / 23 / 10
+  wrong:  upright / diagonal / sideways  10 / 6 / 2                 10 / 3 / 4
+
+Promoted 2026-11-01: wrong names 17 <= 18 and missed corners 63 <= 93.
+Top rank swaps (all 320): J/Q 3, 6/9 2, 7/9 2, 9/10 2.
+yolo val on the 320 real photos (realVal.yaml, imgsz 1024):
+                                       P 0.977  R 0.984  mAP50 0.984  mAP50-95 0.630
+           (model 3, same 320:                            mAP50 0.981  mAP50-95 0.626)
+Files:     weights/best.pt; results.png / results.csv = training curves; confusions.csv = every
+           wrong-name box on the real photos.

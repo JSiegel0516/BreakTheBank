@@ -18,6 +18,10 @@ def test_shipped_settings_are_valid():
     settings.validate(settings)
 
 
+def test_no_rotated_copies_is_valid():
+    settings.validate(shipped(TRAIN_ROTATED_COPIES=()))
+
+
 @pytest.mark.parametrize("name, value, allowed", [
     ("FPS", 0, "number above 0"),
     ("CONFIRM_SECONDS", 0, "number above 0"),
@@ -41,6 +45,11 @@ def test_shipped_settings_are_valid():
     ("PREPROCESS_BRIGHT_ABOVE", 300, "number from 0 to 255"),
     ("PREPROCESS_CLAHE_CLIP", 0, "number above 0"),
     ("PREPROCESS_CLAHE_TILES", 0, "whole number of 1 or more"),
+    ("TRAIN_ROTATED_COPIES", (45,), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", (90, 90), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", [90], "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", (0,), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", ([90],), "tuple of different angles from 90, 180, 270"),
     ("CAMERA_ROTATION", 45, "one of 0, 90, 180, 270"),
     ("CAMERA_ROTATION", 90.0, "one of 0, 90, 180, 270"),
     ("WEB_PORT", 0, "whole number from 1 to 65535"),

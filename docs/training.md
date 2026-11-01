@@ -46,13 +46,27 @@ reused except the final layer, which is rebuilt for 53 classes instead of 80.
 
 | Source | Train images | Val images | What it adds |
 |---|---|---|---|
-| `playingCards` (Roboflow) | 303 | 49 | real photos, one background, cards spread out |
 | `blackjackCorners` (Roboflow, relabelled) | 498 | 152 | real photos, many backgrounds and lighting, overlapping hands |
+| `cardsComplete` (Roboflow, corners completed) | 733 | 119 | composited photos of many cards |
+| `playingCards` (Roboflow) | 303 | 49 | real photos, one background, cards spread out |
+| rotated copies of the real train photos | 3,068 | 0 | every real train photo again, turned 90 and 270 degrees |
 | synthetic (`cardReader/synthetic.py`) | 1,687 | 313 | unlimited extra layouts, exact labels, the only BACK examples |
-| **Total** | **2,488** | **514** | |
+| **Total** | **6,289** | **633** | |
 
-There are 1,002 real photos in total and about 10,400 labelled corner boxes in
+There are 1,854 real photos in total and about 10,400 labelled corner boxes in
 `blackjackCorners` alone.
+
+**Rotated copies.** A face-up card prints its index twice, once upright and
+once upside down, so every real photo already shows both of those. What the
+real photos rarely show is an index lying sideways. `train.py --rebuild`
+therefore adds each real train photo again turned 90 degrees clockwise
+(`r90_` in the file name) and 270 degrees (`r270_`), with every box turned
+exactly to match. The angles are `TRAIN_ROTATED_COPIES` in `settings.py`; `()`
+turns the copies off. A 180 degree copy is not made: it would only swap the
+upright and upside-down indices the photo already has. The copies go to train
+only, so the validation photos and `realVal.yaml` stay the same exam as before.
+Synthetic images get no copies, because `synthetic.py` already turns the card
+art to any angle.
 
 Note for reporting results: the validation set mixes real and synthetic images.
 Synthetic images are easier, so the overall score is somewhat optimistic. The
@@ -85,6 +99,7 @@ Augmentations used:
 | Scale | up to +/-50% | cards at different camera heights |
 | Translate | up to +/-10% | cards anywhere in the frame |
 | Rotation | up to +/-15 degrees (set in `train.py`) | cards are rarely perfectly straight |
+| Rotated copies | real train photos added again at 90 and 270 degrees (`TRAIN_ROTATED_COPIES`), made once by `--rebuild` | sideways corner indices, with exact boxes |
 | Colour | hue 0.015, saturation 0.7, brightness 0.4 | different lighting and tables |
 | Flips | off (set in `train.py`) | a mirrored corner index is not a real card |
 
@@ -178,7 +193,8 @@ When it triggers, Ultralytics prints a line like
 | Optimizer | AdamW, learning rate 0.000175, momentum 0.9, weight decay 0.0005 | chosen by Ultralytics (`optimizer=auto`) |
 | Learning rate schedule | 3 warm-up epochs, then linear decay to 1% | Ultralytics defaults |
 | Augmentation | mosaic, scale, translate, rotation +/-15 degrees, colour; no flips | `train.py` and Ultralytics defaults |
-| Data | 2,488 train / 514 val images (1,002 real, 2,000 synthetic) | `data/raw`, `SYNTHETIC_IMAGES` |
+| Rotated copies | real train photos added again at 90 and 270 degrees | `TRAIN_ROTATED_COPIES` |
+| Data | 6,289 train / 633 val images (1,854 real, 3,068 rotated copies, 2,000 synthetic) | `data/raw`, `SYNTHETIC_IMAGES` |
 | Hardware | Apple M4 Pro GPU (MPS), about 3.6 minutes per epoch | detected by `train.py` |
 | Software | Python 3.12, PyTorch 2.14, Ultralytics 8.4 | `pyproject.toml`, pinned in `uv.lock` |
 
@@ -217,13 +233,15 @@ record. See [data/README.md](../data/README.md) for the exports and where they l
 python train.py --rebuild --epochs 1
 ```
 
-`--rebuild` combines every export in `data/raw/labeled/` and adds 2,000 synthetic
+`--rebuild` combines every export in `data/raw/labeled/`, adds the rotated
+copies of the real train photos (`TRAIN_ROTATED_COPIES`), and adds 2,000 synthetic
 images (`SYNTHETIC_IMAGES` in `settings.py`). Read the first lines it prints:
 
 ```
-  blackjackCorners: train 498, val 152, skipped (no boxes) 0
-  playingCards: train 303, val 49, skipped (no boxes) 1
-dataset: train 2488, val 514 -> data/dataset
+  blackjackCorners: train 498, val 152, rotated copies 996, skipped (no boxes) 0
+  cardsComplete: train 733, val 119, rotated copies 1466, skipped (no boxes) 0
+  playingCards: train 303, val 49, rotated copies 606, skipped (no boxes) 1
+dataset: train 6289 (3068 rotated copies), val 633 -> data/dataset
 ```
 
 Check that every export you expect is listed with sensible counts. If one says
@@ -302,7 +320,7 @@ It prints the same P, R, and mAP table, with a row for every card, and writes
 the charts to `models/val/`. Look for the cards with the lowest mAP50; those
 need more examples.
 
-To score it on **real photos only** (the 201 real validation images, no
+To score it on **real photos only** (the 320 real validation images, no
 synthetic ones), which is the number to report:
 
 ```bash
@@ -411,20 +429,83 @@ project's deck. To use a different deck, or to add the card back:
 
 ### Training on Google Colab
 
-A Colab GPU is several times faster than a laptop. Zip the project without
-`.venv`, upload it, then in a notebook:
+A Colab GPU is several times faster than a laptop. The round trip below trains
+a run named `model_5_2026-10-29_n150rot`; put that day's date in the name when
+you train another.
+
+**1. Locally: test, then zip.** A one-epoch run with few synthetic images proves
+the build and training work before Colab's time is spent. Give it its own
+`--name`: without one, the run is written into `models/cards/` and replaces the
+live model.
+
+```bash
+python train.py --rebuild --epochs 1 --synthetic 50 --name smoke
+zip -qr BreakTheBank.zip . -x '.venv/*' 'data/dataset/*' '.git' '.git/*' '*.zip' \
+    '*/__pycache__/*' '.pytest_cache/*' '.ruff_cache/*' 'models/*/weights/*' 'models/*.pt' \
+    'models/smoke/*' 'data/merged/*' 'data/synthetic/*' 'data/raw/frames/*'
+```
+
+The zip holds the code and `data/raw` (about 540 MB). `data/raw/unused` is
+never trained on, but it is in `data/manifest.json`, so it goes along to keep
+the data check quiet. The zip leaves out the virtual environment, the built
+dataset and every weights file. Colab builds its own dataset and downloads
+`yolo11n.pt`.
+
+**2. On Colab: unzip, install, train.** Choose Runtime, Change runtime type,
+T4 GPU. Upload `BreakTheBank.zip` with the Files pane (or `files.upload()`),
+then run each line in a cell:
 
 ```
-!unzip BreakTheBank.zip
+!unzip -q BreakTheBank.zip -d BreakTheBank
+%cd BreakTheBank
 !pip install -q ultralytics "opencv-python<5" pyyaml pillow
-!cd BreakTheBank && python train.py --rebuild
+!python train.py --rebuild --epochs 150 --name model_5_2026-10-29_n150rot
 ```
 
 Do not `uv sync` on Colab: `uv.lock` pins CPU-only PyTorch on Linux so the CI
 stays small, which would hide Colab's GPU. Colab already ships a CUDA PyTorch;
-the `pip install` above adds only what is missing.
+the `pip install` above adds only what is missing. Note how long the run takes,
+for the run's `notes.txt`.
 
-Download `models/cards/weights/best.pt` back into the same place locally.
+**3. On Colab: zip the run and download it.**
+
+```
+!cd models && zip -qr ../model_5_2026-10-29_n150rot.zip model_5_2026-10-29_n150rot
+from google.colab import files
+files.download("model_5_2026-10-29_n150rot.zip")
+```
+
+The zip holds `weights/best.pt`, `args.yaml`, `results.csv`, `results.png` and
+the other charts. Locally, unpack it into `models/`:
+
+```bash
+unzip -q ~/Downloads/model_5_2026-10-29_n150rot.zip -d models/
+```
+
+Only the live model's weights are tracked in git. The run's `best.pt` stays
+local until it is promoted.
+
+**4. Locally: validate, compare, promote, commit.** The rotated copies never
+reach val, so the `realVal.yaml` from step 1 is the same exam Colab used and
+the earlier models were scored on. Score the live model and the new run on it,
+and list the names each one gets wrong:
+
+```bash
+yolo val model=models/cards/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=cards/valReal
+yolo val model=models/model_5_2026-10-29_n150rot/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=model_5_2026-10-29_n150rot/valReal
+python benchmark.py --confusions
+python benchmark.py --confusions --model models/model_5_2026-10-29_n150rot/weights/best.pt
+```
+
+Write the run's `notes.txt` and add the comparison to
+[results.md](results.md). Promote the new run only if it has no more wrong
+names and no more missed corners than the live model, then commit:
+
+```bash
+python train.py --promote models/model_5_2026-10-29_n150rot
+git add models/cards models/model_5_2026-10-29_n150rot docs/results.md
+git commit -m "Promote model 5: real photos also turned 90 and 270 degrees"
+```
 
 ### Training on a Windows PC with an NVIDIA GPU
 
