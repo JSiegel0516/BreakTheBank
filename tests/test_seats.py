@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import pytest
 
-from cardReader.seats import MAX_PLAYERS, SeatLayout, ZoneEditor
+from cardReader.seats import MAX_PLAYERS, SeatLayout, ZoneEditor, load_seat_names, save_seat_names
 
 W, H = 1920, 1080
 DOWN, MOVE, UP, RIGHT = cv2.EVENT_LBUTTONDOWN, cv2.EVENT_MOUSEMOVE, cv2.EVENT_LBUTTONUP, cv2.EVENT_RBUTTONDOWN
@@ -301,3 +301,29 @@ def test_old_single_layout_file_still_loads(tmp_path):
     path.write_text(__import__("json").dumps(old))
     loaded = SeatLayout.load(path, W, H)
     assert loaded.players == 4 and len(loaded.seats) == 5
+
+
+def test_seat_names_save_beside_the_layouts_and_bad_entries_are_skipped(tmp_path):
+    path = tmp_path / "seats.json"
+    assert load_seat_names(path) == {}
+    SeatLayout(3, W, H).save(path)
+    save_seat_names(path, {"P1": "Ann"})
+    SeatLayout(4, W, H).save(path)                          # saving zones keeps the names
+    assert load_seat_names(path) == {"P1": "Ann"}
+    assert SeatLayout.load(path, W, H, players=3) is not None
+    data = __import__("json").loads(path.read_text())
+    path.write_text(__import__("json").dumps({**data, "names": {"P1": "Ann", "P2": 7}}))
+    assert load_seat_names(path) == {"P1": "Ann"}
+    path.write_text(__import__("json").dumps({**data, "names": ["Ann"]}))
+    assert load_seat_names(path) == {}
+
+
+def test_zones_saved_for_more_than_max_players_stay_in_the_file_and_are_never_loaded(tmp_path):
+    path = tmp_path / "seats.json"
+    zone = {"name": "P", "polygon": [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2]]}
+    path.write_text(__import__("json").dumps({"last": 7, "layouts": {"7": [zone] * 8, "6": [zone] * 7}}))
+    assert MAX_PLAYERS == 5
+    assert SeatLayout.load(path, W, H) is None
+    assert SeatLayout.load(path, W, H, players=6) is None
+    SeatLayout(2, W, H).save(path)
+    assert set(__import__("json").loads(path.read_text())["layouts"]) == {"2", "6", "7"}

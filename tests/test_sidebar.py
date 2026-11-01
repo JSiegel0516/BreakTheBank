@@ -44,9 +44,13 @@ def reader(tmp_path):
     return reader
 
 
+MODEL = {"current": "models/cards/weights/best.pt",
+         "choices": [{"path": "models/cards/weights/best.pt", "label": "cards (live: model_5)"}]}
+
+
 def snapshot_of(reader, flash=None):
     return build_snapshot(reader, fps=12.345, stage_ms={"detect": 31.26, "preprocess": 0.44}, no_signal=False,
-                          capture_mode=False, showing_raw=True, flash=flash)
+                          capture_mode=False, showing_raw=True, flash=flash, model=MODEL)
 
 
 def test_snapshot_holds_the_count_grid_hands_and_status(reader):
@@ -63,21 +67,24 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert snapshot["unrevealed"] == 0
 
     hands = {hand["seat"]: hand for hand in snapshot["hands"]}
-    assert list(hands) == ["DEALER", "P1", "P2", "P3"]
-    assert hands["DEALER"]["kind"] == "dealer" and hands["DEALER"]["hint"] is None
+    assert list(hands) == ["dealer", "P1", "P2", "P3"]
+    assert [hand["name"] for hand in snapshot["hands"]] == ["DEALER", "P1", "P2", "P3"]
+    assert hands["dealer"]["kind"] == "dealer" and hands["dealer"]["hint"] is None
     assert [card["label"] for card in hands["P1"]["cards"]] == ["KS", "6H"]
     assert hands["P1"]["total"] == "16" and hands["P1"]["hint"] == "stand"   # hard 16 against a 6
     assert hands["P2"]["hint"] is None                                       # one card: no hint
-    assert hands["P3"] == {"seat": "P3", "kind": "player", "cards": [], "total": "-", "hint": None}
+    assert hands["P3"] == {"seat": "P3", "name": "P3", "kind": "player", "cards": [], "total": "-", "hint": None}
 
     assert snapshot["players"] == 3 and snapshot["edit_help"] == []
     keys = {entry["key"]: entry for entry in snapshot["keys"]}
     assert [(entry["key"], entry["label"]) for entry in snapshot["keys"]] == KEY_LIST
     assert keys["R"]["buttons"] == [{"action": "new_round", "text": "r"}]
     assert keys["X"]["buttons"] == [{"action": "rescan", "text": "x"}]
-    assert [button["text"] for button in keys["1-7"]["buttons"]] == ["1", "2", "3", "4", "5", "6", "7"]
+    assert [button["text"] for button in keys["1-5"]["buttons"]] == ["1", "2", "3", "4", "5"]
+    assert keys["N"]["buttons"] == [{"action": "placement_numbers", "text": "n"}]
     assert keys["E"]["buttons"] == keys["S"]["buttons"] == keys["V"]["buttons"] == keys["L"]["buttons"] == []
     assert (snapshot["preprocess"], snapshot["showing_raw"], snapshot["no_signal"]) == ("off", True, False)
+    assert snapshot["model"] == MODEL
     assert snapshot["flash"] == {"text": "new round: numbering restarts at 1", "seconds": 1.5}
     assert snapshot["timing"] == {"fps": 12.3, "detect_ms": 31.3, "preprocess_ms": 0.4}
     assert json.loads(json.dumps(snapshot)) == snapshot
@@ -87,6 +94,13 @@ def test_snapshot_shows_the_edit_help_while_editing(reader):
     reader.editor.active = True
     assert snapshot_of(reader)["edit_help"] == EDIT_HELP
     assert snapshot_of(reader)["flash"] is None
+
+
+def test_snapshot_hands_carry_the_seat_id_and_its_display_name(reader):
+    reader.rename_seat("P1", "Ann")
+    reader.rename_seat("dealer", "House")
+    hands = {hand["seat"]: hand["name"] for hand in snapshot_of(reader)["hands"]}
+    assert hands == {"dealer": "House", "P1": "Ann", "P2": "P2", "P3": "P3"}
 
 
 @pytest.fixture
@@ -127,22 +141,28 @@ def test_posted_actions_are_drained_in_order_and_bad_posts_are_refused(server):
     assert server.drain_actions() == []
     assert post(server, b'{"action": "new_round"}') == 204
     assert post(server, b'{"action": "quit"}') == 204
-    assert server.drain_actions() == ["new_round", "quit"]
+    assert post(server, b'{"action": "rename_seat", "seat": "P1", "name": "Ann"}') == 204
+    assert server.drain_actions() == [{"action": "new_round"}, {"action": "quit"},
+                                      {"action": "rename_seat", "seat": "P1", "name": "Ann"}]
     assert server.drain_actions() == []
 
     assert post(server, b'{"action": "quit"}', content_type="text/plain") == 415   # what another site could send
     assert post(server, b"not json") == 400
+    assert post(server, b'["new_round"]') == 400
+    assert post(server, b'"new_round"') == 400
     assert post(server, b'{"action": 7}') == 400
     assert post(server, b'{"button": "quit"}') == 400
+    assert post(server, b'{"action": "rename_seat", "seat": "P1", "name": 5}') == 400
+    assert post(server, b'{"action": "rename_seat", "seat": ["P1"], "name": "Ann"}') == 400
     assert post(server, b'{"action": "' + b"x" * 2000 + b'"}') == 400
     assert server.drain_actions() == []
 
 
 def test_every_button_presses_a_key_the_reader_handles():
     assert ACTION_KEYS["players_3"] == ord("3") and ACTION_KEYS["new_shoe"] == ord("R")
-    assert set(ACTION_KEYS) == {f"players_{n}" for n in range(1, 8)} | {
-        "grey_boxes", "new_round", "rescan", "new_shoe", "reconnect", "preprocess", "raw_or_enhanced",
-        "turn_left", "turn_right", "quit"}
+    assert set(ACTION_KEYS) == {f"players_{n}" for n in range(1, 6)} | {
+        "placement_numbers", "grey_boxes", "new_round", "rescan", "new_shoe", "reconnect", "preprocess",
+        "raw_or_enhanced", "turn_left", "turn_right", "quit"}
     assert set(BUTTONS) <= {key for key, _ in KEY_LIST}
 
 

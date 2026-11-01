@@ -66,7 +66,7 @@ PREPROCESS_CLAHE_CLIP = 2.0      # "clahe": how far local contrast may be stretc
 PREPROCESS_CLAHE_TILES = 8       # "clahe": the frame is split into this many tiles across and down
 
 # Table.
-PLAYERS = 5                # player seats when nothing is saved yet; change live with keys 1-7 in read.py
+PLAYERS = 5                # player seats when nothing is saved yet; change live with keys 1-5 in read.py
 SEATS_FILE = "data/seats.json"  # zones edited with the mouse (key E in read.py), one layout per player count
 
 

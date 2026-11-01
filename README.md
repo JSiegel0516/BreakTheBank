@@ -22,7 +22,8 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
 2. Point a camera straight down at the table (see [Setting up the camera](docs/reading.md#setting-up-the-camera)).
 3. Activate the environment (`source .venv/bin/activate`), then run `python read.py`.
    Place cards one at a time. Each gets a number in the order placed.
-4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared.
+4. Press `1` to `5` for the number of players. Rounds end on their own when the table is cleared.
+   The tags on the video show each card's name; press `N` to add its placement number.
    If a card is misread, press `X` before the round ends to read the round again; earlier
    rounds stay counted. Press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
    `no signal`, reconnect the camera's cable or wake the phone and press `C` to reopen it.
@@ -40,7 +41,9 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
    (`http://127.0.0.1:8765/`) in a browser. The window then shows only the video, and the
    page shows the count, the Cards Left grid, every hand with a basic strategy hint, the keys,
    and the status, sized to fit the browser window. Its buttons do what the keys do;
-   `python read.py --no-display --web` runs with the page alone.
+   `python read.py --no-display --web` runs with the page alone. Click a seat's name
+   under Hands to give it the player's name; names are kept between runs. The `model`
+   dropdown switches to any trained run in `models/` without restarting.
    See [Browser dashboard](docs/reading.md#browser-dashboard), which also covers opening it on a phone.
 7. A covered card turns grey and stays in its hand. After 5 seconds out of sight
    (`HIDDEN_SECONDS` in `settings.py`) it counts as picked up: it leaves its hand but stays
@@ -200,7 +203,7 @@ and check that `which python` ends in `BreakTheBank/.venv/bin/python`.
 
 Every tunable number is in `settings.py`, with a comment on each. `read.py` and
 `train.py` check them at start-up and stop with a list of any value out of range,
-for example `PLAYERS = 9: must be a whole number from 1 to 7`.
+for example `PLAYERS = 9: must be a whole number from 1 to 5`.
 To change the code, read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ## Conventions

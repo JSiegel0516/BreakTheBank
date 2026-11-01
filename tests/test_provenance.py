@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-from cardReader.provenance import check_manifest, describe_export, live_model, promote, write_manifest
+from cardReader.provenance import available_models, check_manifest, describe_export, live_model, promote, write_manifest
 
 
 def fake_export(raw, group, name, labels=("0 0.5 0.5 0.05 0.05",), roboflow=True):
@@ -101,3 +101,19 @@ def test_promote_refuses_a_folder_without_weights(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(SystemExit, match="no weights/best.pt"):
         promote(tmp_path / "empty", tmp_path / "cards")
+
+
+def test_available_models_lists_every_run_with_weights_and_the_live_one_first(tmp_path):
+    models = tmp_path / "models"
+    for name in ("model_2", "model_1", "cards"):
+        (models / name / "weights").mkdir(parents=True)
+        (models / name / "weights" / "best.pt").write_bytes(b"weights")
+    (models / "model_3_no_weights").mkdir()
+    (models / "notes.txt").write_text("not a run")
+    (models / "cards" / "LIVE.txt").write_text("model_2\npromoted 2026-11-01\n")
+    assert available_models(models) == [
+        ("cards (live: model_2)", models / "cards" / "weights" / "best.pt"),
+        ("model_1", models / "model_1" / "weights" / "best.pt"),
+        ("model_2", models / "model_2" / "weights" / "best.pt"),
+    ]
+    assert available_models(tmp_path / "missing") == []

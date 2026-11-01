@@ -4,14 +4,17 @@ The camera looks straight down with the dealer at the top of the image. The
 dealer gets a strip across the top; the players sit on an arc below it, like a
 real blackjack table, P1 on the left. Each player seat is a rectangle turned to
 face the dealer. The layout is rebuilt whenever the player count changes (keys
-1-7 in read.py), so nothing has to be drawn by hand.
+1-5 in read.py), so nothing has to be drawn by hand.
 
 Any zone can then be adjusted with the mouse in edit mode (ZoneEditor, key E in
 read.py): drag a corner, drag a '+' at the middle of an edge to add a corner,
 right-click a corner to remove it, drag inside to move the whole zone, or
 right-click inside to reset it to the template. Edited layouts are saved to
 data/seats.json, one per player count, as fractions of the frame so they work
-at any camera resolution.
+at any camera resolution. Layouts saved for more than MAX_PLAYERS stay in the
+file but are never loaded. The same file keeps the players' display names
+under "names" (seat id -> name, shared by every player count; see
+load_seat_names and save_seat_names). Seat ids themselves never change.
 
     +------------------------------------+
     |        [      DEALER      ]        |
@@ -30,7 +33,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-MAX_PLAYERS = 7
+MAX_PLAYERS = 5
 DEALER = "dealer"
 
 # Layout as fractions of the frame, tuned for a 16:9 overhead view.
@@ -87,19 +90,23 @@ class SeatLayout:
             {"name": seat.name, "polygon": [[round(x / W, 5), round(y / H, 5)] for x, y in seat.polygon]}
             for seat in self.seats]
         data["last"] = self.players
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2))
+        self._write(path, data)
 
     @classmethod
     def load(cls, path: str | Path, width: int, height: int, players: int | None = None) -> SeatLayout | None:
         """The layout saved for `players` (default: the count saved last), scaled to this
-        frame size, or None if nothing was saved for that count."""
+        frame size, or None if nothing was saved for that count or it is above MAX_PLAYERS."""
         data = cls._read(Path(path))
         players = players or data.get("last")
         seats = data["layouts"].get(str(players))
-        if seats is None:
+        if seats is None or players > MAX_PLAYERS:
             return None
         return cls(players, width, height, [[(x * width, y * height) for x, y in seat["polygon"]] for seat in seats])
+
+    @staticmethod
+    def _write(path: Path, data: dict):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2))
 
     @staticmethod
     def _read(path: Path) -> dict:
@@ -136,6 +143,23 @@ class SeatLayout:
         low, high = np.array([margin, margin]), np.array([W - 1 - margin, H - 1 - margin])
         shift = np.maximum(low - pts.min(axis=0), 0) - np.maximum(pts.max(axis=0) - high, 0)
         return (pts + shift).astype(np.int32)
+
+
+def load_seat_names(path: str | Path) -> dict[str, str]:
+    """The display names saved in the seats file (seat id -> name), or {} if none were saved.
+    Entries that are not text are skipped."""
+    names = SeatLayout._read(Path(path)).get("names")
+    if not isinstance(names, dict):
+        return {}
+    return {seat: name for seat, name in names.items() if isinstance(name, str)}
+
+
+def save_seat_names(path: str | Path, names: dict[str, str]):
+    """Store the display names in the seats file, keeping every saved layout."""
+    path = Path(path)
+    data = SeatLayout._read(path)
+    data["names"] = dict(names)
+    SeatLayout._write(path, data)
 
 
 class ZoneEditor:

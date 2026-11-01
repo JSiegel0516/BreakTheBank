@@ -6,6 +6,11 @@ everything in between, so it can be driven in a test without either:
     reader = Reader(tracker, layout, hud, seats_file, frames_dir, log=csv_writer)
     events = reader.process(frame, detections)     # tracker -> seats -> print, log, flash
     keep_going = reader.handle_key(key, frame)     # the keys listed in hud.KEY_LIST (C is read.py's)
+    reader.rename_seat("P1", "Ann")                # from the browser page; "" restores P1
+
+reader.seat_names maps seat ids to display names, loaded from and saved to the
+seats file and shared by every player count. They are for people only: events
+are printed and logged with the seat ids, so evaluate.py reads any run.
 
 reader.preprocess (key P) and reader.show_enhanced (key Shift+V) tell read.py
 how to preprocess each frame for the detector and which frame to show.
@@ -32,13 +37,14 @@ import numpy as np
 
 from .blackjack import ShoeCount, shoe_count
 from .cards import Detection, Event
-from .hud import VIEWS, Hud
+from .hud import VIEWS, Hud, seat_title
 from .preprocess import MODES
-from .seats import MAX_PLAYERS, SeatLayout, ZoneEditor
+from .seats import MAX_PLAYERS, SeatLayout, ZoneEditor, load_seat_names, save_seat_names
 from .table import Table
 from .tracker import CardTracker
 
 LOG_HEADER = ["time", "frame", "event", "order", "card", "seat", "running_count", "x", "y"]
+MAX_NAME_LENGTH = 16  # characters in a seat's display name
 
 
 class Reader:
@@ -54,6 +60,7 @@ class Reader:
         self.preprocess = preprocess  # read.py preprocesses each frame with this mode before detection
         self.show_enhanced = True     # False: the window shows the raw camera frame instead (key Shift+V)
         self.rotation = rotation % 4  # read.py turns each camera frame this many quarter turns clockwise
+        self.seat_names = load_seat_names(self.seats_file)  # seat id -> display name, for renamed seats only
 
     @property
     def layout(self) -> SeatLayout:
@@ -108,6 +115,9 @@ class Reader:
         elif k == ord("g"):
             self.hud.show_unmatched = not self.hud.show_unmatched
             self.hud.flash("unmatched boxes shown" if self.hud.show_unmatched else "unmatched boxes hidden")
+        elif k == ord("n"):
+            self.hud.show_order = not self.hud.show_order
+            self.hud.flash("placement numbers shown" if self.hud.show_order else "placement numbers hidden")
         elif k == ord("v"):
             self.hud.view = "game" if self.hud.view == "cards_left" else "cards_left"
             self.hud.flash(f"{VIEWS[self.hud.view]} view")
@@ -164,6 +174,27 @@ class Reader:
         saved = SeatLayout.load(self.seats_file, width, height, n)
         self.set_layout(saved or SeatLayout(n, width, height))
         self.hud.flash(f"{n} player{'s' if n > 1 else ''}: {'your saved layout' if saved else 'template layout'}")
+
+    def rename_seat(self, seat: str, name: str) -> bool:
+        """Give a seat of the current layout a display name, trimmed, and save it to seats_file.
+        An empty name restores the default (P1, DEALER). Returns False, with a message and
+        nothing saved, for a seat not at the table or a name over MAX_NAME_LENGTH characters."""
+        default = seat_title(seat)
+        name = name.strip()
+        if seat not in self.layout.names():
+            self.hud.flash(f"no seat {seat} at a {self.layout.players}-player table", 2.5)
+            return False
+        if len(name) > MAX_NAME_LENGTH:
+            self.hud.flash(f"names can be at most {MAX_NAME_LENGTH} characters", 2.5)
+            return False
+        if name:
+            self.seat_names[seat] = name
+            self.hud.flash(f"{default} is now {name}")
+        else:
+            self.seat_names.pop(seat, None)
+            self.hud.flash(f"{default} is {default} again")
+        save_seat_names(self.seats_file, self.seat_names)
+        return True
 
     def toggle_edit(self):
         """Enter zone editing, or leave it and save the zones."""

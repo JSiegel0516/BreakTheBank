@@ -1,7 +1,9 @@
+import gc
 import json
 import sys
 import time
 import urllib.request
+import weakref
 from types import ModuleType, SimpleNamespace
 
 import cv2
@@ -38,13 +40,14 @@ class FakeCamera:
         pass
 
 
-def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args):
+def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args, make_detector=None):
     """Run read.main() on a fake camera and detector with no real window, pressing one of `keys` per frame.
-    args: extra command-line arguments. Saved frames go to tmp_path / "frames"."""
+    args: extra command-line arguments. Saved frames go to tmp_path / "frames". Every model load
+    returns detect, unless make_detector is given: then each load calls make_detector(weights)."""
     monkeypatch.setattr(read, "Camera", lambda *a: cam)
     detect.device_used = "mps"
     detector = ModuleType("cardReader.detector")
-    detector.Detector = lambda *a: detect
+    detector.Detector = (lambda weights, *a: make_detector(weights)) if make_detector else (lambda *a: detect)
     monkeypatch.setitem(sys.modules, "cardReader.detector", detector)
     monkeypatch.setattr(read, "live_model", lambda path: None)
     monkeypatch.setattr(read.SeatLayout, "load", staticmethod(lambda *a: None))
@@ -275,7 +278,8 @@ class RecordingServer(SidebarServer):
 
 class PostingCamera(FakeCamera):
     """A live camera that presses page buttons: each action in posts[n] is POSTed to the dashboard
-    just before read n, so several can wait for the reader at once."""
+    just before read n, so several can wait for the reader at once. An action is a bare name or
+    the whole body as a dict."""
 
     def __init__(self, servers, posts):
         super().__init__()
@@ -283,15 +287,16 @@ class PostingCamera(FakeCamera):
 
     def read(self):
         for action in self.posts.get(self.reads + 1, []):
-            body = json.dumps({"action": action}).encode()
+            body = json.dumps(action if isinstance(action, dict) else {"action": action}).encode()
             request = urllib.request.Request(self.servers[0].url + "action", data=body,
                                              headers={"Content-Type": "application/json"})
             assert urllib.request.urlopen(request, timeout=5).status == 204
         return super().read()
 
 
-def run_with_page(monkeypatch, tmp_path, posts, keys, *args, detect=lambda frame: []):
+def run_with_page(monkeypatch, tmp_path, posts, keys, *args, detect=lambda frame: [], make_detector=None):
     """Run read.main() with a real dashboard on a free port, pressing page buttons per `posts`.
+    make_detector: as for run_reader.
     Returns (the server, the key codes Reader.handle_key received other than 255, the camera)."""
     servers, handled = [], []
     handle_key = read.Reader.handle_key
@@ -308,7 +313,7 @@ def run_with_page(monkeypatch, tmp_path, posts, keys, *args, detect=lambda frame
 
     monkeypatch.setattr(read, "SidebarServer", open_server)
     cam = PostingCamera(servers, posts)
-    run_reader(monkeypatch, tmp_path, cam, keys, detect, "--web", *args)
+    run_reader(monkeypatch, tmp_path, cam, keys, detect, "--web", *args, make_detector=make_detector)
     return servers[0], handled, cam
 
 
@@ -322,6 +327,21 @@ def test_page_buttons_reach_the_key_handler_and_flash_like_their_keys(monkeypatc
     assert flashes == ["new round: numbering restarts at 1", "5 players: template layout", "camera reconnected"]
     assert server.published[-1]["players"] == 5
     assert "ignored unknown page action 'dance'" in capsys.readouterr().out
+
+
+def test_a_page_rename_reaches_the_reader_and_the_next_snapshot(monkeypatch, tmp_path):
+    seats_file = tmp_path / "seats.json"
+    monkeypatch.setattr(read.settings, "SEATS_FILE", str(seats_file))
+    posts = {2: [{"action": "rename_seat", "seat": "P1", "name": "Ann"}],
+             3: [{"action": "rename_seat", "seat": "P9", "name": "Bo"}], 4: ["quit"]}
+    server, handled, _ = run_with_page(monkeypatch, tmp_path, posts, [255] * 10)
+
+    assert handled == [ord("q")]                                     # a rename presses no key
+    names = [{hand["seat"]: hand["name"] for hand in snapshot["hands"]} for snapshot in server.published]
+    assert names[1]["P1"] == "P1" and names[2]["P1"] == "Ann"       # shown on the frame after the post
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["P1 is now Ann", "no seat P9 at a 3-player table"]
+    assert json.loads(seats_file.read_text())["names"] == {"P1": "Ann"}
 
 
 def test_no_display_with_web_runs_from_the_page_alone_and_quits_from_it(monkeypatch, tmp_path):
@@ -425,3 +445,123 @@ def test_lap_records_the_time_since_the_last_lap_and_returns_now():
     assert end > start
     assert timer.smoothed["read"] == pytest.approx(1000 * (end - start))
     assert timer.smoothed["read"] >= 10.0
+
+
+def make_models(root, *runs):
+    """A models folder under root with weights for each run; "cards" is promoted from model_1."""
+    for run in runs:
+        (root / "models" / run / "weights").mkdir(parents=True)
+        (root / "models" / run / "weights" / "best.pt").write_bytes(b"weights")
+    if "cards" in runs:
+        (root / "models" / "cards" / "LIVE.txt").write_text("model_1\n")
+    return root / "models"
+
+
+def test_switch_model_loads_a_run_and_refuses_paths_outside_models_or_without_weights(monkeypatch, capsys,
+                                                                                       tmp_path):
+    monkeypatch.setattr(read.settings, "PROJECT_ROOT", tmp_path)
+    models_dir = make_models(tmp_path, "cards", "model_1")
+    (models_dir / "model_2").mkdir()                                  # a run that never finished
+    (tmp_path / "elsewhere.pt").write_bytes(b"weights")
+    loaded = []
+
+    def load(path):
+        loaded.append(path)
+        if "broken" in path:
+            raise RuntimeError("not a YOLO file")
+        return SimpleNamespace(device_used="cpu")
+
+    models = read.LiveDetector(load, models_dir)
+    hud = Hud()
+    assert models.detector is None
+    assert models.snapshot() == {"current": None, "choices": [
+        {"path": "models/cards/weights/best.pt", "label": "cards (live: model_1)"},
+        {"path": "models/model_1/weights/best.pt", "label": "model_1"}]}
+
+    assert models.switch("models/model_1/weights/best.pt", hud) is True
+    first = models.detector
+    assert loaded == [str(models_dir / "model_1" / "weights" / "best.pt")]
+    assert hud._message == "model: model_1" and "model model_1 on cpu" in capsys.readouterr().out
+    assert models.snapshot()["current"] == "models/model_1/weights/best.pt"
+
+    refusals = {"elsewhere.pt": "not a model in models/: elsewhere.pt",
+                "models/../elsewhere.pt": "not a model in models/: models/../elsewhere.pt",
+                "models/model_2/weights/best.pt": "no weights at models/model_2/weights/best.pt"}
+    for path, message in refusals.items():
+        assert models.switch(path, hud) is False
+        assert hud._message == message
+    (models_dir / "broken" / "weights").mkdir(parents=True)
+    (models_dir / "broken" / "weights" / "best.pt").write_bytes(b"junk")
+    assert models.switch("models/broken/weights/best.pt", hud) is False
+    assert hud._message == "could not load broken: see the terminal"
+    assert models.detector is first and len(loaded) == 2
+    assert models.snapshot()["current"] == "models/model_1/weights/best.pt"
+    assert [choice["label"] for choice in models.snapshot()["choices"]] == [
+        "cards (live: model_1)", "broken", "model_1"]                 # the list is read again on each switch
+
+
+def test_choosing_a_model_on_the_page_starts_detection_and_keeps_the_cards(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(read.settings, "PROJECT_ROOT", tmp_path)
+    make_models(tmp_path, "model_1")
+    rounds = []
+    record = read.Reader.process
+
+    def watched_process(self, frame, dets):
+        events = record(self, frame, dets)
+        rounds.append([(card.order, card.label) for card in self.tracker.round])
+        return events
+
+    monkeypatch.setattr(read.Reader, "process", watched_process)
+    switch = {"action": "switch_model", "path": "models/model_1/weights/best.pt"}
+    posts = {4: [switch], 20: [switch], 24: ["quit"]}
+    server, _, _ = run_with_page(monkeypatch, tmp_path, posts, [255] * 40, "--model", str(tmp_path / "none.pt"),
+                                 detect=lambda frame: [Detection("KH", 0.9, 100, 50)])
+
+    capture = [snapshot["capture_mode"] for snapshot in server.published]
+    assert capture[:4] == [True] * 4 and not any(capture[4:])     # detection starts on the frame after the post
+    assert rounds[18] == [(1, "KH")]                                # confirmed before the second switch
+    assert server.published[0]["model"]["current"] is None
+    assert server.published[-1]["model"] == {"current": "models/model_1/weights/best.pt", "choices": [
+        {"path": "models/model_1/weights/best.pt", "label": "model_1"}]}
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["model: model_1", "model: model_1"]
+    assert rounds[-1] == [(1, "KH")]                                # the second switch kept the card and its number
+    assert "model model_1 on mps" in capsys.readouterr().out
+
+
+class FakeDetector:
+    """A distinct detector per load, so a test can tell the start-up model from a switched-to one."""
+
+    device_used = "cpu"
+
+    def __init__(self, weights):
+        self.weights = weights
+
+    def __call__(self, frame):
+        return []
+
+
+def test_the_start_up_model_is_freed_after_switching_away(monkeypatch, tmp_path):
+    monkeypatch.setattr(read.settings, "PROJECT_ROOT", tmp_path)
+    make_models(tmp_path, "model_1")
+    refs, alive = [], []
+
+    def make_detector(weights):  # keeps only a weak reference, so the reader holds the sole strong one
+        detector = FakeDetector(weights)
+        refs.append(weakref.ref(detector))
+        return detector
+
+    process = read.Reader.process
+
+    def watched_process(self, frame, dets):
+        gc.collect()
+        alive.append([ref() is not None for ref in refs])
+        return process(self, frame, dets)
+
+    monkeypatch.setattr(read.Reader, "process", watched_process)
+    posts = {3: [{"action": "switch_model", "path": "models/model_1/weights/best.pt"}], 6: ["quit"]}
+    run_with_page(monkeypatch, tmp_path, posts, [255] * 10, make_detector=make_detector)
+
+    assert len(refs) == 2                                           # the start-up model, then model_1
+    assert alive[1] == [True]                                       # before the switch: the start-up model runs
+    assert alive[-1] == [False, True]                               # after it: only model_1 is still held

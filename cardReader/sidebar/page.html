@@ -20,8 +20,8 @@
     --green: #5adc5a;
     --seat: #78dcff;
     --duplicate: #ff3cff;
-    /* one row of the Cards Left grid: 15 rows (suits, 13 ranks, face down) fill the screen height */
-    --row: clamp(2rem, calc((100vh - 7rem) / 15), 5rem);
+    /* one row of the Cards Left grid by height: 15 rows (suits, 13 ranks, face down) fill the screen */
+    --screen-row: clamp(2rem, calc((100vh - 7rem) / 15), 5rem);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--panel); color: var(--text); }
@@ -42,7 +42,7 @@
     }
   }
   @media (max-width: 899px) {
-    :root { --row: clamp(2rem, 8.5vw, 3.5rem); }
+    :root { --screen-row: clamp(2rem, 8.5vw, 3.5rem); }
   }
   section { background: var(--card); border-radius: .6rem; padding: .8rem 1rem; min-width: 0; }
   h2 { margin: 0 0 .5rem; font-size: .8rem; font-weight: 600; letter-spacing: .08em; color: var(--grey); }
@@ -57,7 +57,10 @@
   .figures { display: flex; gap: 2rem; margin-top: .6rem; font-size: 1.3rem; flex-wrap: wrap; }
   .figures span { color: var(--grey); margin-right: .4rem; }
 
-  #deck { grid-area: deck; font-size: calc(var(--row) * .5); }
+  #deck { grid-area: deck; container-type: inline-size; }
+  /* the grid is about 10 rows wide (labels, gaps, four tiles wide enough for "10"), so a row
+     is also capped at a tenth of the column: the grid then fits its column at any width */
+  #deckBody { --row: min(var(--screen-row), 10cqw); font-size: calc(var(--row) * .5); }
   .grid {
     display: grid;
     grid-template-columns: 2.2em 2em repeat(4, minmax(0, 6em)) 2.4em;
@@ -120,7 +123,13 @@
   .hand .cards { grid-area: cards; }
   .hand .total { grid-area: total; }
   .hand .hint { grid-area: hint; }
-  .seat { font-weight: 700; color: var(--seat); }
+  .seat { font-weight: 700; color: var(--seat); overflow-wrap: anywhere; }
+  .seat[data-seat] { cursor: text; }
+  .seat[data-seat]:hover { text-decoration: underline dotted; }
+  .seat input {
+    width: 100%; padding: .1em .3em; font: inherit; color: var(--text);
+    background: #111; border: 1px solid var(--badge); border-radius: .3em;
+  }
   .hand.dealer .seat { color: var(--amber); }
   .hand.other .seat { color: var(--grey); }
   .cards { display: flex; flex-wrap: wrap; gap: .3rem .8rem; }
@@ -148,10 +157,9 @@
   .hint.split { background: var(--duplicate); }
   @media (max-width: 599px) {
     /* the seat, total and hint share the first line and the cards go below it; the seat
-       keeps its full name, the total wraps in the space left, and a seat with no hint
-       gives its space to the total */
-    .hand { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "seat total hint" "cards cards cards"; }
-    .hand .seat { white-space: nowrap; }
+       keeps its full name while it fits (a long one wraps), the total wraps in the space
+       left, and a seat with no hint gives its space to the total */
+    .hand { grid-template-columns: auto minmax(2.5em, 1fr) auto; grid-template-areas: "seat total hint" "cards cards cards"; }
     .hand .total { white-space: normal; overflow-wrap: anywhere; }
     .hand .hint.none { display: none; }
   }
@@ -176,6 +184,10 @@
   .choices .label { margin-right: 1rem; }
   .choices button { min-width: 2.6rem; min-height: 2.4rem; margin-right: .4rem; font-weight: 700; }
   .choices button.current { background: var(--badge); border-color: var(--badge); color: #000; }
+  .model select {
+    min-width: 0; max-width: 100%; min-height: 2.4rem; padding: 0 .4rem; font: inherit;
+    color: var(--text); background: #2e2e2e; border: 1px solid #444; border-radius: .4rem;
+  }
 
   #status {
     grid-area: status;
@@ -208,6 +220,7 @@
   let flash = null;          // the message currently shown in the status line
   let flashTimer = null;
   let connected = false;
+  let renaming = false;      // a seat name's text field is open; Hands waits until it closes
 
   function esc(text) {
     return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[c]);
@@ -272,8 +285,10 @@
     }
     for (const hand of snapshot.hands) {
       const empty = !hand.cards.length;
+      // a dealer or player seat can be renamed by clicking its name; OTHER cannot
+      const renamable = hand.kind === "other" ? "" : ` data-seat="${esc(hand.seat)}" title="click to rename"`;
       html += `<div class="hand ${hand.kind}">
-        <div class="seat">${esc(hand.seat)}</div>
+        <div class="seat"${renamable}>${esc(hand.name)}</div>
         <div class="cards">${hand.cards.map(renderChip).join("")}</div>
         <div class="total${empty ? " empty" : ""}">${esc(hand.total)}</div>
         <div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div>
@@ -282,7 +297,7 @@
     return html;
   }
 
-  // One line per key: a button when the page has one, a row of buttons for 1-7 (with the
+  // One line per key: a button when the page has one, a row of buttons for 1-5 (with the
   // current player count filled in) and for < >, and a grey line for a key that works in the window only.
   function renderKeys(keys, players) {
     return keys.map((entry) => {
@@ -301,9 +316,32 @@
     }).join("");
   }
 
-  function postAction(action) {
-    if (action === "quit" && !confirm("Quit the card reader?")) return;
-    fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) })
+  // body: {action: "<name>"} plus any string fields the action takes
+  // The name of the model the reader runs: its label in the dropdown, else its path.
+  function modelName(model) {
+    if (!model.current) return "none (capture mode)";
+    const choice = model.choices.find((option) => option.path === model.current);
+    return choice ? choice.label : model.current;
+  }
+
+  // A dropdown of every model on disk, with the one the reader runs selected. A model
+  // loaded from outside the models folder, or none, shows as an extra first entry.
+  function renderModel(model) {
+    const options = model.choices.map((choice) => {
+      const selected = choice.path === model.current ? " selected" : "";
+      return `<option value="${esc(choice.path)}"${selected}>${esc(choice.label)}</option>`;
+    });
+    if (!model.choices.some((choice) => choice.path === model.current)) {
+      options.unshift(`<option value="" selected disabled>${esc(modelName(model))}</option>`);
+    }
+    return `<label class="key choices model"><span class="label">model</span>`
+      + `<select id="modelSelect">${options.join("")}</select></label>`;
+  }
+
+  // body: {action: "<name>"} plus any string fields the action takes
+  function postAction(body) {
+    if (body.action === "quit" && !confirm("Quit the card reader?")) return;
+    fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then((response) => {
         if (!response.ok) showFlash({ text: "the reader did not take that button", seconds: 2 });
       })
@@ -318,6 +356,7 @@
       const t = snapshot.timing;
       if (snapshot.capture_mode) parts.push(`<span class="alert">CAPTURE MODE (no model)</span>`);
       if (snapshot.no_signal) parts.push(`<span class="alert">no signal: press C to reconnect</span>`);
+      parts.push(`<span>model ${esc(modelName(snapshot.model))}</span>`);
       parts.push(`<span>${t.fps.toFixed(1)} fps</span>`);
       parts.push(`<span>detect ${t.detect_ms.toFixed(1)} ms</span>`);
       parts.push(`<span>prep ${esc(snapshot.preprocess)} ${t.preprocess_ms.toFixed(1)} ms</span>`);
@@ -342,8 +381,8 @@
     setHtml("countBody", renderCount(latest.count));
     setHtml("deckBody", renderDeck(latest.grid, latest.unrevealed));
     document.getElementById("seatsTitle").textContent = `HANDS (${latest.players} player${latest.players > 1 ? "s" : ""})`;
-    setHtml("seatsBody", renderSeats(latest));
-    setHtml("keysBody", renderKeys(latest.keys, latest.players));
+    if (!renaming) setHtml("seatsBody", renderSeats(latest));  // rewriting would drop the name being typed
+    setHtml("keysBody", renderModel(latest.model) + renderKeys(latest.keys, latest.players));
   }
 
   function showFlash(message) {
@@ -363,7 +402,50 @@
   };
   document.getElementById("keysBody").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
-    if (button) postAction(button.dataset.action);
+    if (button) postAction({ action: button.dataset.action });
+  });
+
+  // Choosing a model asks the reader to load it. The dropdown goes back to the model the
+  // reader runs until the reader reports the new one, which takes as long as loading it.
+  document.getElementById("keysBody").addEventListener("change", (event) => {
+    if (event.target.id !== "modelSelect") return;
+    const choice = event.target.selectedOptions[0];
+    showFlash({ text: `loading ${choice.textContent} ...`, seconds: 30 });
+    postAction({ action: "switch_model", path: choice.value });
+    written.delete("keysBody");
+  });
+
+  // Clicking a seat's name opens a text field in its place. Enter saves (an empty name
+  // restores the default); Escape cancels, and so does leaving the field unchanged.
+  function startRename(cell) {
+    const original = cell.textContent;
+    const input = document.createElement("input");
+    input.maxLength = 16;
+    input.value = original;
+    input.setAttribute("aria-label", `new name for ${original}`);
+    let closed = false;
+    const close = (save) => {
+      if (closed) return;
+      closed = true;
+      const name = input.value.trim();
+      if (save && name !== original) postAction({ action: "rename_seat", seat: cell.dataset.seat, name });
+      renaming = false;
+      written.delete("seatsBody");  // put the plain name back, or the new one once the reader has it
+      render();
+    };
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") close(true);
+      if (event.key === "Escape") close(false);
+    });
+    input.addEventListener("blur", () => close(true));
+    renaming = true;
+    cell.replaceChildren(input);
+    input.focus();
+    input.select();
+  }
+  document.getElementById("seatsBody").addEventListener("click", (event) => {
+    const cell = event.target.closest(".seat[data-seat]");
+    if (cell && !renaming) startRename(cell);
   });
   render();
 </script>
