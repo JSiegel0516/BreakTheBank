@@ -200,7 +200,7 @@ the Hi-Lo rows are tinted emerald (+1), grey-green (0), and brown (-1):
 | Cards Left | the largest part of the page: one row per rank with its Hi-Lo value, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
 | Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | first a `model` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead |
+| Keys | first a `model` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
@@ -217,6 +217,13 @@ before did (a second turn turns the already-turned view) and each message
 shows. `Q` asks for confirmation first, since
 quitting cannot be undone from the page. Zone editing (`E`) and saving frames
 (`S`) need the window.
+
+**Folding the keys.** Click `KEYS` or its arrow, or press `K` on the page, to
+fold the Keys section to its title and give Hands the room. Do the same to
+open it again. The arrow points down when the section is open and right when
+it is folded. `K` does nothing while a seat name or the model dropdown has the
+focus. The browser remembers the choice, so a reload keeps it. `K` is a page
+key only: the reader window does not use it.
 
 **Renaming players.** Click a seat's name under Hands (`P1`, `DEALER`) to type
 the player's name, up to 16 characters. Enter saves it; Escape, or clicking away
