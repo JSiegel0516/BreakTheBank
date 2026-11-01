@@ -13,6 +13,7 @@ from benchmark import (
     aspect_bucket,
     confusion_summary,
     default_confusions_csv,
+    parse_level,
     rank_swaps,
     read_corners,
     relight,
@@ -55,8 +56,37 @@ def test_a_box_too_far_from_the_corner_is_not_a_match():
 
 def test_relight_darkens_above_1_and_brightens_below():
     grey = np.full((4, 4, 3), 128, np.uint8)
-    assert relight(grey, 1.0) is grey
-    assert relight(grey, 2.5).max() < 128 < relight(grey, 0.6).min()
+    assert relight(grey, "1") is grey
+    assert relight(grey, "2.5").max() < 128 < relight(grey, "0.6").min()
+
+
+def ramp_image():
+    ramp = np.arange(256, dtype=np.uint8).reshape(1, 256)
+    return np.dstack([ramp, ramp, ramp])
+
+
+def test_relight_gain_multiplies_and_clips_the_highlights():
+    out = relight(ramp_image(), "gain1.6")[0, :, 0].astype(int)
+    assert out[100] == 160 and out[50] == 80
+    assert (out[160:] == 255).all()                       # everything from 255 / 1.6 up is saturated
+    assert (out[:159] < 255).all()
+
+
+def test_relight_flat_compresses_contrast_towards_white():
+    out = relight(ramp_image(), "flat0.55")[0, :, 0].astype(int)
+    assert out[0] == 115 and out[255] == 255              # black becomes grey, white stays white
+    assert out[200] == round(200 * 0.55 + 255 * 0.45)
+    assert np.ptp(out) == 140                             # 255 levels squeezed into 140
+
+
+def test_parse_level_names_gamma_gain_and_flat_levels():
+    assert parse_level("2.5") == ("gamma", 2.5)
+    assert parse_level("1") == ("gamma", 1.0)
+    assert parse_level("gain2.2") == ("gain", 2.2)
+    assert parse_level("flat0.55") == ("flat", 0.55)
+    for bad in ("0", "-1", "gain0", "gainx", "flat1", "flat0", "bright"):
+        with pytest.raises(ValueError, match="level"):
+            parse_level(bad)
 
 
 def test_run_scores_every_level_and_mode_with_a_faked_detector():
@@ -67,24 +97,24 @@ def test_run_scores_every_level_and_mode_with_a_faked_detector():
         found = [det("KH", 100, 100)] if frame.mean() >= 80 else []
         return found + [det("BACK", 250, 150)]
 
-    tallies = run([(image, labels)] * 2, detector, levels=(2.5, 1.0), modes=("off", "gamma"), config=CONFIG)
-    assert list(tallies) == [(2.5, "off"), (2.5, "gamma"), (1.0, "off"), (1.0, "gamma")]
-    dark_off, dark_gamma = tallies[2.5, "off"], tallies[2.5, "gamma"]
+    tallies = run([(image, labels)] * 2, detector, levels=("2.5", "1"), modes=("off", "gamma"), config=CONFIG)
+    assert list(tallies) == [("2.5", "off"), ("2.5", "gamma"), ("1", "off"), ("1", "gamma")]
+    dark_off, dark_gamma = tallies["2.5", "off"], tallies["2.5", "gamma"]
     assert (dark_off.images, dark_off.labelled, dark_off.found, dark_off.right, dark_off.extra) == (2, 2, 0, 0, 2)
     assert (dark_gamma.found, dark_gamma.right) == (2, 2)          # brightening brings the corner back
-    assert tallies[1.0, "off"].found == 2
+    assert tallies["1", "off"].found == 2
     assert all(t.detect_ms >= 0 and t.preprocess_ms >= 0 for t in tallies.values())
 
 
 def test_table_has_a_row_per_level_and_mode_with_shares():
-    tallies = {(1.8, "off"): Tally(images=2, labelled=40, found=30, right=27, extra=3,
+    tallies = {("1.8", "off"): Tally(images=2, labelled=40, found=30, right=27, extra=3,
                                    preprocess_total=0.0, detect_total=40.0),
-               (1.8, "clahe"): Tally(images=2, labelled=40, found=36, right=35, extra=1,
+               ("gain2.2", "clahe"): Tally(images=2, labelled=40, found=36, right=35, extra=1,
                                      preprocess_total=4.0, detect_total=42.0)}
     lines = table(tallies).splitlines()
     assert len(lines) == 3
     assert lines[1].split() == ["1.8", "off", "40", "30", "75.0%", "27", "67.5%", "3", "0.0", "20.0"]
-    assert lines[2].split() == ["1.8", "clahe", "40", "36", "90.0%", "35", "87.5%", "1", "2.0", "21.0"]
+    assert lines[2].split() == ["gain2.2", "clahe", "40", "36", "90.0%", "35", "87.5%", "1", "2.0", "21.0"]
 
 
 def test_val_images_reads_a_yolo_list_and_its_labels_in_pixels(tmp_path):
