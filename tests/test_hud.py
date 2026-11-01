@@ -6,7 +6,20 @@ import pytest
 
 from cardReader.blackjack import shoe_count
 from cardReader.cards import Card, Detection
-from cardReader.hud import GREY, KEY_LIST, KEYS, RED, SIDEBAR, WHITE, DealtCards, Hud, count_cue, status_text, view_tabs
+from cardReader.hud import (
+    BADGE,
+    GREY,
+    KEY_LIST,
+    KEYS,
+    RED,
+    SIDEBAR,
+    WHITE,
+    DealtCards,
+    Hud,
+    count_cue,
+    status_text,
+    view_tabs,
+)
 from cardReader.seats import SeatLayout, ZoneEditor
 
 
@@ -261,3 +274,69 @@ def test_rotation_keys_are_listed():
 
 def test_rescan_key_is_listed_and_on_the_bottom_bar():
     assert ("X", "rescan round") in KEY_LIST and "[X] rescan" in KEYS
+
+
+def test_video_tags_show_the_placement_badge_only_when_show_order_is_on():
+    W, H = 1280, 720
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    six = Card(1, "6H", 300, 300, 1)
+    hud = Hud()
+    assert hud.show_order is False
+    plain = hud.draw(frame, [], [six], 30.0, layout, shoe_count(["6H"]), sidebar=False)
+    hud.show_order = True
+    badged = hud.draw(frame, [], [six], 30.0, layout, shoe_count(["6H"]), sidebar=False)
+    video = slice(0, H // 2)                                     # above the bottom bar
+    assert not (plain[video] == BADGE).all(axis=2).any()
+    assert (badged[video] == BADGE).all(axis=2).any()
+    assert ("N", "placement numbers") in KEY_LIST
+
+
+@pytest.mark.parametrize("show_order", [False, True])
+def test_game_legend_lists_the_placement_number_only_when_show_order_is_on(monkeypatch, show_order):
+    W, H = 1280, 720
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    hud = Hud()
+    hud.view, hud.show_order = "game", show_order
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H), shoe_count([]))
+    assert ("placement number" in texts) is show_order
+    assert "covered, still counted" in texts
+
+
+def test_game_view_shows_display_names_and_the_video_keeps_seat_ids(monkeypatch):
+    W, H = 1280, 720
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    hud = Hud()
+    hud.view = "game"
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H), shoe_count([]),
+             seat_names={"P1": "Ann", "dealer": "House"})
+    assert {"Ann", "House", "P2", "P3"} <= set(texts)
+    assert {"P1", "DEALER"} <= set(texts)                          # the zone labels on the video
+    assert texts.count("P2") == 2 and texts.count("Ann") == 1
+
+
+def test_a_wide_display_name_is_shortened_so_every_hand_keeps_room_for_its_cards(monkeypatch):
+    W, H = 640, 360                                                    # the narrowest sidebar: 192 pixels
+    layout = SeatLayout(3, W, H)
+    cards = [Card(i + 1, label, *map(float, layout.seats[seat].polygon.mean(axis=0)), i + 1)
+             for i, (label, seat) in enumerate([("KS", 1), ("QH", 2)])]
+    drawn = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, org, *a: drawn.append((img.shape[1], text, org[0]))
+                        or put_text(img, text, org, *a))
+    hud = Hud()
+    hud.view, hud.show_legend = "game", False                          # at 360 high the legend leaves no room
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], cards, 30.0, layout, shoe_count(["KS", "QH"]),
+             seat_names={"P1": "W" * 16})
+    side_w = round(SIDEBAR * W)
+    sidebar = [(text, x) for width, text, x in drawn if width == side_w]
+    titles = [text for text, _ in sidebar if text.startswith("W")]
+    assert titles and titles[0].endswith("..") and len(titles[0]) < 18   # shortened, not the full name
+    assert {"DEALER", "P2", "P3"} <= {text for text, _ in sidebar}      # the default names fit whole
+    for rank in ("K", "Q"):                                             # each hand's card starts well inside
+        x = next(x for text, x in sidebar if text == rank)
+        assert x + hud._size(rank, 0.8)[0] < side_w - hud.pad

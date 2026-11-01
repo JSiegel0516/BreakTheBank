@@ -8,9 +8,10 @@
       tracker has matched it to a confirmed card, even on a frame that misreads
       its name; otherwise a thin grey box, not matched to a confirmed card yet
       (key G hides these)
-    * a tag on each card of the round: its placement number in a yellow badge,
-      then its name: the rank followed by the suit's shape, or BACK for a
-      face-down card. A hidden (covered) card keeps a grey tag where it was last seen.
+    * a tag on each card of the round: its name, the rank followed by the
+      suit's shape, or BACK for a face-down card. Key N (Hud.show_order, off
+      at start) puts its placement number in a yellow badge before the name.
+      A hidden (covered) card keeps a grey tag where it was last seen.
     * a sidebar to the right of the video, so nothing covers the table. It
       starts with a tab strip naming the two views, CARDS LEFT and GAME, with
       the current one highlighted and a [V] hint (key V switches). Below it is
@@ -24,9 +25,12 @@
           greyed and crossed off (locked), and a name reported as a duplicate
           this shoe is ringed in magenta. Each row ends with how many of that rank are left, and
           a line below gives the face-down cards never revealed.
-        - Game: each seat's total and its cards in placement order
+        - Game: each seat under its display name (renamed from the browser
+          page), its total, and its cards in placement order, each with its
+          placement badge whatever key N is set to
     * a legend at the bottom of the sidebar explaining the colours of the
-      current view, then every key (key L hides it). In the Cards Left view it
+      current view, then every key (key L hides it). The Game legend lists the
+      placement badge only while key N shows it on the video. In the Cards Left view it
       is left out when it does not fit below the grid.
     * bottom bar: the main keys, fps, detect milliseconds, the preprocess mode
       and its milliseconds ("showing raw" when the raw camera frame is shown,
@@ -53,7 +57,7 @@ import numpy as np
 from .blackjack import CARDS_PER_DECK, ShoeCount, hi_lo
 from .cards import Card, Detection
 from .deck import BACK, RANKS, RED_SUITS, SUITS, rank_of, suit_of
-from .seats import DEALER, SeatLayout, ZoneEditor
+from .seats import DEALER, MAX_PLAYERS, SeatLayout, ZoneEditor
 from .table import OTHER, Hand, Table
 
 FONT = cv2.FONT_HERSHEY_DUPLEX
@@ -69,11 +73,12 @@ BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
 DUPLICATE = (255, 60, 255)
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
+NAME_COLUMN = 0.40  # the Game view's seat names take at most this fraction of the sidebar width
 # the bottom bar
 KEYS = "[V] view    [L] legend/keys    [R] round    [X] rescan    [Shift+R] shoe    [< >] turn    [Q] quit"
-KEY_LIST = [("1-7", "players"), ("E", "edit zones"), ("V", "switch view"), ("L", "hide legend"),
-            ("G", "grey boxes"), ("R", "new round"), ("X", "rescan round"), ("Shift+R", "new shoe"),
-            ("S", "save frame"),
+KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), ("E", "edit zones"), ("V", "switch view"), ("L", "hide legend"),
+            ("G", "grey boxes"), ("N", "placement numbers"), ("R", "new round"), ("X", "rescan round"),
+            ("Shift+R", "new shoe"), ("S", "save frame"),
             ("C", "reconnect camera"), ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"),
             ("< >", "turn view"), ("Q", "quit")]
 EDIT_HELP = ["drag a corner: reshape", "drag a +: add a corner", "right-click a corner: remove it",
@@ -82,9 +87,10 @@ NO_SIGNAL = "no signal: press C to reconnect"
 VIEWS = {"cards_left": "Cards Left", "game": "Game"}  # sidebar view id -> name, in tab order
 # Legend entries per view: (swatch kind, colour, meaning). Kinds are drawn by Hud._swatch;
 # a "name" entry gives a sample card name in place of the colour.
+PLACEMENT_ENTRY = ("badge", BADGE, "placement number")  # in GAME_LEGEND only while Hud.show_order is set
 GAME_LEGEND = [("name", "KH", "hearts, diamonds"), ("name", "KS", "spades, clubs"),
                 ("box", AMBER, "face down"), ("thin", GREY, "not matched to a card"),
-                ("badge", BADGE, "placement number"), ("badge", DIM, "covered, still counted"),
+                PLACEMENT_ENTRY, ("badge", DIM, "covered, still counted"),
                 ("line", AMBER, "dealer zone"), ("line", SEAT_LINE, "player zone")]
 CARDS_LEFT_LEGEND = [("pending", BADGE, "pending: this round"), ("locked", WHITE, "locked: earlier round"),
                      ("duplicate", DUPLICATE, "duplicate: misread?"), ("shade", GREEN, "2 to 6: +1"),
@@ -163,8 +169,11 @@ def view_tabs(view: str) -> list[tuple[str, bool]]:
     return [(name.upper(), view_id == view) for view_id, name in VIEWS.items()]
 
 
-def seat_title(name: str) -> str:
-    return "DEALER" if name == DEALER else name
+def seat_title(seat: str, names: dict[str, str] | None = None) -> str:
+    """How a seat id is shown: its display name from names if it has one, else DEALER or the id."""
+    if names and seat in names:
+        return names[seat]
+    return "DEALER" if seat == DEALER else seat
 
 
 def _top_of_overlap(tags: list[tuple], rect: tuple) -> int | None:
@@ -183,6 +192,7 @@ class Hud:
         self._unsent_flash: tuple[str, float] | None = None
         self.show_legend = True
         self.show_unmatched = True  # False: thin grey boxes are not drawn (key G)
+        self.show_order = False     # True: video tags carry the placement number badge (key N)
         self.view = "cards_left"  # a key of VIEWS: what the sidebar shows below the count
 
     def flash(self, text: str, seconds: float = 1.5):
@@ -201,7 +211,8 @@ class Hud:
              editor: ZoneEditor | None = None, dealt: DealtCards | None = None,
              stage_ms: dict[str, float] | None = None, no_signal: bool = False,
              preprocess: str = "off", showing_raw: bool = False,
-             bound: list[Card | None] | None = None, sidebar: bool = True) -> np.ndarray:
+             bound: list[Card | None] | None = None, sidebar: bool = True,
+             seat_names: dict[str, str] | None = None) -> np.ndarray:
         """Return the frame with the overlay, plus the sidebar on its right. The frame is not changed.
 
         cards: every card of the round, hidden ones included, in placement order.
@@ -215,7 +226,9 @@ class Hud:
         no_signal: the camera has stopped sending frames; says so over the video.
         preprocess, showing_raw: the preprocess mode, and whether `frame` is the raw camera
         frame rather than the preprocessed one; both are named in the bottom bar.
-        sidebar: False returns the video with its overlay and bottom bar only, as wide as the frame."""
+        sidebar: False returns the video with its overlay and bottom bar only, as wide as the frame.
+        seat_names: display names by seat id (Reader.seat_names) for the Game view; the zone
+        labels on the video keep the seat ids."""
         view = frame.copy()
         W = view.shape[1]
         self.s = min(max(W / 1600, 0.6), 2.5)  # 1.2 at 1080p, 2.4 at 4K
@@ -257,7 +270,7 @@ class Hud:
         else:
             if self.show_legend:
                 bottom = self._legend(side, bottom)
-            self._seat_blocks(side, Table(layout).hands(cards), y, bottom)
+            self._seat_blocks(side, Table(layout).hands(cards), y, bottom, seat_names or {})
         canvas = np.hstack([view, side])
         self._bottom_bar(canvas, status, capture_mode, W)
         return canvas
@@ -268,6 +281,16 @@ class Hud:
     def _size(self, text, scale):
         (w, h), base = cv2.getTextSize(text, FONT, scale * self.s, self.thick)
         return w, h, base
+
+    def _fit(self, text: str, max_w: int, scale) -> str:
+        """text, or as much of it as fits in max_w pixels followed by "..", keeping at least one character."""
+        if self._size(text, scale)[0] <= max_w:
+            return text
+        for end in range(len(text) - 1, 0, -1):
+            shortened = text[:end].rstrip() + ".."
+            if self._size(shortened, scale)[0] <= max_w:
+                return shortened
+        return text[:1] + ".."
 
     def _panel(self, img, x1, y1, x2, y2, alpha=0.7, colour=PANEL):
         H, W = img.shape[:2]
@@ -356,14 +379,18 @@ class Hud:
     def _legend(self, side, bottom: int, ceiling: int = 0) -> int:
         """The current view's colours, then every key, each in two columns above `bottom`.
         Returns its top. If it would reach above `ceiling`, nothing is drawn and `bottom` is returned."""
-        entries = CARDS_LEFT_LEGEND if self.view == "cards_left" else GAME_LEGEND
+        if self.view == "cards_left":
+            entries = CARDS_LEFT_LEGEND
+        else:
+            entries = [entry for entry in GAME_LEGEND if self.show_order or entry != PLACEMENT_ENTRY]
         scale = 0.45
         _, th, _ = self._size("Ag", scale)
-        row_h = max(th, self.r) + self.pad
+        row_h = max(th, self.r) + self.pad  # tall enough for a badge swatch
+        key_row_h = th + self.pad           # key rows are text only
         entry_rows = (len(entries) + 1) // 2
         key_rows = (len(KEY_LIST) + 1) // 2
         header_h = self._size("LEGEND", 0.5)[1] + self.pad
-        top = bottom - 2 * self.pad - header_h - (entry_rows + key_rows) * row_h
+        top = bottom - 2 * self.pad - header_h - entry_rows * row_h - key_rows * key_row_h
         if top < ceiling:
             return bottom
         cv2.line(side, (self.pad, top), (side.shape[1] - self.pad, top), DIM, 1)
@@ -385,7 +412,7 @@ class Hud:
         key_w = max(self._size(key, scale)[0] for key, _ in KEY_LIST)
         for i, (key, action) in enumerate(KEY_LIST):
             x = self.pad + (i % 2) * col_w
-            text_y = keys_top + (i // 2) * row_h + row_h // 2 + th // 2
+            text_y = keys_top + (i // 2) * key_row_h + key_row_h // 2 + th // 2
             self._text(side, key, (x, text_y), scale, BADGE)
             self._text(side, action, (x + key_w + self.pad, text_y), scale, WHITE)
         return top - self.pad
@@ -580,13 +607,17 @@ class Hud:
             points = np.array([(cx + dx * r, cy + dy * r) for dx, dy in polygon]).round().astype(np.int32)
             cv2.fillPoly(img, [points], colour, cv2.LINE_AA)
 
-    def _seat_blocks(self, side, hands: list[Hand], y: int, bottom: int):
-        """One line per hand: the seat's name, its cards in placement order, and its total on the
-        right. A long hand wraps onto more lines. Loose cards come last, as OTHER."""
+    def _seat_blocks(self, side, hands: list[Hand], y: int, bottom: int, names: dict[str, str]):
+        """One line per hand: the seat's display name (from names, else its id), its cards in
+        placement order, and its total on the right. A long hand wraps onto more lines. Loose
+        cards come last, as OTHER. A name wider than NAME_COLUMN of the sidebar is shortened
+        and ends in "..", so one long name cannot push every hand's cards out of view."""
         side_w = side.shape[1]
-        name_w = max(self._size(seat_title(hand.seat), 0.65)[0] for hand in hands) + 2 * self.pad
+        longest = round(NAME_COLUMN * side_w) - 2 * self.pad
+        titles = [self._fit(seat_title(hand.seat, names), longest, 0.65) for hand in hands]
+        name_w = max(self._size(title, 0.65)[0] for title in titles) + 2 * self.pad
         line_h = 2 * self.r + self.pad
-        for hand in hands:
+        for hand, title in zip(hands, titles, strict=True):
             total = hand.total
             total_w, total_h, _ = self._size(total, 0.65) if total else (0, 0, 0)
             # lay the cards out first, so a hand that does not fit can be cut off cleanly
@@ -606,7 +637,6 @@ class Hud:
                 self._text(side, "...", (self.pad, bottom - self.pad), 0.65, GREY)
                 return
             cy = y + line_h // 2
-            title = seat_title(hand.seat)
             title_colour = {DEALER: AMBER, OTHER: GREY}.get(hand.seat, SEAT_LINE)
             _, title_h, _ = self._size(title, 0.65)
             self._text(side, title, (self.pad, cy + title_h // 2), 0.65, title_colour)
@@ -634,11 +664,13 @@ class Hud:
         return min(mine, key=lambda det: det.box[1]).box
 
     def _card_tag(self, img, card: Card, box, tags):
-        """Badge + name just above the card's topmost corner index (below it if there is no room).
+        """The card's name, after its placement badge while show_order is set, just above the
+        card's topmost corner index (below it if there is no room).
         tags: tags already drawn; this one stacks above any it would cover. Returns its rectangle."""
         H, W = img.shape[:2]
         w, h, base = self._name_size(card.label, 0.8)
-        tag_w = 2 * self.r + self.pad + w + self.pad
+        badge_w = 2 * self.r + self.pad // 2 if self.show_order else 0
+        tag_w = self.pad // 2 + badge_w + w + self.pad
         tag_h = max(2 * self.r, h + base) + self.pad
         gap = self.pad // 2
         if box is None:  # hidden, or not detected this frame: use the last known position
@@ -658,7 +690,11 @@ class Hud:
             y = above
         y = int(min(max(y, 0), H - tag_h))
         self._panel(img, x, y, x + tag_w, y + tag_h, alpha=0.8)
-        self._chip(img, card, x + self.pad // 2, y + tag_h // 2)
+        if self.show_order:
+            self._chip(img, card, x + self.pad // 2, y + tag_h // 2)
+        else:
+            colour = GREY if card.hidden else card_colour(card.label)
+            self._name(img, card.label, x + self.pad // 2, y + tag_h // 2, 0.8, colour)
         return x, y, x + tag_w, y + tag_h
 
     def _no_signal(self, img):

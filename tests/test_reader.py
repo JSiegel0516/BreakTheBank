@@ -36,6 +36,53 @@ def test_process_places_cards_logs_them_with_their_seat_and_counts(tmp_path):
     assert rows[0][2:7] == ["placed", "1", "5H", "P1", "1"]
 
 
+def test_rename_seat_trims_saves_and_an_empty_name_restores_the_default(tmp_path):
+    r = make_reader(tmp_path)
+    assert r.seat_names == {}
+    assert r.rename_seat("P1", "  Ann  ") is True
+    assert r.seat_names == {"P1": "Ann"} and r.hud._message == "P1 is now Ann"
+    assert r.rename_seat("dealer", "x" * 16) is True
+    assert make_reader(tmp_path).seat_names == {"P1": "Ann", "dealer": "x" * 16}   # survives a restart
+    assert r.rename_seat("P1", "   ") is True
+    assert r.seat_names == {"dealer": "x" * 16} and r.hud._message == "P1 is P1 again"
+    assert make_reader(tmp_path).seat_names == {"dealer": "x" * 16}
+
+
+def test_rename_seat_refuses_an_unknown_seat_or_a_long_name(tmp_path):
+    r = make_reader(tmp_path, players=3)
+    assert r.rename_seat("P4", "Ann") is False
+    assert r.hud._message == "no seat P4 at a 3-player table"
+    assert r.rename_seat("OTHER", "Ann") is False
+    assert r.rename_seat("P1", "x" * 17) is False
+    assert r.hud._message == "names can be at most 16 characters"
+    assert r.seat_names == {} and not (tmp_path / "seats.json").exists()
+
+
+def test_names_are_shared_by_every_player_count_and_kept_when_zones_are_saved(tmp_path):
+    r = make_reader(tmp_path, players=3)
+    r.rename_seat("P2", "Bo")
+    r.handle_key(ord("5"), frame())
+    r.handle_key(ord("e"), frame())
+    r.handle_key(ord("e"), frame())                      # saves the 5-player zones
+    assert r.seat_names == {"P2": "Bo"}
+    assert make_reader(tmp_path, players=5).seat_names == {"P2": "Bo"}
+    assert SeatLayout.load(tmp_path / "seats.json", W, H).players == 5
+
+
+def test_a_renamed_seat_is_still_logged_and_printed_by_its_id(tmp_path, capsys):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    r.rename_seat("P1", "Ann")
+    seat = r.layout.seats[1].polygon.mean(axis=0)
+    dets = [Detection("5H", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert rows[0][2:6] == ["placed", "1", "5H", "P1"]
+    out = capsys.readouterr().out
+    assert "(P1)" in out and "Ann" not in out
+
+
 def test_duplicate_is_logged_with_its_seat_and_leaves_the_count(tmp_path):
     buf = io.StringIO()
     r = make_reader(tmp_path, log=csv.writer(buf))
@@ -167,6 +214,22 @@ def test_g_hides_and_shows_the_unmatched_boxes(tmp_path):
     assert r.hud.show_unmatched is False and r.hud._message == "unmatched boxes hidden"
     r.handle_key(ord("g"), frame())
     assert r.hud.show_unmatched is True and r.hud._message == "unmatched boxes shown"
+
+
+def test_n_toggles_the_placement_badges_with_a_message(tmp_path):
+    r = make_reader(tmp_path)
+    assert r.hud.show_order is False
+    r.handle_key(ord("n"), frame())
+    assert r.hud.show_order is True and r.hud._message == "placement numbers shown"
+    r.handle_key(ord("n"), frame())
+    assert r.hud.show_order is False and r.hud._message == "placement numbers hidden"
+
+
+def test_keys_6_and_7_do_nothing(tmp_path):
+    r = make_reader(tmp_path)
+    for key in "67":
+        r.handle_key(ord(key), frame())
+        assert r.layout.players == 3
 
 
 def test_reader_starts_in_the_mode_it_is_given(tmp_path):

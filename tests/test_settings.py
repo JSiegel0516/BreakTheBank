@@ -30,7 +30,7 @@ def test_no_rotated_copies_is_valid():
     ("LABEL_WINDOW_SECONDS", 0, "number above 0"),
     ("ROUND_END_SECONDS", -3.0, "number above 0"),
     ("HIDDEN_SECONDS", -1, "number of 0 or more"),
-    ("PLAYERS", 8, "whole number from 1 to 7"),
+    ("PLAYERS", 6, "whole number from 1 to 5"),
     ("CONFIDENCE", 1.5, "number from 0 to 1"),
     ("CONFIRM_CONFIDENCE", -0.1, "number from 0 to 1"),
     ("MATCH_DISTANCE", 0, "fraction above 0 and at most 1"),

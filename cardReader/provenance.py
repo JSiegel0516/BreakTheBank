@@ -17,7 +17,8 @@ model was trained on, down to a single relabelled box.
 
 --promote copies a run's best.pt and its small record (notes.txt, args.yaml,
 results.csv) into the live folder and writes LIVE.txt there naming the run.
-read.py prints that name at start-up.
+read.py prints that name at start-up. available_models lists every run with
+weights, for the model dropdown on read.py's browser page.
 """
 from __future__ import annotations
 
@@ -177,3 +178,19 @@ def live_model(live_dir: Path) -> str | None:
     """Name of the run that is live, from LIVE.txt, or None if nothing was promoted yet."""
     live_file = Path(live_dir) / "LIVE.txt"
     return live_file.read_text().splitlines()[0].strip() if live_file.exists() else None
+
+
+def available_models(models_dir: Path) -> list[tuple[str, Path]]:
+    """Every model read.py can load: (label, weights path) for each models_dir/<folder>/weights/best.pt.
+
+    The label is the folder name. A folder with a LIVE.txt (the live model, see promote) is
+    labelled with the run it holds, e.g. "cards (live: model_5_2026-10-31_n150rot)", and comes
+    first; the others follow by name. Empty if models_dir does not exist."""
+    models = []
+    for weights in sorted(Path(models_dir).glob("*/weights/best.pt")):
+        folder = weights.parents[1]
+        live = live_model(folder)
+        label = f"{folder.name} (live: {live})" if live else folder.name
+        models.append((label, weights, live is not None))
+    live_first = sorted(models, key=lambda model: not model[2])  # a stable sort: the rest stay by name
+    return [(label, weights) for label, weights, _ in live_first]

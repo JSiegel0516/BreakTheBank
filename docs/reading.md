@@ -13,8 +13,8 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | Sidebar, top | tabs naming the two views, `CARDS LEFT` and `GAME`: the current one is filled in yellow, and `[V]` beside them is the key that switches (see below) |
 | Sidebar, under the tabs | the Hi-Lo true count in large type with whom it favours (`favours player`, `favours dealer`, `neutral`), then the running count and cards left (`38/52`) |
 | Sidebar, below | the Cards Left view or the Game view (see below) |
-| Yellow badge and name on a card | that card's placement number and name: the rank followed by the suit's shape (`BACK` for a face-down card) |
-| Grey badge and name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
+| Name on a card | that card's name: the rank followed by the suit's shape (`BACK` for a face-down card). `N` adds its placement number in a yellow badge before the name |
+| Grey name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
 | Coloured boxes | corner indices the tracker has matched to a confirmed card, in that card's colour: red for hearts and diamonds, white for spades and clubs, amber for face-down. A frame that misreads the corner (a 6H read as 9H) keeps the card's colour |
 | Thin grey boxes | detections not matched to a confirmed card: a card not confirmed yet, or a stray box away from every card. `G` hides them |
 | Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
@@ -24,7 +24,9 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 
 The number is the placement order within the round: 1 is the first card
 confirmed (seen for `CONFIRM_SECONDS`, about half a second), 2 the next, and so on. A
-card that is covered keeps its number and comes back with it.
+card that is covered keeps its number and comes back with it. The tags on the
+video leave the number out until `N` is pressed, so the table stays readable;
+the hands in the Game view and on the page always show it.
 
 ### Cards Left view and Game view
 
@@ -68,8 +70,8 @@ view. The Cards Left view's colours are in the table above.
 | White box or name | same | a confirmed spade or club |
 | Amber box or name | same | a confirmed face-down card |
 | Thin grey box | corner index | a detection not matched to a confirmed card: it has not passed the [confirmation checks](#rules-the-tracker-assumes) yet, or it is away from every card (`G` hides these) |
-| Yellow badge | tags, sidebar | the card's placement number |
-| Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand until it is removed, and in the count |
+| Yellow badge | sidebar, and tags after `N` | the card's placement number; the Game legend lists it only while `N` shows it on the tags |
+| Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand until it is removed, and in the count (the tag's badge only after `N`) |
 | Amber outline | zones | the dealer's zone |
 | Light blue outline | zones | a player's zone |
 | Yellow tint | zones, edit mode | the zone you last clicked |
@@ -81,11 +83,12 @@ The bottom bar lists the main keys; the legend lists them all.
 
 | Key | Action | Page button |
 |---|---|---|
-| `1` to `7` | number of players; loads your saved layout for that count, or the template | yes, one per count |
+| `1` to `5` | number of players; loads your saved layout for that count, or the template | yes, one per count |
 | `E` | edit zones with the mouse; press `E` again to save them and lock | no |
 | `V` | switch the sidebar between the Cards Left view and the Game view; the tabs and a message name the new one | no |
 | `L` | show or hide the legend and key list | no |
 | `G` | show or hide the thin grey boxes, the detections not matched to a confirmed card | yes |
+| `N` | show or hide the placement numbers on the video tags (hidden at start); the hands keep theirs | yes |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept | yes |
 | `X` | rescan: forget this round's cards and read the table again; the count keeps only earlier rounds | yes |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 | yes |
@@ -191,10 +194,10 @@ window without scrolling sideways:
 |---|---|
 | True count | the Hi-Lo true count in large type with whom it favours, then the running count and cards left (`39/52`) |
 | Cards Left | the largest part of the page: one row per rank with its Hi-Lo value, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a faint red tint. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
-| Hands | one line per seat: its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out |
+| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. `E`, `V`, `L`, and `S` are grey: they work in the window only |
-| Status line | frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
+| Keys | first a `model` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. `E`, `V`, `L`, and `S` are grey: they work in the window only |
+| Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
 shorter than a frame still appears once. The reader sends the page an update
@@ -210,6 +213,35 @@ before did (a second turn turns the already-turned view) and each message
 shows. `Q` asks for confirmation first, since
 quitting cannot be undone from the page. Zone editing (`E`) and saving frames
 (`S`) need the window.
+
+**Renaming players.** Click a seat's name under Hands (`P1`, `DEALER`) to type
+the player's name, up to 16 characters. Enter saves it; Escape, or clicking away
+without a change, cancels. The new name shows on the page and in the window's
+Game view within a frame, with a message such as `P1 is now Ann`. Clear the
+field and press Enter to go back to `P1`. A name longer than 16 characters, or a
+seat not at the table, is refused with a message. Names are saved in
+`data/seats.json`, so they come back when the reader restarts, and they belong to
+the seat, whatever the player count. Only the page and the Game view use them:
+the zone labels on the video, the terminal, and the `--log` CSV keep the seat ids
+(`P1`), so `evaluate.py` scores any run. In a small window the Game view
+shortens a long name to fit, ending it in `..`, so the cards keep their room. The
+window draws letters outside plain ASCII (such as `é`) as `?`. OTHER cannot be renamed, and there is no renaming
+from the window.
+
+**Switching models.** The `model` dropdown lists every trained run in `models/`
+that has `weights/best.pt`, by folder name, with the live model first as
+`cards (live: <run>)`. The one running is selected, and the status line names it.
+Choose another to try it without restarting: the status line says
+`loading <run> ...`, the video pauses while the model loads (a few seconds), then
+the terminal prints `model <run> on mps` (or `cuda`, `cpu`) and the page shows
+`model: <run>`. The cards on the table, their numbers, and the count are kept. In
+capture mode (no model at start-up) choosing a model starts detection. The model
+is loaded with the same `--imgsz`, `--conf`, and `--device` as at start-up, and
+the next start uses `--model` (or `MODEL_PATH`) again; promote a run with
+`python train.py --promote` to make it the default. A run trained while the reader is open
+appears after the next switch. A path outside `models/`, a run without weights,
+or a file that fails to load is refused with a message, and the model running
+stays.
 
 **Without a window.** `--no-display --web` runs the reader with no window: the
 page shows everything and its buttons drive it. Quit with the page's `Q` button,
@@ -351,7 +383,7 @@ instead (see Placement above).
 
 **Seats.** The layout is fixed and only depends on the number of players: the
 dealer strip across the top of the image and the player seats on an arc below
-it, P1 on the left. Press `1` to `7` to change the number of seats at any time.
+it, P1 on the left. Press `1` to `5` to change the number of seats at any time.
 Each card belongs to the seat its corner index lies in; a card outside every
 seat is listed as OTHER. Point the camera so the dealer's side of the table is
 at the top of the image.
@@ -375,8 +407,9 @@ right or bottom edge can be grabbed from just outside the video.
 Press `E` again to save and lock. Layouts are saved to `data/seats.json`, **one
 per player count**, and work at any camera resolution:
 
-- Pressing `1` to `7` brings back your saved layout for that count, or the
-  template if you never saved one.
+- Pressing `1` to `5` brings back your saved layout for that count, or the
+  template if you never saved one. Layouts saved for 6 or 7 players by an
+  older version stay in the file but are no longer loaded.
 - At start-up the reader opens the player count you saved last, with its layout.
   `--players 3` starts with 3 players instead (their saved layout, or the template).
 - With nothing saved yet, it starts with `PLAYERS` from `settings.py` (5).
@@ -585,7 +618,7 @@ A value out of range (a fraction above 1, `CONFIRM_SECONDS` larger than
 | A collected hand stays in the seats too long | lower `HIDDEN_SECONDS` (e.g. 5 s to 3 s, 62 to 37 frames); 0 removes at once | a hidden card counts as picked up sooner |
 | The round ends while cards are only covered | raise `ROUND_END_SECONDS` (e.g. 3 s to 5 s, 37 to 62 frames) | the table must stay empty longer |
 | The next round starts too slowly after a sweep | lower `ROUND_END_SECONDS` | the empty table is noticed sooner |
-| Cards land in the wrong seat | press `1` to `7` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
+| Cards land in the wrong seat | press `1` to `5` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
 | A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW_SECONDS` (1.5 s to 1 s, 19 to 12 frames) | the name vote forgets old reads sooner |
 | A card's name flips back and forth | raise `LABEL_WINDOW_SECONDS` (1.5 s to 3 s, 19 to 37 frames) | one bad second of reads cannot outvote the rest |

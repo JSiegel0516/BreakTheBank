@@ -26,13 +26,24 @@ With --web the window shows the video and the bottom bar only, and a page served
 on WEB_PORT in settings.py (cardReader/sidebar/) shows the count, the Cards Left
 grid, every seat's hand with a basic strategy hint, the keys, and the status. It
 updates as the reader runs. Most keys also have a button on the page (all but E, V,
-L, and S), which does exactly what the key does. Keys and buttons waiting together
+L, and S), which does exactly what the key does. Clicking a seat's name on the page
+renames it (up to 16 characters; empty restores P1 or DEALER). Names are saved in
+SEATS_FILE and shown on the page and in the window's Game view; the terminal and
+--log keep the seat ids. The page's model dropdown lists every models/<run>/weights/best.pt
+(provenance.available_models) and its status line names the model running. Choosing
+one loads it in place of the current model (the video pauses for the load), prints and
+flashes its name, and keeps the tracker's cards; from capture mode it starts detection.
+
+Card tags on the video show only the card's name. Press n to add each card's
+placement number in a yellow badge, and n again to hide it; the hands on the page
+and in the Game view always show the numbers. Keys and buttons waiting together
 are pressed one per frame, in order, so each gets the frame a turn before it left and
 each message reaches the page. With --no-display --web there is no window and the
 page is the only way to drive the reader; its Q button quits.
 
-Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
+Keys: 1-5 number of players | e edit zones with the mouse (e again saves them)
       v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
+      n show or hide the placement numbers on the video tags
       r new round | x rescan this round (fix a misread) | Shift+R new shoe (count back to 0)
       s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
@@ -83,7 +94,7 @@ import settings
 from cardReader.camera import Camera, parse_source, rotate, snapshot_cameras
 from cardReader.hud import DealtCards, Hud
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
-from cardReader.provenance import live_model
+from cardReader.provenance import available_models, live_model
 from cardReader.reader import LOG_HEADER, Reader
 from cardReader.seats import MAX_PLAYERS, SeatLayout
 from cardReader.sidebar.server import SidebarServer
@@ -191,14 +202,78 @@ def reconnect(cam: Camera, hud: Hud, source):
         hud.flash("reconnect failed: press C to try again", 2.5)
 
 
-def page_keys(actions: list[str]) -> list[int]:
-    """The key codes for actions posted from the page's buttons, in order. An unknown name is printed and skipped."""
+class LiveDetector:
+    """The detector read.py runs, and the models the page can switch it to.
+
+    load: weights path (str) -> detector, built with the command line's size, confidence, and device.
+    models_dir: the folder whose runs can be chosen (MODELS_DIR); any other path is refused.
+    detector, path: the model loaded at start-up and its weights, or None for capture mode."""
+
+    def __init__(self, load, models_dir: Path, detector=None, path: str | None = None):
+        self.load, self.models_dir = load, Path(models_dir)
+        self.detector = detector
+        self.weights = Path(path).resolve() if path else None
+        self.choices = available_models(self.models_dir)  # (label, weights path), as the page lists them
+
+    def switch(self, requested: str, hud: Hud) -> bool:
+        """Load requested (a weights path relative to the project folder) in place of the current
+        detector, then print and flash its name. The loop waits for the load, so the video pauses.
+        The tracker is untouched, so the cards on the table keep their numbers; from capture mode
+        detection starts. Returns False, with a message and the current detector kept, for a path
+        outside models_dir, one that is not a run's weights/best.pt, or weights that fail to load.
+        The list of models is read again either way, so a run trained since start-up appears."""
+        self.choices = available_models(self.models_dir)
+        weights = (settings.PROJECT_ROOT / requested).resolve()
+        if not weights.is_relative_to(self.models_dir.resolve()):
+            hud.flash(f"not a model in {settings.MODELS_DIR}/: {requested}", 2.5)
+            return False
+        labels = {path.resolve(): label for label, path in self.choices}
+        if weights not in labels:
+            hud.flash(f"no weights at {requested}", 2.5)
+            return False
+        label = labels[weights]
+        print(f"loading model {label} ...")
+        try:
+            detector = self.load(str(weights))
+        except Exception as error:  # a corrupt or incompatible .pt file must not stop a live session
+            print(f"could not load {label}: {error}")
+            hud.flash(f"could not load {label}: see the terminal", 2.5)
+            return False
+        self.detector, self.weights = detector, weights
+        print(f"model {label} on {detector.device_used}")
+        hud.flash(f"model: {label}", 2.5)
+        return True
+
+    def snapshot(self) -> dict:
+        """The page's model dropdown: the current weights path (None in capture mode) and every
+        choice as {"path", "label"}. Paths are relative to the project folder where they can be."""
+        return {"current": _project_path(self.weights) if self.weights else None,
+                "choices": [{"path": _project_path(path), "label": label} for label, path in self.choices]}
+
+
+def _project_path(path: Path) -> str:
+    """path relative to the project folder, with forward slashes, or in full if it lies outside it."""
+    path = Path(path).resolve()
+    root = settings.PROJECT_ROOT.resolve()
+    return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
+
+
+def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetector) -> list[int]:
+    """The key codes for the page's button actions, in order, to be pressed one per frame.
+
+    rename_seat (with "seat" and "name") and switch_model (with "path") are done straight away
+    and press no key. An unknown action name is printed and skipped."""
     keys = []
     for action in actions:
-        if action in ACTION_KEYS:
-            keys.append(ACTION_KEYS[action])
+        name = action["action"]
+        if name in ACTION_KEYS:
+            keys.append(ACTION_KEYS[name])
+        elif name == "rename_seat":
+            reader.rename_seat(action.get("seat", ""), action.get("name", ""))
+        elif name == "switch_model":
+            models.switch(action.get("path", ""), reader.hud)
         else:
-            print(f"ignored unknown page action {action!r}")
+            print(f"ignored unknown page action {name!r}")
     return keys
 
 
@@ -258,10 +333,13 @@ def main():
         list_cameras()
         return
 
+    def load(weights: str):
+        from cardReader.detector import Detector  # slow import, only paid when a model is used
+        return Detector(weights, args.imgsz, args.conf, args.device)
+
     detector = None
     if Path(args.model).exists():
-        from cardReader.detector import Detector
-        detector = Detector(args.model, args.imgsz, args.conf, args.device)
+        detector = load(args.model)
         live = live_model(settings.PROJECT_ROOT / settings.LIVE_MODEL_DIR)
         is_live = Path(args.model).resolve() == (settings.PROJECT_ROOT / settings.MODEL_PATH).resolve()
         print(f"model {args.model} on {detector.device_used}" + (f" (live model: {live})" if live and is_live else ""))
@@ -294,6 +372,9 @@ def main():
         reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log,
                         preprocess=args.preprocess, rotation=rotation)
         preprocess_config = PreprocessConfig.from_settings(settings)
+        models = LiveDetector(load, settings.PROJECT_ROOT / settings.MODELS_DIR, detector,
+                              args.model if detector else None)
+        del detector  # models owns it now, so switching away frees the start-up model's memory
         server = start_web(args.web_host, settings.WEB_PORT) if args.web else None
         if server:
             cleanup.callback(server.close)
@@ -338,9 +419,9 @@ def main():
                 else:
                     turned = dets_rotation != reader.rotation  # cached dets are in the old frame's coordinates
                     editing_skip = reader.editor.active and frames_processed % EDIT_DETECT_EVERY != 0
-                    if detector and (turned or not editing_skip):
+                    if models.detector and (turned or not editing_skip):
                         start = time.perf_counter()
-                        dets = detector(enhanced)
+                        dets = models.detector(enhanced)
                         dets_rotation = reader.rotation
                         timer.lap("detect", start)
                     reader.process(frame, dets)
@@ -355,19 +436,19 @@ def main():
                 if not args.no_display:
                     start = time.perf_counter()
                     cv2.imshow(WINDOW, hud.draw(shown, dets, tracker.round, fps, reader.layout, reader.count,
-                                                bound=tracker.bound, capture_mode=detector is None,
+                                                bound=tracker.bound, capture_mode=models.detector is None,
                                                 editor=reader.editor, dealt=DealtCards.from_tracker(tracker),
                                                 stage_ms=timer.smoothed, no_signal=no_signal,
                                                 preprocess=reader.preprocess, showing_raw=showing_raw,
-                                                sidebar=server is None))
+                                                sidebar=server is None, seat_names=reader.seat_names))
                     key = wait_key_draining_mouse(EDIT_MOUSE_MS) if reader.editor.active else cv2.waitKey(1)
                     window_key = key & 0xFF
                     timer.lap("draw", start)
                 if server:
                     server.publish(build_snapshot(reader, fps=fps, stage_ms=timer.smoothed, no_signal=no_signal,
-                                                  capture_mode=detector is None, showing_raw=showing_raw,
-                                                  flash=hud.pop_flash()))
-                    pending_keys.extend(page_keys(server.drain_actions()))
+                                                  capture_mode=models.detector is None, showing_raw=showing_raw,
+                                                  flash=hud.pop_flash(), model=models.snapshot()))
+                    pending_keys.extend(page_keys(server.drain_actions(), reader, models))
                 if window_key != NO_KEY:
                     pending_keys.append(window_key)
                 # One key per frame: the next one gets the frame a turn leaves behind, and each key's

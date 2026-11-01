@@ -1,7 +1,7 @@
 import pytest
 
 from cardReader.blackjack import describe, hand_value, hi_lo, is_blackjack, shoe_count
-from cardReader.seats import DEALER, SeatLayout
+from cardReader.seats import DEALER, MAX_PLAYERS, SeatLayout
 
 
 def test_hand_values():
@@ -52,7 +52,7 @@ def test_face_down_cards_never_revealed_leave_the_deck_but_not_the_count():
     assert (c.running, c.cards_left) == (0, 48)
 
 
-@pytest.mark.parametrize("players", range(1, 8))
+@pytest.mark.parametrize("players", range(1, MAX_PLAYERS + 1))
 def test_seat_layout(players):
     W, H = 1920, 1080
     layout = SeatLayout(players, W, H)

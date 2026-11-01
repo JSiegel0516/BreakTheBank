@@ -3,13 +3,15 @@
     server = SidebarServer("127.0.0.1", 8765)   # serves straight away; OSError if the port is taken
     print(server.url)
     server.publish(snapshot)                     # once per frame, from the reader loop
-    for action in server.drain_actions(): ...    # the buttons pressed on the page since the last call
+    for action in server.drain_actions(): ...    # what the page posted since the last call, as dicts
     server.close()
 
 Routes:
     GET /          page.html
     GET /events    a Server-Sent Events stream: each event is one "data:" line of snapshot JSON
-    POST /action   {"action": "<name>"} as JSON queues the name for drain_actions; 204 when queued.
+    POST /action   a JSON object with an "action" name and optional string fields, such as
+                   {"action": "new_round"} or {"action": "rename_seat", "seat": "P1", "name": "Ann"},
+                   queues it for drain_actions; 204 when queued, 400 for any other body.
                    Only a JSON body is taken: a browser will not send one from another site
                    without asking first, which this server never allows, so other web pages
                    cannot press buttons.
@@ -73,8 +75,9 @@ class SidebarServer:
                 with contextlib.suppress(queue.Full):
                     client.put_nowait(message)
 
-    def drain_actions(self) -> list[str]:
-        """The action names posted since the last call, oldest first. The names are not checked."""
+    def drain_actions(self) -> list[dict[str, str]]:
+        """The actions posted since the last call, oldest first, each the body as posted: "action"
+        and any other string fields. Names and fields are not checked."""
         actions = []
         while True:
             try:
@@ -102,6 +105,13 @@ class SidebarServer:
             self._clients.remove(client)
 
 
+def _is_action(body) -> bool:
+    """Whether a decoded POST /action body is an object with an "action" and only string values."""
+    if not isinstance(body, dict) or "action" not in body:
+        return False
+    return all(isinstance(value, str) for value in body.values())
+
+
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 (the name http.server calls)
         path = self.path.split("?")[0]
@@ -127,11 +137,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(400, f"the body must be 1 to {MAX_ACTION_BYTES} bytes")
             return
         try:
-            action = json.loads(self.rfile.read(length))["action"]
-        except (ValueError, KeyError, TypeError):
+            action = json.loads(self.rfile.read(length))
+        except ValueError:
             action = None
-        if not isinstance(action, str):
-            self.send_error(400, 'send {"action": "<name>"}')
+        if not _is_action(action):
+            self.send_error(400, 'send {"action": "<name>"}, with any other fields as strings')
             return
         try:
             self.server.sidebar._actions.put_nowait(action)
