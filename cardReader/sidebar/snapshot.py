@@ -18,7 +18,7 @@ camera, or window. The page shows each group's keys side by side on one row.
 """
 from __future__ import annotations
 
-from ..blackjack import CARDS_PER_DECK, hi_lo, is_pair
+from ..blackjack import CARDS_PER_DECK, hi_lo, is_pair, milestone, outcome
 from ..deck import SUITS
 from ..hud import EDIT_HELP, GRID_RANKS, KEY_LIST, DealtCards, count_cue, seat_title
 from ..reader import Reader
@@ -116,7 +116,9 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str]) -> dict:
 
     part: 1 or 2 for a hand of a split seat, else None; the page shows it after the name.
     can_split: a player seat that is not split and holds a pair, so the page offers a split button.
-    Only player seats get a strategy hint, which never says split for a hand of a split seat."""
+    Only player seats get a strategy hint, which never says split for a hand of a split seat.
+    outcome: blackjack.outcome against the dealer for a player hand; the dealer's own
+    blackjack.milestone ('blackjack', 'twenty-one', 'bust', or None); None for OTHER."""
     kind = {DEALER: "dealer", OTHER: "other"}.get(hand.seat, "player")
     cards = [{"order": card.order, "label": card.label, "hidden": card.hidden} for card in hand.cards]
     unsplit = hand.part is None
@@ -129,4 +131,13 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str]) -> dict:
         "total": hand.total,
         "hint": hint(hand.labels, dealer_labels, can_split=unsplit) if kind == "player" else None,
         "can_split": kind == "player" and unsplit and is_pair(hand.labels),
+        "outcome": _outcome(kind, hand.labels, dealer_labels),
     }
+
+
+def _outcome(kind: str, labels: list[str], dealer_labels: list[str]) -> str | None:
+    if kind == "player":
+        return outcome(labels, dealer_labels)
+    if kind == "dealer":
+        return milestone(labels)
+    return None

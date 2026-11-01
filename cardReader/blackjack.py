@@ -3,6 +3,12 @@
 Hand totals: aces count 11 unless that busts, then 1. Face-down cards (BACK)
 are left out of the total and reported as hidden.
 
+Outcomes: a complete hand (two or more cards, none face down) shows a bust,
+blackjack, or 21 at once. Win, push, or lose against the dealer is known only
+once the dealer is finished: no card face down and a total of DEALER_STANDS_AT
+or more (the dealer stands on soft 17), or bust. A blackjack beats a finished
+dealer unless the dealer also has one, which is a push.
+
 Hi-Lo: every card seen adds to the running count, 2-6 as +1, 7-9 as 0, and
 10-A as -1. The true count divides it by the decks still to be dealt. Cards
 left is the deck minus the face cards seen and minus the face-down cards that
@@ -21,6 +27,7 @@ from .deck import BACK, rank_of
 
 CARDS_PER_DECK = 52
 MIN_DECKS_LEFT = 0.25  # floor for the true count's divisor, so a few cards left cannot make it huge
+DEALER_STANDS_AT = 17  # soft 17 included
 
 
 def card_value(label: str) -> int:
@@ -51,6 +58,50 @@ def is_blackjack(labels: list[str]) -> bool:
 def is_pair(labels: list[str]) -> bool:
     """Whether labels are exactly two face-up cards of equal value, so a jack and a queen are a pair of tens."""
     return len(labels) == 2 and BACK not in labels and card_value(labels[0]) == card_value(labels[1])
+
+
+def dealer_finished(labels: list[str]) -> bool:
+    """Whether the dealer is done drawing: no card face down and DEALER_STANDS_AT or more (soft or hard), or bust."""
+    return BACK not in labels and hand_value(labels)[0] >= DEALER_STANDS_AT
+
+
+def milestone(labels: list[str]) -> str | None:
+    """'bust', 'blackjack', or 'twenty-one' for a complete hand that reached one, else None.
+
+    A hand with fewer than two cards or any face-down card is not complete."""
+    if len(labels) < 2 or BACK in labels:
+        return None
+    if is_blackjack(labels):
+        return "blackjack"
+    total = hand_value(labels)[0]
+    if total > 21:
+        return "bust"
+    return "twenty-one" if total == 21 else None
+
+
+def outcome(player_labels: list[str], dealer_labels: list[str]) -> str | None:
+    """A player hand's state against the dealer: 'bust', 'blackjack', 'twenty-one', 'win', 'push', 'lose', or None.
+
+    A milestone (bust, blackjack, 21) shows while the dealer is unfinished. Once the
+    dealer is finished, a blackjack pushes against a dealer blackjack and stays
+    'blackjack' otherwise; any other standing hand, 21 included, wins, pushes, or
+    loses on the totals, loses to a dealer blackjack, and wins on a dealer bust.
+    None for an incomplete hand (see milestone), or for a hand without a milestone
+    while the dealer is unfinished."""
+    if len(player_labels) < 2 or BACK in player_labels:
+        return None
+    mark = milestone(player_labels)
+    if mark == "bust" or not dealer_finished(dealer_labels):
+        return mark
+    if mark == "blackjack":
+        return "push" if is_blackjack(dealer_labels) else "blackjack"
+    if is_blackjack(dealer_labels):
+        return "lose"
+    player_total = hand_value(player_labels)[0]
+    dealer_total = hand_value(dealer_labels)[0]
+    if dealer_total > 21 or player_total > dealer_total:
+        return "win"
+    return "push" if player_total == dealer_total else "lose"
 
 
 def describe(labels: list[str]) -> str:

@@ -74,7 +74,8 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert hands["P1"]["total"] == "16" and hands["P1"]["hint"] == "stand"   # hard 16 against a 6
     assert hands["P2"]["hint"] is None                                       # one card: no hint
     assert hands["P3"] == {"seat": "P3", "name": "P3", "part": None, "kind": "player", "cards": [], "total": "-",
-                           "hint": None, "can_split": False}
+                           "hint": None, "can_split": False, "outcome": None}
+    assert hands["dealer"]["outcome"] is None and hands["P1"]["outcome"] is None and hands["P2"]["outcome"] is None
 
     assert snapshot["players"] == 3 and snapshot["edit_help"] == []
     keys = {entry["key"]: entry for entry in snapshot["keys"]}
@@ -103,6 +104,45 @@ def test_snapshot_hands_carry_the_seat_id_and_its_display_name(reader):
     reader.rename_seat("dealer", "House")
     hands = {hand["seat"]: hand["name"] for hand in snapshot_of(reader)["hands"]}
     assert hands == {"dealer": "House", "P1": "Ann", "P2": "P2", "P3": "P3"}
+
+
+def new_reader(tmp_path, players):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    return Reader(tracker, SeatLayout(players, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
+
+
+def outcomes_of(reader):
+    return [(hand["seat"], hand["part"], hand["outcome"]) for hand in snapshot_of(reader)["hands"]]
+
+
+def test_snapshot_gives_each_player_hand_its_outcome_and_the_dealer_its_own_mark(tmp_path):
+    reader = new_reader(tmp_path, 3)
+    place(reader, ("KC", 0, -30), ("7D", 0, 30), ("AS", 1, -30), ("KH", 1, 30), ("9S", 2, -30), ("8H", 2, 30),
+          ("5C", 3, -30), ("6H", 3, 30))
+    frame = np.zeros((H, W, 3), np.uint8)
+    corner = Detection("2C", 0.9, 5.0, H - 5.0)                         # in no seat
+    reader.process(frame, [corner])
+    reader.process(frame, [corner])
+    assert outcomes_of(reader) == [("dealer", None, None), ("P1", None, "blackjack"), ("P2", None, "push"),
+                                   ("P3", None, "lose"), ("OTHER", None, None)]
+
+
+def test_snapshot_marks_a_dealer_blackjack_and_a_player_loss(tmp_path):
+    reader = new_reader(tmp_path, 1)
+    place(reader, ("AC", 0, -30), ("QS", 0, 30), ("KS", 1, -30), ("8H", 1, 30))
+    assert outcomes_of(reader) == [("dealer", None, "blackjack"), ("P1", None, "lose")]
+
+
+def test_each_hand_of_a_split_seat_gets_its_own_outcome(tmp_path):
+    reader = new_reader(tmp_path, 1)
+    place(reader, ("8S", 1, -30), ("8H", 1, 30))
+    reader.split_seat("P1")
+    table = [("KC", 0, -30), ("8D", 0, 30), ("8S", 1, -30), ("8H", 1, 30), ("KS", 1, -70), ("3C", 1, 70)]
+    place(reader, *table)
+    assert outcomes_of(reader) == [("dealer", None, None), ("P1", 1, "push"), ("P1", 2, "lose")]   # 18, 11 v 18
+
+    place(reader, *table, ("QD", 1, 110))
+    assert outcomes_of(reader) == [("dealer", None, None), ("P1", 1, "push"), ("P1", 2, "win")]    # 21 v 18
 
 
 def hand_rows(snapshot):
@@ -207,6 +247,19 @@ def test_the_page_has_a_keys_fold_button_and_a_note_under_the_title():
     assert '<button id="keysToggle" class="toggle" aria-expanded="true"' in page
     assert '<p id="keysNote" class="note">' in page
     assert 'localStorage.getItem("keysCollapsed")' in page
+
+
+def test_the_page_marks_hand_outcomes_and_holds_a_confetti_canvas():
+    page = server_module.PAGE.read_text()
+    assert '<canvas id="confetti" aria-hidden="true"></canvas>' in page
+    assert "outcome-${hand.outcome}" in page
+    for cue in ["blackjack", "twenty-one", "win", "bust", "lose"]:
+        assert f".outcome-{cue}" in page
+    assert 'const OUTCOME_TAG = { win: "win", push: "push", lose: "lost" };' in page
+    assert '<span class="tag ${hand.outcome}">' in page
+    assert ".hand.dealer.pulse" in page and ".hand.dealer.outcome-bust" in page
+    assert 'matchMedia("(prefers-reduced-motion: reduce)")' in page
+    assert "requestAnimationFrame(drawConfetti)" in page
 
 
 def received(client: queue.Queue) -> list[dict]:
