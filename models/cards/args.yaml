@@ -1,7 +1,7 @@
 task: detect
 mode: train
-model: /Users/matt/Documents/SDSU Work/BDA FALL 2026/BDA 696/Blackjack_Project/models/yolo11n.pt
-data: /Users/matt/Documents/SDSU Work/BDA FALL 2026/BDA 696/Blackjack_Project/data/dataset/data.yaml
+model: D:\BreakTheBank\BreakTheBank\models\yolo11n.pt
+data: D:\BreakTheBank\BreakTheBank\data\dataset\data.yaml
 epochs: 150
 time: null
 patience: 20
@@ -10,10 +10,10 @@ imgsz: 1024
 save: true
 save_period: -1
 cache: false
-device: mps
-workers: 8
-project: /Users/matt/Documents/SDSU Work/BDA FALL 2026/BDA 696/Blackjack_Project/models
-name: n150
+device: '0'
+workers: 2
+project: D:\BreakTheBank\BreakTheBank\models
+name: model_5_2026-10-31_n150rot
 exist_ok: true
 pretrained: true
 cls_remap: true
@@ -65,7 +65,6 @@ show_conf: true
 show_boxes: true
 line_width: null
 format: torchscript
-keras: false
 optimize: false
 dynamic: false
 simplify: true
@@ -112,4 +111,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: tracktrack.yaml
-save_dir: /Users/matt/Documents/SDSU Work/BDA FALL 2026/BDA 696/Blackjack_Project/models/n150
+save_dir: D:\BreakTheBank\BreakTheBank\models\model_5_2026-10-31_n150rot

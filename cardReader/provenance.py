@@ -26,7 +26,7 @@ import json
 import re
 import shutil
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import yaml
 
@@ -162,7 +162,8 @@ def promote(run_dir: Path, live_dir: Path) -> Path:
         f"best.pt sha256 {hashlib.sha256(best.read_bytes()).hexdigest()}",
     ]
     if args:
-        lines.append(f"base {Path(str(args.get('model', '?'))).name}, epochs {args.get('epochs', '?')}, "
+        base = PureWindowsPath(str(args.get("model", "?"))).name  # splits on / and \, wherever the run trained
+        lines.append(f"base {base}, epochs {args.get('epochs', '?')}, "
                      f"imgsz {args.get('imgsz', '?')}, batch {args.get('batch', '?')}")
     lines.append("To change the live model: python train.py --promote models/<run>")
     (live_dir / "LIVE.txt").write_text("\n".join(lines) + "\n")

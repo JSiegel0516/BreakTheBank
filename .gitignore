@@ -27,6 +27,8 @@ models/cards/weights/*
 # Zones edited for one camera setup
 data/seats.json
 data.zip
+# The project zipped for Google Colab (docs/training.md)
+BreakTheBank.zip
 
 # Generated or downloaded data. The labelled exports come from the team's shared
 # folder (see data/README.md); data/manifest.json records what they must contain.

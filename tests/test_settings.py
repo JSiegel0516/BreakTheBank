@@ -18,6 +18,10 @@ def test_shipped_settings_are_valid():
     settings.validate(settings)
 
 
+def test_no_rotated_copies_is_valid():
+    settings.validate(shipped(TRAIN_ROTATED_COPIES=()))
+
+
 @pytest.mark.parametrize("name, value, allowed", [
     ("CONFIRM_FRAMES", 0, "whole number of 1 or more"),
     ("DROP_FRAMES", 2.5, "whole number of 1 or more"),
@@ -36,6 +40,11 @@ def test_shipped_settings_are_valid():
     ("PREPROCESS_BRIGHT_ABOVE", 300, "number from 0 to 255"),
     ("PREPROCESS_CLAHE_CLIP", 0, "number above 0"),
     ("PREPROCESS_CLAHE_TILES", 0, "whole number of 1 or more"),
+    ("TRAIN_ROTATED_COPIES", (45,), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", (90, 90), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", [90], "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", (0,), "tuple of different angles from 90, 180, 270"),
+    ("TRAIN_ROTATED_COPIES", ([90],), "tuple of different angles from 90, 180, 270"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:

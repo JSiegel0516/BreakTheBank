@@ -12,7 +12,8 @@
 Every run goes to models/<name>/ (--name, default cards). read.py loads
 models/cards/weights/best.pt, so train with --name and --promote the winner.
 On a Mac the Apple GPU is used automatically. A Google Colab GPU is a few
-times faster for long runs: upload the project and run the same command there.
+times faster for long runs: docs/training.md ("Training on Google Colab") has
+the commands to zip the project, train there, and bring the run back.
 """
 from __future__ import annotations
 
@@ -71,7 +72,8 @@ def main():
             print(f"warning: data/raw differs from {settings.MANIFEST_FILE} (above). Training anyway;"
                   " run `python train.py --manifest` afterwards if this data is what the model should learn from.")
         dataset.build(data_dir, ROOT / settings.LABELED_DIR, ROOT / settings.CARD_ART_DIR,
-                      ROOT / settings.BACKGROUNDS_DIR, args.synthetic, settings.VAL_FRACTION)
+                      ROOT / settings.BACKGROUNDS_DIR, args.synthetic, settings.VAL_FRACTION,
+                      settings.TRAIN_ROTATED_COPIES)
 
     import torch
     from ultralytics import YOLO

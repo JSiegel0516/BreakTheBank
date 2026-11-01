@@ -41,9 +41,9 @@ Speed: about 1.2 ms of model time per 1024-pixel image on the M4 Pro GPU, about
 To reproduce the real-photo numbers, see [Validate a model on its own](training.md#5-validate-a-model-on-its-own).
 The charts are in `models/valReal/` after running it.
 
-## Results: second training run (live model)
+## Results: second training run (model 3)
 
-Model 3 (`models/model_3_2026-10-14_n150`, now `models/cards`): YOLO11n trained
+Model 3 (`models/model_3_2026-10-14_n150`, live until model 5): YOLO11n trained
 on 1,854 real photos (the two earlier exports plus 852 composited Roboflow
 photos whose missing corners were filled in with `--complete-corners`) and
 2,000 synthetic images. Early stopping ended it at epoch 110 of 150, best epoch
@@ -71,7 +71,7 @@ Model 4 (`models/model_4_2026-10-15_s150`) is YOLO11s, 3.6 times the weights of
 YOLO11n, trained on exactly the same images as model 3 (early-stopped at epoch
 102, best epoch 82, 9.6 hours). Both scored on the same 320 real photos:
 
-| | Model 3 (YOLO11n, live) | Model 4 (YOLO11s) |
+| | Model 3 (YOLO11n, then live) | Model 4 (YOLO11s) |
 |---|---|---|
 | Corners read correctly | 98.4% | 98.4% |
 | Wrong card names (of 3,449) | 37 | 31 |
@@ -88,6 +88,60 @@ limit is the training data rather than model size: more labelled photos of red
 cards would help more than a larger network. Model 3 stays live because it is
 as accurate and twice as fast, which leaves headroom for a 4K camera or a higher
 `INPUT_SIZE`.
+
+## Results: sideways copies of the real photos (model 5, live)
+
+The live model sometimes swapped 6 and 9. The real training photos already
+show every corner upright and upside down, but rarely sideways. Model 5
+(`models/model_5_2026-10-31_n150rot`) is YOLO11n trained on model 3's data
+plus every real train photo again at 90 and 270 degrees: 3,068 extra train
+images, 6,289 in all. Validation is unchanged. It early-stopped at epoch 75 of
+150, best epoch 55, after 1.65 hours on an NVIDIA GPU. With more updates per
+run, Ultralytics' automatic choice picked SGD (stochastic gradient descent)
+instead of the AdamW that model 3 got, so the optimizer differs too.
+
+Both models read the same 320 real photos (3,449 labelled corners) with
+`python benchmark.py --confusions`, at the live settings (`INPUT_SIZE` 1280,
+`CONFIDENCE` 0.6, photos unchanged):
+
+| | Model 3 | Model 5 |
+|---|---|---|
+| Corners found | 3,356 | **3,386** |
+| Wrong card names | 18 | **17** |
+| Missed corners | 93 | **63** |
+| 6/9 swaps | 3 | 2 |
+| 7/9 swaps | 2 | 2 |
+| Missed: upright / diagonal / sideways | 38 / 32 / 23 | **30 / 23 / 10** |
+| Wrong: upright / diagonal / sideways | 10 / 6 / 2 | 10 / 3 / 4 |
+| mAP50 / mAP50-95, full val (633 images) | 0.989 / 0.780 | 0.991 / 0.784 |
+| mAP50 / mAP50-95, real photos (320, `yolo val`) | 0.981 / 0.626 | **0.984 / 0.630** |
+
+These counts use the benchmark's own matching and the live settings. The
+model 4 table above used `yolo val`, so its counts are not comparable with
+these.
+
+What it shows:
+
+- **Fewer missed corners, most of all sideways ones.** Missed corners fell
+  from 93 to 63, and sideways misses from 23 to 10. That fits what the copies
+  were meant to teach. The optimizer also changed, though, so this
+  comparison cannot credit the drop to the rotated copies alone.
+- **Wrong names barely changed.** 17 instead of 18. The 6/9 swaps went from 3
+  to 2. The remaining mistakes are spread over J/Q, 6/9, 7/9 and 9/10 (two or
+  three each), so no single rank pair stands out.
+- **Promotion rule.** A new model goes live only if its wrong names and
+  missed corners on the real photos are each no higher than the live
+  model's. 17 is no more than 18, and 63 is no more than 93, so model 5 was
+  promoted on 2026-11-01.
+
+Both real-photo mAP rows come from the same command on the same 320 photos:
+
+```bash
+yolo val model=models/model_5_2026-10-31_n150rot/weights/best.pt data=data/dataset/realVal.yaml imgsz=1024 project="$PWD/models" name=model_5_2026-10-31_n150rot/valReal
+```
+
+On the real photos model 5 scores precision 0.977 and recall 0.984. Both mAP
+scores rise slightly over model 3's, in line with the fewer missed corners.
 
 ## Preprocessing for dim and bright light
 

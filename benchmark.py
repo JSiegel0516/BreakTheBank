@@ -4,6 +4,8 @@
     python benchmark.py --limit 20               # a quick run on the first 20 images
     python benchmark.py --levels 2.5 1.0 --modes off auto --csv bench.csv
     python benchmark.py --data /path/to/data/dataset/realVal.yaml --imgsz 1024
+    python benchmark.py --confusions             # which names does the live model get wrong, and on what boxes?
+    python benchmark.py --confusions --model models/<run>/weights/best.pt --csv model5.csv
 
 Runs the live model (MODEL_PATH, at --imgsz and CONFIDENCE from settings.py) over
 the real validation photos listed in data/dataset/realVal.yaml (written by
@@ -23,6 +25,15 @@ corner's name. A box matching no labelled corner is extra. Times are the mean
 milliseconds per image for preprocessing and for the detector.
 
 Prints one row per level and mode; --csv also writes them to a file.
+
+--confusions instead runs the model once on each photo, unchanged (level 1,
+mode off), and writes one CSV row per wrong-name box: image, export prefix,
+true name, predicted name, confidence, and the labelled box's width, height
+and aspect (width / height). The CSV goes to --csv, or by default to
+confusions.csv in the model's run folder. It prints the totals (labelled,
+found, wrong names, missed), the rank swaps with counts, and the wrong-name
+rate (wrong / found) by aspect: upright below 0.8, diagonal 0.8 to 1.25,
+sideways above 1.25; and by box width tercile.
 """
 from __future__ import annotations
 
@@ -30,6 +41,7 @@ import argparse
 import csv
 import itertools
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,11 +52,15 @@ import yaml
 
 import settings
 from cardReader.cards import Detection
+from cardReader.deck import BACK, RANKS, rank_of
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
 
 LEVELS = (3.5, 2.5, 1.8, 1.0, 0.6)
 MATCH_FRACTION = 0.5  # a box matches a corner when its centre is this share of the corner's longer side away, or less
 COLUMNS = ["level", "mode", "labelled", "found", "found %", "right", "right %", "extra", "prep ms", "detect ms"]
+CONFUSION_COLUMNS = ["image", "export", "true", "predicted", "confidence", "width", "height", "aspect"]
+UPRIGHT_ASPECT = 0.8     # a labelled box narrower than this share of its height is an upright corner
+SIDEWAYS_ASPECT = 1.25   # wider than this, a sideways one; between the two, diagonal
 
 
 @dataclass(frozen=True)
@@ -85,9 +101,9 @@ def relight(image: np.ndarray, level: float) -> np.ndarray:
     return cv2.LUT(image, table)
 
 
-def score(labels: list[Label], dets: list[Detection]) -> tuple[int, int, int]:
-    """(found, right, extra) for one image: corners with a box near their centre, those whose box
-    has their name, and boxes near no corner. Closest pairs are matched first, one to one."""
+def match(labels: list[Label], dets: list[Detection]) -> list[tuple[int, int]]:
+    """(label index, box index) pairs: each labelled corner with the box whose centre is nearest it and
+    within reach. Closest pairs are matched first, one to one; unmatched corners and boxes are left out."""
     pairs = []
     for i, label in enumerate(labels):
         reach = MATCH_FRACTION * max(label.w, label.h)
@@ -95,14 +111,22 @@ def score(labels: list[Label], dets: list[Detection]) -> tuple[int, int, int]:
             distance = float(np.hypot(d.cx - label.cx, d.cy - label.cy))
             if distance <= reach:
                 pairs.append((distance, i, j))
-    matched_labels, matched_dets, right = set(), set(), 0
+    matched_labels, matched_dets, matches = set(), set(), []
     for _, i, j in sorted(pairs):
         if i in matched_labels or j in matched_dets:
             continue
         matched_labels.add(i)
         matched_dets.add(j)
-        right += dets[j].label == labels[i].name
-    return len(matched_labels), right, len(dets) - len(matched_dets)
+        matches.append((i, j))
+    return matches
+
+
+def score(labels: list[Label], dets: list[Detection]) -> tuple[int, int, int]:
+    """(found, right, extra) for one image: corners with a box near their centre, those whose box
+    has their name, and boxes near no corner."""
+    matches = match(labels, dets)
+    right = sum(dets[j].label == labels[i].name for i, j in matches)
+    return len(matches), right, len(dets) - len(matches)
 
 
 def run(samples: Iterable[tuple[np.ndarray, list[Label]]], detector: Callable[[np.ndarray], list[Detection]],
@@ -142,8 +166,11 @@ def rows(tallies: dict[tuple[float, str], Tally]) -> list[list[str]]:
 
 def table(tallies: dict[tuple[float, str], Tally]) -> str:
     """A plain text table: a header, then one row per level and mode."""
-    lines = [COLUMNS, *rows(tallies)]
-    widths = [max(len(line[i]) for line in lines) for i in range(len(COLUMNS))]
+    return _aligned([COLUMNS, *rows(tallies)])
+
+
+def _aligned(lines: list[list[str]]) -> str:
+    widths = [max(len(line[i]) for line in lines) for i in range(len(lines[0]))]
     return "\n".join("  ".join(cell.rjust(width) for cell, width in zip(line, widths, strict=True))
                      for line in lines)
 
@@ -158,6 +185,13 @@ def _label_path(image: Path) -> Path:
 
 def val_images(data_yaml: Path, limit: int | None = None) -> Iterator[tuple[np.ndarray, list[Label]]]:
     """(image, labelled corners) for each validation image of a YOLO dataset yaml, read one at a time.
+    See val_samples."""
+    for _, image, labels in val_samples(data_yaml, limit):
+        yield image, labels
+
+
+def val_samples(data_yaml: Path, limit: int | None = None) -> Iterator[tuple[Path, np.ndarray, list[Label]]]:
+    """(path, image, labelled corners) for each validation image of a YOLO dataset yaml, read one at a time.
 
     The yaml's `val` is a text file of image paths (as realVal.yaml has) or a folder.
     limit: only the first this many images. Raises SystemExit if the yaml is missing."""
@@ -180,7 +214,140 @@ def val_images(data_yaml: Path, limit: int | None = None) -> Iterator[tuple[np.n
             for line in label_file.read_text().splitlines():
                 cls, cx, cy, w, h = line.split()[:5]
                 labels.append(Label(names[int(cls)], float(cx) * W, float(cy) * H, float(w) * W, float(h) * H))
-        yield image, labels
+        yield path, image, labels
+
+
+@dataclass(frozen=True)
+class Corner:
+    """One labelled corner on one image and what the model called it: predicted and conf are None when missed."""
+    image: str
+    label: Label
+    predicted: str | None
+    conf: float | None
+
+
+def read_corners(samples: Iterable[tuple[Path | str, np.ndarray, list[Label]]],
+                 detector: Callable[[np.ndarray], list[Detection]]) -> list[Corner]:
+    """Run the detector once on each unchanged image and pair every labelled corner with its box (see match).
+    Boxes near no corner are dropped."""
+    corners = []
+    for path, image, labels in samples:
+        dets = detector(image)
+        box_of = dict(match(labels, dets))
+        for i, label in enumerate(labels):
+            if i in box_of:
+                box = dets[box_of[i]]
+                corners.append(Corner(str(path), label, box.label, box.conf))
+            else:
+                corners.append(Corner(str(path), label, None, None))
+    return corners
+
+
+def aspect_bucket(label: Label) -> str:
+    """"upright" when the box is tall (width / height below 0.8), "sideways" when wide (above 1.25),
+    otherwise "diagonal": a corner index tilted near 45 degrees has a squarish box."""
+    aspect = label.w / label.h
+    if aspect < UPRIGHT_ASPECT:
+        return "upright"
+    if aspect > SIDEWAYS_ASPECT:
+        return "sideways"
+    return "diagonal"
+
+
+def wrong_name_rows(corners: list[Corner]) -> list[list[str]]:
+    """One CONFUSION_COLUMNS row per corner whose box has another name. The export prefix is the
+    file name up to its first underscore (e0, e1, ... from dataset.py)."""
+    out = []
+    for c in corners:
+        if c.predicted is None or c.predicted == c.label.name:
+            continue
+        name = Path(c.image).name
+        out.append([name, name.split("_")[0], c.label.name, c.predicted, f"{c.conf:.3f}",
+                    f"{c.label.w:.1f}", f"{c.label.h:.1f}", f"{c.label.w / c.label.h:.2f}"])
+    return out
+
+
+def rank_swaps(corners: list[Corner]) -> list[tuple[str, int]]:
+    """("6/9", count) for each pair of ranks read as one another, either way, most common first.
+    Mistakes of suit only, and those involving a face-down card, are left out."""
+    swaps = Counter()
+    for c in corners:
+        if c.predicted is None or BACK in (c.predicted, c.label.name):
+            continue
+        ranks = (rank_of(c.label.name), rank_of(c.predicted))
+        if ranks[0] != ranks[1]:
+            swaps["/".join(sorted(ranks, key=RANKS.index))] += 1
+    return sorted(swaps.items(), key=lambda item: (-item[1], item[0]))
+
+
+def width_terciles(corners: list[Corner]) -> dict[str, list[Corner]]:
+    """The corners split into thirds by labelled box width: "narrow", "middle", "wide"."""
+    if not corners:
+        return {}
+    widths = sorted(c.label.w for c in corners)
+    narrow_edge = widths[(len(widths) - 1) // 3]
+    middle_edge = widths[(2 * len(widths) - 1) // 3]
+    groups = {"narrow": [], "middle": [], "wide": []}
+    for c in corners:
+        if c.label.w <= narrow_edge:
+            groups["narrow"].append(c)
+        elif c.label.w <= middle_edge:
+            groups["middle"].append(c)
+        else:
+            groups["wide"].append(c)
+    return groups
+
+
+def _group_row(name: str, corners: list[Corner]) -> list[str]:
+    found = [c for c in corners if c.predicted is not None]
+    wrong = sum(c.predicted != c.label.name for c in found)
+    return [name, str(len(corners)), str(len(found)), str(wrong), f"{100 * wrong / max(len(found), 1):.1f}%",
+            str(len(corners) - len(found))]
+
+
+def confusion_summary(corners: list[Corner]) -> str:
+    """Totals, rank swaps with counts, and the wrong-name rate (wrong / found) by box aspect and by width tercile."""
+    found = [c for c in corners if c.predicted is not None]
+    wrong = sum(c.predicted != c.label.name for c in found)
+    parts = [f"{len(corners)} labelled, {len(found)} found, {wrong} wrong names, {len(corners) - len(found)} missed"]
+    swaps = rank_swaps(corners)
+    parts.append("rank swaps (either way):\n" + ("\n".join(f"  {pair}  {count}" for pair, count in swaps) or "  none"))
+
+    by_aspect = {bucket: [c for c in corners if aspect_bucket(c.label) == bucket]
+                 for bucket in ("upright", "diagonal", "sideways")}
+    aspect_lines = [["aspect", "labelled", "found", "wrong", "wrong %", "missed"]]
+    aspect_lines += [_group_row(bucket, group) for bucket, group in by_aspect.items()]
+    parts.append(_aligned(aspect_lines))
+
+    width_lines = [["width", "px", "labelled", "found", "wrong", "wrong %", "missed"]]
+    for tercile, group in width_terciles(corners).items():
+        span = f"{min(c.label.w for c in group):.0f}-{max(c.label.w for c in group):.0f}" if group else "-"
+        row = _group_row(tercile, group)
+        width_lines.append([row[0], span, *row[1:]])
+    parts.append(_aligned(width_lines))
+    return "\n\n".join(parts)
+
+
+def default_confusions_csv(model: str) -> Path:
+    """confusions.csv in the model's run folder (the folder holding weights/), or beside the model."""
+    folder = Path(model).parent
+    return (folder.parent if folder.name == "weights" else folder) / "confusions.csv"
+
+
+def list_confusions(args: argparse.Namespace, detector: Callable[[np.ndarray], list[Detection]]):
+    """Read every validation photo once, print confusion_summary, and write the wrong-name rows to a CSV."""
+    print(f"model {args.model} at imgsz {args.imgsz}, unchanged photos")
+    corners = read_corners(val_samples(Path(args.data), args.limit), detector)
+    if not corners:
+        raise SystemExit(f"no labelled corners in the validation images of {args.data}")
+    print(f"{len({c.image for c in corners})} images")
+    print(confusion_summary(corners))
+    path = Path(args.csv) if args.csv else default_confusions_csv(args.model)
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(CONFUSION_COLUMNS)
+        writer.writerows(wrong_name_rows(corners))
+    print(f"wrong-name boxes written to {path}")
 
 
 def main():
@@ -195,6 +362,8 @@ def main():
     ap.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
     ap.add_argument("--limit", type=int, default=None, help="only the first this many images, for a quick run")
     ap.add_argument("--csv", default=None, help="also write the rows to this CSV file")
+    ap.add_argument("--confusions", action="store_true",
+                    help="list every wrong-name box on the unchanged photos instead (CSV default: the run folder)")
     args = ap.parse_args()
     try:
         settings.validate(settings)
@@ -205,6 +374,9 @@ def main():
 
     from cardReader.detector import Detector
     detector = Detector(args.model, args.imgsz, settings.CONFIDENCE, args.device)
+    if args.confusions:
+        list_confusions(args, detector)
+        return
     samples = val_images(Path(args.data), args.limit)
     first = next(samples, None)
     if first is None:

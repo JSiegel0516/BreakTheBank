@@ -76,6 +76,15 @@ def test_promote_copies_the_record_and_names_the_live_run(tmp_path):
     assert "base yolo11n.pt, epochs 150, imgsz 1024, batch 8" in text and "sha256" in text
 
 
+def test_promote_names_the_base_weights_of_a_run_trained_on_windows(tmp_path):
+    run = tmp_path / "model_5"
+    (run / "weights").mkdir(parents=True)
+    (run / "weights" / "best.pt").write_bytes(b"weights")
+    (run / "args.yaml").write_text("model: D:\\BreakTheBank\\models\\yolo11n.pt\nepochs: 150\nimgsz: 1024\nbatch: 8\n")
+    promote(run, tmp_path / "cards")
+    assert "base yolo11n.pt, epochs 150" in (tmp_path / "cards" / "LIVE.txt").read_text()
+
+
 def test_promote_refuses_a_folder_without_weights(tmp_path):
     import pytest
     (tmp_path / "empty").mkdir()
