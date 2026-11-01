@@ -57,7 +57,9 @@ WEB_PORT = 8765            # port of the browser dashboard (read.py --web); chan
 
 # Preprocessing: contrast help for dim or washed-out tables (key P in read.py cycles the mode).
 PREPROCESS = "auto"        # "off", "gamma" (brighten), "clahe" (local contrast), or "auto" (gamma by brightness).
-                           # auto is the benchmarked choice (docs/results.md); clahe lowered accuracy at every level.
+                           # auto is the benchmarked choice (docs/results.md): best or near best in dim light, and
+                           # best on average over overlit and hazy pictures. clahe lowered accuracy at every level
+                           # except a very hazy picture. A contrast stretch and a highlight curve were worse overall.
 PREPROCESS_BRIGHTEN_GAMMA = 0.6  # used by "gamma", and by "auto" in a dim room. Below 1 lifts the shadows.
 PREPROCESS_DARKEN_GAMMA = 1.4    # used by "auto" on a washed-out table. Above 1 pulls the highlights down.
 PREPROCESS_DARK_BELOW = 110      # "auto": a mean grey level (0 to 255) below this counts as dim ...

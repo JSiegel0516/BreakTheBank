@@ -88,7 +88,7 @@ BreakTheBank/                 (the folder git clone creates)
 ├── train.py                  build the training set from data/raw, then train the detector
 ├── read.py                   the live reader: camera -> detector -> tracker -> ordered cards
 ├── evaluate.py               scores a read.py --log against the cards really dealt
-├── benchmark.py              accuracy and speed of each preprocess mode on darkened and brightened photos; --confusions lists wrong names
+├── benchmark.py              accuracy and speed of each preprocess mode on darkened, brightened, overexposed and hazy photos; --confusions lists wrong names
 ├── settings.py               every tunable number and path, with comments
 ├── pyproject.toml            dependencies, pytest and ruff config; uv.lock pins the exact versions
 ├── CONTRIBUTING.md           branch, test, PR: how changes get in

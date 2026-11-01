@@ -214,3 +214,69 @@ better still (`--preprocess gamma`).
 None of this helps with glare: a reflection that saturates the sensor leaves
 pure white pixels with no index in them (see
 [Dim or washed-out tables](reading.md#dim-or-washed-out-tables)).
+
+### Bright, overlit light
+
+The 0.6 level above brightens without clipping, which a real overlit table
+does not do. The benchmark gained four levels that do:
+
+- `gain1.6` and `gain2.2`: an overexposed camera, each level v becomes
+  min(255, v × gain). Everything above 255 / gain turns pure white, as on an
+  overlit table.
+- `flat0.55` and `flat0.35`: a hazy, low-contrast picture, v × c + 255 × (1 − c).
+  Black becomes grey 115 (or 166) and white stays white.
+
+Two candidate modes were tried. `stretch` was a percentile contrast stretch:
+the 1st and 99th percentile of lightness (LAB colour) were mapped to black and white.
+`highlights` was a tone curve that left levels up to 160 alone and darkened
+brighter ones along a gamma of 2. Run on 2026-11-01 with the live model (model 5,
+`models/model_5_2026-10-31_n150rot`, `INPUT_SIZE` 1280, `CONFIDENCE` 0.6), on the
+320 real validation photos (3,449 labelled corner indices), on the CPU:
+
+```
+python benchmark.py --device cpu
+```
+
+Names right (the share of labelled corners found with the right name):
+
+| Level | off | gamma | clahe | auto | stretch | highlights |
+|---|---|---|---|---|---|---|
+| 1 (unchanged) | 97.7% | **97.8%** | 97.0% | **97.8%** | 96.6% | 97.4% |
+| gain1.6 | 88.7% | 86.9% | 87.6% | 89.0% | 87.7% | **89.5%** |
+| gain2.2 | 69.2% | 66.4% | 68.4% | 69.8% | 69.1% | **71.1%** |
+| flat0.55 | **97.8%** | 96.7% | 97.3% | **97.8%** | 93.1% | 96.5% |
+| flat0.35 | 96.7% | 94.2% | **97.7%** | 97.2% | 73.4% | 92.8% |
+| Mean of the four new levels | 88.1% | 86.1% | 87.8% | **88.5%** | 80.8% | 87.5% |
+
+The detector took 56 ms per photo in every row. `stretch` cost 3.9 ms per photo
+and `highlights` 0.2 ms. The dim levels ran too. `gamma` and `auto` were still best
+there (96.6% and 96.2% at 3.5, against 86.7% for `off`), and `stretch` was worst
+(70.2%).
+
+A mode was kept only if it got at least 1 point more names right than `auto` on the
+new levels, and lost no more than 0.3 points on the unchanged photos.
+
+What it shows:
+
+- **Clipping is what hurts.** Overexposure costs `off` 9 points at `gain1.6`
+  and 28.5 at `gain2.2`. No mode wins back more than 2 points. A saturated index
+  holds no detail, just as with glare.
+- **Haze barely matters.** The model reads a low-contrast picture almost as
+  well as the original, so there is little left for a filter to win back.
+- **`auto` darkening helps clipped pictures a little**, 0.3 and 0.6 points
+  above `off`. The 2026-10-29 finding that darkening does no harm or good held
+  for unclipped pictures only.
+- **`stretch` is removed.** It is 7.7 points below `auto` on the new levels and
+  1.2 points below on the unchanged photos. On `flat0.35` it still finds 87.7% of
+  corners but names only 73.4% right. A likely cause: it stretches lightness but
+  not the faded colour, so red suits look dark and get the wrong suit.
+- **`highlights` is removed.** It is 1.3 points better than `auto` at `gain2.2`
+  and 0.5 points better at `gain1.6`. It loses 1.3 and 4.4 points on the haze levels, and
+  0.4 points on the unchanged photos. On the two clipped levels alone it gains 0.9 points,
+  still short of 1 point, so an `auto` branch using it above `PREPROCESS_BRIGHT_ABOVE`
+  was not added either.
+
+**Verdict: no new mode; `auto` stays the default and unchanged.** Do not try the
+percentile stretch or the highlight curve again without new evidence, such as real
+overlit photos from the team's table. CLAHE stays as it was. It did best on the
+harshest haze (97.7%) but is worse than `off` everywhere else.

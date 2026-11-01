@@ -353,21 +353,30 @@ names the mode and its cost in milliseconds. The reader starts in `auto`
 |---|---|---|
 | `off` | nothing; the frame goes to the detector as the camera sent it | best on a brightened picture, but loses many corners in a dim room |
 | `gamma` | lifts the shadows with `PREPROCESS_BRIGHTEN_GAMMA` (0.6), through a lookup table | best in a dim room; costs corners on a bright picture |
-| `clahe` | stretches contrast locally, tile by tile (contrast-limited adaptive histogram equalisation), on lightness only so colours do not shift | worse than `off` at every brightness; kept only to try by eye |
-| `auto` (default) | measures the frame's mean grey level (0 to 255): below `PREPROCESS_DARK_BELOW` (110) it brightens with `PREPROCESS_BRIGHTEN_GAMMA`, above `PREPROCESS_BRIGHT_ABOVE` (190) it darkens with `PREPROCESS_DARKEN_GAMMA` (1.4), in between it leaves the frame alone | close to `gamma` in the dark and close to `off` in good light |
+| `clahe` | stretches contrast locally, tile by tile (contrast-limited adaptive histogram equalisation), on lightness only so colours do not shift | worse than `off` at every brightness except a very hazy picture; kept only to try by eye |
+| `auto` (default) | measures the frame's mean grey level (0 to 255): below `PREPROCESS_DARK_BELOW` (110) it brightens with `PREPROCESS_BRIGHTEN_GAMMA`, above `PREPROCESS_BRIGHT_ABOVE` (190) it darkens with `PREPROCESS_DARKEN_GAMMA` (1.4), in between it leaves the frame alone | close to `gamma` in the dark, close to `off` in good light, and slightly ahead of `off` on an overlit table |
+
+On an overlit table no mode helps much. Where the light clips the white of
+the card, the index fades into it and no filter brings it back. A percentile
+contrast stretch and a highlight-only tone curve were benchmarked and removed:
+both were worse than `auto` overall (see
+[Bright, overlit light](results.md#bright-overlit-light)).
 
 At 1920×1080 on the development Mac (Apple silicon), `gamma` costs about
 0.1 ms per frame, `clahe` about 2 ms, and `auto` 0.05 ms when it leaves the
 frame alone, about 0.2 ms when it applies a gamma. The detector takes far longer.
 
-To check a mode against the real validation photos at several brightness
-levels, run `python benchmark.py` (a quick run: `python benchmark.py --limit 20`).
+To check a mode against the real validation photos under several kinds of
+light, run `python benchmark.py` (a quick run: `python benchmark.py --limit 20`).
 It needs `data/dataset/realVal.yaml` from `python train.py --rebuild`, or
-`--data` pointing at one. It prints, per brightness level and mode, how many
+`--data` pointing at one. It prints, per light level and mode, how many
 labelled corner indices were found and named right, the extra boxes, and the
-milliseconds spent preprocessing and detecting. `--levels 3.5 1.0`, `--modes off auto`,
-`--imgsz 1024` and `--csv bench.csv` narrow or record a run. The full run takes
-about 6 minutes on a CPU; the results are in [results.md](results.md#preprocessing-for-dim-and-bright-light).
+milliseconds spent preprocessing and detecting. A level is a gamma (`3.5` very
+dark, `1` unchanged, `0.6` brighter), `gain1.6` or `gain2.2` (overexposed, with
+the highlights clipped to white), or `flat0.55` or `flat0.35` (hazy, low contrast).
+`--levels 1 gain2.2 flat0.35`, `--modes off auto`, `--imgsz 1024` and
+`--csv bench.csv` narrow or record a run. The full run takes about 11 minutes
+on a CPU; the results are in [results.md](results.md#preprocessing-for-dim-and-bright-light).
 
 The window shows the preprocessed frame, so you see what the detector sees.
 Press `Shift+V` to compare with the raw camera frame; the bottom bar then says

@@ -2,7 +2,8 @@
 
     python benchmark.py                          # every real validation image, all levels and modes
     python benchmark.py --limit 20               # a quick run on the first 20 images
-    python benchmark.py --levels 2.5 1.0 --modes off auto --csv bench.csv
+    python benchmark.py --levels 2.5 1 --modes off auto --csv bench.csv
+    python benchmark.py --levels 1 gain1.6 gain2.2 flat0.55 flat0.35 --modes off auto
     python benchmark.py --data /path/to/data/dataset/realVal.yaml --imgsz 1024
     python benchmark.py --confusions             # which names does the live model get wrong, and on what boxes?
     python benchmark.py --confusions --model models/<run>/weights/best.pt --csv model5.csv
@@ -12,11 +13,15 @@ the real validation photos listed in data/dataset/realVal.yaml (written by
 train.py --rebuild). Each photo is first relit to every brightness level, then
 preprocessed by every mode (cardReader/preprocess.py) and passed to the detector.
 
-A level is a gamma applied to the photo: each pixel level v (0 to 255) becomes
-255 * (v / 255) ** level, so 3.5 is very dark, 2.5 much darker, 1.8 darker,
-1.0 unchanged and 0.6 brighter. This is the same convention preprocess.py uses. Brightening this
-way cannot clip new highlights, so it imitates a washed-out picture rather than
-glare.
+A level names how each pixel level v (0 to 255) is changed:
+    a number g    a gamma, 255 * (v / 255) ** g, the convention preprocess.py uses:
+                  3.5 is very dark, 2.5 much darker, 1.8 darker, 1 unchanged, 0.6 brighter.
+                  Brightening this way never clips, so it is a brighter picture, not an overlit one.
+    gain<g>       an overexposed camera, min(255, v * g): gain1.6 and gain2.2 saturate every
+                  level above 255 / g to pure white, as an overlit table does
+    flat<c>       a hazy, low-contrast picture, v * c + 255 * (1 - c): flat0.55 squeezes the
+                  levels into 115 to 255, so black ink turns light grey and white stays white;
+                  flat0.35 is harsher, 166 to 255
 
 Scoring follows docs/results.md: a labelled corner index is found when a box's
 centre lies within half the labelled box's longer side of its centre (each box
@@ -55,7 +60,7 @@ from cardReader.cards import Detection
 from cardReader.deck import BACK, RANKS, rank_of
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
 
-LEVELS = (3.5, 2.5, 1.8, 1.0, 0.6)
+LEVELS = ("3.5", "2.5", "1.8", "1", "0.6", "gain1.6", "gain2.2", "flat0.55", "flat0.35")
 MATCH_FRACTION = 0.5  # a box matches a corner when its centre is this share of the corner's longer side away, or less
 COLUMNS = ["level", "mode", "labelled", "found", "found %", "right", "right %", "extra", "prep ms", "detect ms"]
 CONFUSION_COLUMNS = ["image", "export", "true", "predicted", "confidence", "width", "height", "aspect"]
@@ -93,12 +98,41 @@ class Tally:
         return self.detect_total / max(self.images, 1)
 
 
-def relight(image: np.ndarray, level: float) -> np.ndarray:
-    """The image at another brightness: gamma `level` above 1 darkens, below 1 brightens, 1 returns it as is."""
-    if level == 1.0:
+def parse_level(level: str) -> tuple[str, float]:
+    """("gamma", g), ("gain", g) or ("flat", c) for a level name (see the module docstring).
+
+    Raises ValueError unless a gamma or gain is above 0 and a flat share is above 0 and below 1."""
+    for kind in ("gain", "flat"):
+        if level.startswith(kind):
+            text = level[len(kind):]
+            break
+    else:
+        kind, text = "gamma", level
+    try:
+        value = float(text)
+    except ValueError:
+        raise ValueError(f"level {level!r}: use a gamma such as 2.5, gain<g> such as gain1.6, "
+                         "or flat<c> such as flat0.55") from None
+    valid = 0 < value < 1 if kind == "flat" else value > 0
+    if not valid:
+        allowed = "above 0 and below 1" if kind == "flat" else "above 0"
+        raise ValueError(f"level {level!r}: its number must be {allowed}")
+    return kind, value
+
+
+def relight(image: np.ndarray, level: str) -> np.ndarray:
+    """The image under other light, by level name (see parse_level). Gamma 1 returns the image itself."""
+    kind, value = parse_level(level)
+    if kind == "gamma" and value == 1.0:
         return image
-    table = np.round(255 * (np.arange(256) / 255) ** level).astype(np.uint8)
-    return cv2.LUT(image, table)
+    levels = np.arange(256, dtype=float)
+    if kind == "gamma":
+        table = 255 * (levels / 255) ** value
+    elif kind == "gain":
+        table = np.minimum(255, levels * value)
+    else:
+        table = levels * value + 255 * (1 - value)
+    return cv2.LUT(image, np.round(table).astype(np.uint8))
 
 
 def match(labels: list[Label], dets: list[Detection]) -> list[tuple[int, int]]:
@@ -130,7 +164,7 @@ def score(labels: list[Label], dets: list[Detection]) -> tuple[int, int, int]:
 
 
 def run(samples: Iterable[tuple[np.ndarray, list[Label]]], detector: Callable[[np.ndarray], list[Detection]],
-        levels=LEVELS, modes=MODES, config: PreprocessConfig | None = None) -> dict[tuple[float, str], Tally]:
+        levels=LEVELS, modes=MODES, config: PreprocessConfig | None = None) -> dict[tuple[str, str], Tally]:
     """Relight each image to every level, preprocess it with every mode, detect, and score.
     Returns a Tally per (level, mode), in the order levels then modes."""
     config = config or PreprocessConfig.from_settings(settings)
@@ -154,17 +188,17 @@ def run(samples: Iterable[tuple[np.ndarray, list[Label]]], detector: Callable[[n
     return tallies
 
 
-def rows(tallies: dict[tuple[float, str], Tally]) -> list[list[str]]:
+def rows(tallies: dict[tuple[str, str], Tally]) -> list[list[str]]:
     out = []
     for (level, mode), t in tallies.items():
         labelled = max(t.labelled, 1)
-        out.append([f"{level:g}", mode, str(t.labelled), str(t.found), f"{100 * t.found / labelled:.1f}%",
+        out.append([level, mode, str(t.labelled), str(t.found), f"{100 * t.found / labelled:.1f}%",
                     str(t.right), f"{100 * t.right / labelled:.1f}%", str(t.extra),
                     f"{t.preprocess_ms:.1f}", f"{t.detect_ms:.1f}"])
     return out
 
 
-def table(tallies: dict[tuple[float, str], Tally]) -> str:
+def table(tallies: dict[tuple[str, str], Tally]) -> str:
     """A plain text table: a header, then one row per level and mode."""
     return _aligned([COLUMNS, *rows(tallies)])
 
@@ -350,6 +384,14 @@ def list_confusions(args: argparse.Namespace, detector: Callable[[np.ndarray], l
     print(f"wrong-name boxes written to {path}")
 
 
+def _level_arg(text: str) -> str:
+    try:
+        parse_level(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+    return text
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--data", default=str(settings.PROJECT_ROOT / settings.DATASET_DIR / "realVal.yaml"),
@@ -357,8 +399,8 @@ def main():
     ap.add_argument("--model", default=settings.MODEL_PATH)
     ap.add_argument("--imgsz", type=int, default=settings.INPUT_SIZE)
     ap.add_argument("--device", default=None, help="mps, cuda, or cpu (auto if omitted)")
-    ap.add_argument("--levels", type=float, nargs="+", default=list(LEVELS),
-                    help="brightness gammas: above 1 darker, below 1 brighter")
+    ap.add_argument("--levels", type=_level_arg, nargs="+", default=list(LEVELS),
+                    help="gammas (above 1 darker, below 1 brighter), gain<g> (overexposed), flat<c> (hazy)")
     ap.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
     ap.add_argument("--limit", type=int, default=None, help="only the first this many images, for a quick run")
     ap.add_argument("--csv", default=None, help="also write the rows to this CSV file")
@@ -369,8 +411,6 @@ def main():
         settings.validate(settings)
     except ValueError as error:
         raise SystemExit(error) from None
-    if any(level <= 0 for level in args.levels):
-        raise SystemExit("--levels must all be above 0")
 
     from cardReader.detector import Detector
     detector = Detector(args.model, args.imgsz, settings.CONFIDENCE, args.device)
@@ -383,7 +423,7 @@ def main():
         raise SystemExit(f"no validation images listed in {args.data}")
     detector(first[0])  # the first call loads the model onto the device; keep it out of the times
     print(f"model {args.model} at imgsz {args.imgsz}, "
-          f"levels {' '.join(f'{level:g}' for level in args.levels)}, modes {' '.join(args.modes)}")
+          f"levels {' '.join(args.levels)}, modes {' '.join(args.modes)}")
     tallies = run(itertools.chain([first], samples), detector, args.levels, args.modes)
     print(f"{next(iter(tallies.values())).images} images")
     print(table(tallies))
