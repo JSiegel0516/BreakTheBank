@@ -122,8 +122,10 @@
     grid-template-areas: "seat cards total hint";
     align-items: center;
     gap: .6rem;
-    padding: .45rem 0;
+    margin: 0 -.4rem;          /* room for an outcome glow, with the columns where they were */
+    padding: .45rem .4rem;
     border-top: 1px solid var(--line);
+    border-radius: .4rem;
     font-size: 1.25rem;
   }
   .hand:first-of-type { border-top: 0; }
@@ -163,6 +165,36 @@
   .hint.stand { background: var(--green); }
   .hint.double { background: var(--seat); }
   .hint.split { background: var(--duplicate); }
+  /* Outcome cues. The glows are static: Hands is rewritten whenever any hand changes, and
+     a fresh row would replay an animation. Only the dealer's slow pulse animates. */
+  .hand.player.outcome-blackjack { box-shadow: 0 0 0 2px var(--badge), 0 0 1.2rem .3rem rgba(255, 220, 0, .6); }
+  .hand.player.outcome-twenty-one, .hand.player.outcome-win {
+    box-shadow: 0 0 0 2px var(--badge), 0 0 .7rem rgba(255, 220, 0, .45);
+  }
+  .hand.player.outcome-blackjack .total, .hand.player.outcome-twenty-one .total,
+  .hand.player.outcome-win .total { color: var(--badge); }
+  .hand.outcome-bust { box-shadow: 0 0 0 2px var(--red), 0 0 .7rem rgba(255, 70, 70, .5); }
+  .hand.outcome-bust .total { color: var(--red); }
+  .hand.player.outcome-lose .seat, .hand.player.outcome-lose .name,
+  .hand.player.outcome-lose .total { color: var(--dim); }
+  .hand.player.outcome-lose .order { background: var(--dim); }
+  .tag {
+    margin-left: .4em; padding: 0 .35em; border: 1px solid currentColor; border-radius: .3em;
+    font-size: .7em; font-weight: 700; text-transform: uppercase; vertical-align: middle;
+  }
+  .tag.win { color: var(--badge); }
+  .tag.push { color: var(--text); }
+  .tag.lose { color: var(--dim); }
+  .hand.dealer.outcome-bust .seat { color: var(--red); }
+  .hand.dealer.pulse { animation: dealerPulse 1.6s ease-in-out infinite alternate; }
+  @keyframes dealerPulse {
+    from { box-shadow: 0 0 0 1px rgba(255, 210, 122, .35); }
+    to { box-shadow: 0 0 0 2px var(--amber), 0 0 .9rem rgba(255, 210, 122, .55); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hand.dealer.pulse { animation: none; box-shadow: 0 0 0 2px var(--amber); }
+  }
+  #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
   .play button {
     padding: .15em .5em; font: inherit; font-size: .8em; color: var(--text); background: var(--well);
     border: 1px solid var(--line); border-radius: .4em; cursor: pointer;
@@ -244,6 +276,7 @@
   </section>
   <footer id="status"></footer>
 </main>
+<canvas id="confetti" aria-hidden="true"></canvas>
 <script>
   // Suit glyphs from their code points, so this file stays plain ASCII. FE0E asks for
   // the text form of the glyph rather than an emoji.
@@ -254,6 +287,7 @@
   const SHADE = { "1": "rgba(0, 95, 25, .5)", "0": "rgba(0, 0, 0, .22)", "-1": "rgba(110, 0, 0, .4)" };
   const HI_LO_COLOUR = { "1": "var(--green)", "0": "var(--grey)", "-1": "var(--red)" };
   const CUE_CLASS = { "favours player": "favours-player", "favours dealer": "favours-dealer", "neutral": "favours-neither" };
+  const OUTCOME_TAG = { win: "win", push: "push", lose: "lost" };
 
   let latest = null;
   let flash = null;          // the message currently shown in the status line
@@ -322,6 +356,7 @@
     if (snapshot.edit_help.length) {
       html += `<div class="edit"><b>EDIT ZONES</b> (in the video window)<br>${snapshot.edit_help.map(esc).join("<br>")}</div>`;
     }
+    const playerLost = snapshot.hands.some((hand) => hand.kind === "player" && hand.outcome === "lose");
     for (const hand of snapshot.hands) {
       const empty = !hand.cards.length;
       // a dealer or player seat can be renamed by clicking its name; OTHER cannot. Both hands
@@ -329,14 +364,30 @@
       const renamable = hand.kind === "other" ? ""
         : ` data-seat="${esc(hand.seat)}" data-name="${esc(hand.name)}" title="click to rename"`;
       const title = hand.part ? `${hand.name} ${hand.part}` : hand.name;
-      html += `<div class="hand ${hand.kind}">
+      html += `<div class="${handClasses(hand, playerLost)}">
         <div class="seat"${renamable}>${esc(title)}</div>
         <div class="cards">${hand.cards.map(renderChip).join("")}</div>
-        <div class="total${empty ? " empty" : ""}">${esc(hand.total)}</div>
+        <div class="total${empty ? " empty" : ""}">${esc(hand.total)}${outcomeTag(hand)}</div>
         <div class="play">${splitButton(hand)}<div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div></div>
       </div>`;
     }
     return html;
+  }
+
+  // A row's classes: its kind, its outcome, and for the dealer a pulse when it has blackjack
+  // or 21 or any player hand lost.
+  function handClasses(hand, playerLost) {
+    const classes = ["hand", hand.kind];
+    if (hand.outcome) classes.push(`outcome-${hand.outcome}`);
+    const dealerStrong = hand.outcome === "blackjack" || hand.outcome === "twenty-one";
+    if (hand.kind === "dealer" && (dealerStrong || playerLost)) classes.push("pulse");
+    return classes.join(" ");
+  }
+
+  // A small tag after a player hand's total once it has won, pushed, or lost against the dealer.
+  function outcomeTag(hand) {
+    const text = OUTCOME_TAG[hand.outcome];
+    return text ? `<span class="tag ${hand.outcome}">${text}</span>` : "";
   }
 
   // A split button on a player's pair, a join button on each hand of a split seat, else nothing.
@@ -449,6 +500,85 @@
     flashTimer = setTimeout(() => { flash = null; render(); }, message.seconds * 1000);
   }
 
+  // Confetti over the whole page for about 2.5 seconds, once per player hand that reaches
+  // blackjack. A hand is known by its seat, part, and the placement numbers of its cards, so a
+  // heartbeat or another hand's change does not fire it again, but a new round's hand can.
+  // Hands that leave the table are forgotten. Nothing is drawn under reduced motion.
+  const CONFETTI_MS = 2500;
+  const CONFETTI_COLOURS = ["#ffdc00", "#ffffff", "#b0ffb0"];  // gold, white, mint
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const confetti = document.getElementById("confetti");
+  let lastOutcomes = new Map();   // hand key -> its outcome in the previous snapshot
+  let particles = [];
+  let confettiEnd = 0;
+  let lastFrame = 0;
+
+  function handKey(hand) {
+    return `${hand.seat}/${hand.part}/${hand.cards.map((card) => card.order).join(",")}`;
+  }
+
+  function celebrate(hands) {
+    const outcomes = new Map();
+    for (const hand of hands) {
+      if (hand.kind !== "player") continue;
+      const key = handKey(hand);
+      outcomes.set(key, hand.outcome);
+      if (hand.outcome === "blackjack" && lastOutcomes.get(key) !== "blackjack") burst();
+    }
+    lastOutcomes = outcomes;
+  }
+
+  function burst() {
+    if (reducedMotion.matches) return;
+    const running = particles.length > 0;
+    if (!running) {
+      confetti.width = innerWidth;
+      confetti.height = innerHeight;
+    }
+    for (let i = 0; i < 160; i++) {
+      const angle = Math.random() * 2 * Math.PI;
+      const speed = 0.3 + Math.random() * 0.9;   // pixels per millisecond
+      particles.push({
+        x: confetti.width / 2, y: confetti.height / 3,
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 0.4,
+        size: 6 + Math.random() * 6, spin: Math.random() * Math.PI, turn: (Math.random() - 0.5) * 0.02,
+        colour: CONFETTI_COLOURS[i % CONFETTI_COLOURS.length],
+      });
+    }
+    confettiEnd = performance.now() + CONFETTI_MS;
+    if (!running) {
+      lastFrame = performance.now();
+      requestAnimationFrame(drawConfetti);
+    }
+  }
+
+  function drawConfetti(now) {
+    const context = confetti.getContext("2d");
+    context.clearRect(0, 0, confetti.width, confetti.height);
+    if (now >= confettiEnd) {
+      particles = [];
+      return;
+    }
+    const step = Math.min(now - lastFrame, 50);   // milliseconds, capped after a hidden tab
+    lastFrame = now;
+    context.globalAlpha = Math.min(1, (confettiEnd - now) / 500);   // fade out over the last half second
+    const drag = Math.pow(0.997, step);           // with gravity, pieces settle to a slow drift down
+    for (const piece of particles) {
+      piece.vx *= drag;
+      piece.vy = piece.vy * drag + 0.0008 * step;
+      piece.x += piece.vx * step;
+      piece.y += piece.vy * step;
+      piece.spin += piece.turn * step;
+      context.save();
+      context.translate(piece.x, piece.y);
+      context.rotate(piece.spin);
+      context.fillStyle = piece.colour;
+      context.fillRect(-piece.size / 2, -piece.size / 4, piece.size, piece.size / 2);
+      context.restore();
+    }
+    requestAnimationFrame(drawConfetti);
+  }
+
   const events = new EventSource("/events");
   events.onopen = () => { connected = true; render(); };
   events.onerror = () => { connected = false; render(); };
@@ -456,6 +586,7 @@
     latest = JSON.parse(event.data);
     connected = true;
     if (latest.flash) showFlash(latest.flash);
+    celebrate(latest.hands);
     render();
   };
   document.getElementById("keysBody").addEventListener("click", (event) => {

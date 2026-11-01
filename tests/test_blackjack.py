@@ -1,6 +1,16 @@
 import pytest
 
-from cardReader.blackjack import describe, hand_value, hi_lo, is_blackjack, is_pair, shoe_count
+from cardReader.blackjack import (
+    dealer_finished,
+    describe,
+    hand_value,
+    hi_lo,
+    is_blackjack,
+    is_pair,
+    milestone,
+    outcome,
+    shoe_count,
+)
 from cardReader.seats import DEALER, MAX_PLAYERS, SeatLayout
 
 
@@ -28,6 +38,68 @@ def test_is_pair_needs_two_face_up_cards_of_equal_value():
     assert not is_pair(["8S", "9H"])
     assert not is_pair(["8S"]) and not is_pair(["8S", "8H", "8D"]) and not is_pair([])
     assert not is_pair(["BACK", "BACK"]) and not is_pair(["8S", "BACK"])
+
+
+def test_dealer_finishes_on_17_soft_17_included_or_a_bust_with_no_card_face_down():
+    assert not dealer_finished(["KS", "BACK"]) and not dealer_finished(["KS", "7H", "BACK"])
+    assert not dealer_finished(["KS", "6H"]) and not dealer_finished(["6C"]) and not dealer_finished([])
+    assert dealer_finished(["KS", "7H"])          # hard 17
+    assert dealer_finished(["AS", "6H"])          # soft 17: the dealer stands
+    assert dealer_finished(["KS", "6H", "9D"])    # bust
+
+
+def test_milestone_marks_a_complete_hands_blackjack_21_or_bust():
+    assert milestone(["AS", "KH"]) == "blackjack"
+    assert milestone(["7S", "7H", "7D"]) == "twenty-one"
+    assert milestone(["KS", "6H", "9D"]) == "bust"
+    assert milestone(["KS", "8H"]) is None
+    assert milestone(["AS"]) is None and milestone(["AS", "BACK"]) is None and milestone([]) is None
+
+
+def test_a_bust_blackjack_or_21_shows_before_the_dealer_finishes():
+    unfinished = ["6C", "BACK"]
+    assert outcome(["KS", "6H", "9D"], unfinished) == "bust"
+    assert outcome(["AS", "KH"], unfinished) == "blackjack"
+    assert outcome(["7S", "7H", "7D"], unfinished) == "twenty-one"
+    assert outcome(["KS", "8H"], unfinished) is None
+    assert outcome(["KS", "6H", "9D"], ["KC", "6D", "8S"]) == "bust"   # a player bust loses even to a dealer bust
+
+
+def test_a_blackjack_pushes_only_against_a_dealer_blackjack():
+    assert outcome(["AS", "KH"], ["KC", "7D"]) == "blackjack"
+    assert outcome(["AS", "KH"], ["7C", "7D", "7S"]) == "blackjack"
+    assert outcome(["AS", "KH"], ["KC", "6D", "8S"]) == "blackjack"
+    assert outcome(["AS", "KH"], ["AD", "QC"]) == "push"
+
+
+def test_a_21_wins_pushes_or_loses_against_a_finished_dealer():
+    three_card_21 = ["7S", "7H", "7D"]
+    assert outcome(three_card_21, ["KC", "QD"]) == "win"
+    assert outcome(three_card_21, ["5C", "6D", "KS"]) == "push"
+    assert outcome(three_card_21, ["AD", "QC"]) == "lose"
+
+
+def test_other_hands_wait_for_the_dealer_then_compare_totals():
+    assert outcome(["KS", "8H"], ["9C", "BACK"]) is None
+    assert outcome(["KS", "8H"], ["KC", "6D"]) is None                 # dealer on 16 still draws
+    assert outcome(["KS", "8H"], ["KC", "7D"]) == "win"
+    assert outcome(["KS", "8H"], ["KC", "8D"]) == "push"
+    assert outcome(["KS", "8H"], ["KC", "9D"]) == "lose"
+    assert outcome(["KS", "8H"], ["AC", "6D"]) == "win"                # soft 17 stands
+
+
+def test_a_dealer_bust_makes_every_standing_hand_win():
+    dealer_bust = ["KC", "6D", "8S"]
+    assert outcome(["KS", "2H"], dealer_bust) == "win"
+    assert outcome(["7S", "7H", "7D"], dealer_bust) == "win"
+    assert outcome(["AS", "KH"], dealer_bust) == "blackjack"
+
+
+def test_a_one_card_or_face_down_hand_has_no_outcome():
+    finished = ["KC", "7D"]
+    assert outcome(["KS"], finished) is None
+    assert outcome(["KS", "BACK"], finished) is None
+    assert outcome(["KS", "6H", "BACK"], ["KC", "6D", "8S"]) is None
 
 
 def test_hi_lo_values():
