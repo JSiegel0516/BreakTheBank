@@ -12,6 +12,9 @@ and join buttons post "split_seat" and "join_seat" with the seat id, for
 Reader.split_seat and Reader.join_seat; they stand in for keys Shift+1-5, which
 have no button in the keys list. Choosing a model posts "switch_model" with its
 weights path, which read.LiveDetector loads.
+
+Each entry of the keys list names its group (KEY_GROUPS): table, overlay, image,
+camera, or window. The page shows each group's keys side by side on one row.
 """
 from __future__ import annotations
 
@@ -39,6 +42,14 @@ BUTTONS = {
     "Q": [("quit", "q")],
 }
 ACTION_KEYS = {action: ord(key) for buttons in BUTTONS.values() for action, key in buttons}  # name -> key code
+# The page's row for each KEY_LIST key. Rows appear in KEY_LIST order, which keeps each group's keys together.
+KEY_GROUPS = {
+    f"1-{MAX_PLAYERS}": "table", "R": "table", "X": "table", "Shift+R": "table", f"Shift+1-{MAX_PLAYERS}": "table",
+    "G": "overlay", "N": "overlay",
+    "P": "image", "Shift+V": "image", "< >": "image",
+    "C": "camera", "Q": "camera",
+    "E": "window", "V": "window", "L": "window", "S": "window",
+}
 
 
 def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no_signal: bool,
@@ -84,9 +95,9 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
 
 
 def _key(key: str, label: str) -> dict:
-    """One line of the keys list, with its page buttons (none for a window-only key)."""
+    """One entry of the keys list: its page buttons (none for a window-only key) and the row it sits on."""
     buttons = [{"action": action, "text": text} for action, text in BUTTONS.get(key, [])]
-    return {"key": key, "label": label, "buttons": buttons}
+    return {"key": key, "label": label, "buttons": buttons, "group": KEY_GROUPS[key]}
 
 
 def _grid_row(rank: str, dealt: DealtCards) -> dict:

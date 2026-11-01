@@ -77,11 +77,12 @@ SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 NAME_COLUMN = 0.40  # the Game view's seat names take at most this fraction of the sidebar width
 # the bottom bar
 KEYS = "[V] view    [L] legend/keys    [R] round    [X] rescan    [Shift+R] shoe    [< >] turn    [Q] quit"
-KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), (f"Shift+1-{MAX_PLAYERS}", "split seat"), ("E", "edit zones"),
-            ("V", "switch view"), ("L", "hide legend"), ("G", "grey boxes"), ("N", "placement numbers"),
-            ("R", "new round"), ("X", "rescan round"), ("Shift+R", "new shoe"), ("S", "save frame"),
-            ("C", "reconnect camera"), ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"),
-            ("< >", "turn view"), ("Q", "quit")]
+# Related keys sit together, in the order of the browser page's key groups (sidebar/snapshot.py KEY_GROUPS).
+KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), ("R", "new round"), ("X", "rescan round"), ("Shift+R", "new shoe"),
+            (f"Shift+1-{MAX_PLAYERS}", "split seat"), ("G", "grey boxes"), ("N", "placement numbers"),
+            ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("< >", "turn view"),
+            ("C", "reconnect camera"), ("Q", "quit"), ("E", "edit zones"), ("V", "switch view"),
+            ("L", "hide legend"), ("S", "save frame")]
 SPLIT_KEYS = "!@#$%"  # Shift+1 to Shift+5 on a US layout: split or join P1 to P5
 EDIT_HELP = ["drag a corner: reshape", "drag a +: add a corner", "right-click a corner: remove it",
              "drag inside: move the zone", "right-click inside: reset the zone", "E: save and lock"]

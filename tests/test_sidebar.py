@@ -13,7 +13,7 @@ from cardReader.reader import Reader
 from cardReader.seats import SeatLayout
 from cardReader.sidebar import server as server_module
 from cardReader.sidebar.server import SidebarServer
-from cardReader.sidebar.snapshot import ACTION_KEYS, BUTTONS, build_snapshot
+from cardReader.sidebar.snapshot import ACTION_KEYS, BUTTONS, KEY_GROUPS, build_snapshot
 from cardReader.tracker import CardTracker
 
 W, H = 1280, 720
@@ -84,6 +84,7 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert [button["text"] for button in keys["1-5"]["buttons"]] == ["1", "2", "3", "4", "5"]
     assert keys["N"]["buttons"] == [{"action": "placement_numbers", "text": "n"}]
     assert keys["E"]["buttons"] == keys["S"]["buttons"] == keys["V"]["buttons"] == keys["L"]["buttons"] == []
+    assert (keys["1-5"]["group"], keys["G"]["group"], keys["E"]["group"]) == ("table", "overlay", "window")
     assert (snapshot["preprocess"], snapshot["showing_raw"], snapshot["no_signal"]) == ("off", True, False)
     assert snapshot["model"] == MODEL
     assert snapshot["flash"] == {"text": "new round: numbering restarts at 1", "seconds": 1.5}
@@ -192,6 +193,20 @@ def test_every_button_presses_a_key_the_reader_handles():
         "placement_numbers", "grey_boxes", "new_round", "rescan", "new_shoe", "reconnect", "preprocess",
         "raw_or_enhanced", "turn_left", "turn_right", "quit"}
     assert set(BUTTONS) <= {key for key, _ in KEY_LIST}
+
+
+def test_every_key_has_one_page_group_and_each_group_is_one_run_of_the_list():
+    assert set(KEY_GROUPS) == {key for key, _ in KEY_LIST}
+    groups = [KEY_GROUPS[key] for key, _ in KEY_LIST]
+    rows = [group for i, group in enumerate(groups) if i == 0 or group != groups[i - 1]]
+    assert rows == ["table", "overlay", "image", "camera", "window"]   # each group's keys are consecutive
+
+
+def test_the_page_has_a_keys_fold_button_and_a_note_under_the_title():
+    page = server_module.PAGE.read_text()
+    assert '<button id="keysToggle" class="toggle" aria-expanded="true"' in page
+    assert '<p id="keysNote" class="note">' in page
+    assert 'localStorage.getItem("keysCollapsed")' in page
 
 
 def received(client: queue.Queue) -> list[dict]:

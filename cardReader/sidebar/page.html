@@ -25,8 +25,9 @@
     --green: #b0ffb0;
     --seat: #9ae6ff;
     --duplicate: #ff3cff;
-    /* one row of the Cards Left grid by height: 15 rows (suits, 13 ranks, face down) fill the screen */
-    --screen-row: clamp(2rem, calc((100vh - 7rem) / 15), 5rem);
+    /* one row of the Cards Left grid by height: 15 rows (suits, 13 ranks, face down) fill the screen
+       after 8.5rem for the page and section padding, the section title, and the status line */
+    --screen-row: clamp(2rem, calc((100vh - 8.5rem) / 15), 5rem);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--panel); color: var(--text); }
@@ -50,7 +51,7 @@
     :root { --screen-row: clamp(2rem, 8.5vw, 3.5rem); }
   }
   section { background: var(--card); border-radius: .6rem; padding: .8rem 1rem; min-width: 0; }
-  h2 { margin: 0 0 .5rem; font-size: .8rem; font-weight: 600; letter-spacing: .08em; color: var(--grey); }
+  h2 { margin: 0 0 .5rem; font-size: 1rem; font-weight: 600; letter-spacing: .08em; color: var(--grey); }
 
   #count { grid-area: count; }
   .headline { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
@@ -178,25 +179,45 @@
   }
 
   #keys { grid-area: keys; }
-  .keylist { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: .4rem .8rem; }
-  kbd {
-    display: inline-block; min-width: 2.2em; margin-right: .5em; padding: .05em .4em;
-    border: 1px solid var(--dim); border-radius: .3em; text-align: center;
-    color: var(--badge); font: inherit; font-weight: 700;
+  .toggle {
+    padding: 0; border: 0; background: none; cursor: pointer;
+    color: inherit; font: inherit; letter-spacing: inherit;
   }
-  .key { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 0; min-height: 2.6rem; padding: .3rem .5rem; }
+  .toggle::after { content: " \25BE"; }           /* down-pointing triangle: open */
+  .toggle[aria-expanded="false"]::after { content: " \25B8"; }  /* right-pointing: folded */
+  .toggle:hover { color: var(--text); }
+  .note { margin: -.2rem 0 .6rem; font-size: .85rem; color: var(--grey); }
+  #keys.collapsed h2 { margin-bottom: 0; }
+  #keys.collapsed .note, #keys.collapsed #keysBody { display: none; }
+  /* one row per group of keys; a row's entries sit side by side and wrap when the column is narrow */
+  .keylist { display: flex; flex-direction: column; gap: .3rem; }
+  .keygroup { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+  .keygroup + .keygroup { padding-top: .3rem; border-top: 1px solid var(--line); }
+  .keygroup > * { min-width: 0; max-width: 100%; }
+  kbd {
+    display: inline-block; min-width: 2em; padding: .05em .3em;
+    border: 1px solid var(--dim); border-radius: .3em; text-align: center;
+    color: var(--badge); font: inherit; font-size: .9rem; font-weight: 700;
+  }
+  /* each key sits above what it does, in smaller type, so a whole group fits one row of a half-width column */
+  .key {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: .2rem; min-height: 2.6rem; padding: .2rem .4rem; text-align: center;
+  }
+  .action { font-size: .8rem; line-height: 1.2; }
   .keylist button {
     font: inherit; color: var(--text); background: var(--well);
     border: 1px solid var(--line); border-radius: .4rem; cursor: pointer;
   }
   .keylist button:hover { border-color: var(--badge); }
   .keylist button:active { background: var(--panel); }
-  button.key { text-align: left; }
   .key.window { color: var(--grey); }
-  .key.choices { grid-column: 1 / -1; }
-  .choices .label { margin-right: 1rem; }
-  .choices button { min-width: 2.6rem; min-height: 2.4rem; margin-right: .4rem; font-weight: 700; }
+  /* 1-5 and < >: the key and what it does on one line, its buttons below */
+  .choices .label { display: flex; align-items: center; gap: .35rem; }
+  .choices .options { display: flex; flex-wrap: wrap; justify-content: center; gap: .3rem; }
+  .choices button { min-width: 2.1rem; min-height: 2rem; font-weight: 700; }
   .choices button.current { background: var(--badge); border-color: var(--badge); color: #000; }
+  .key.model { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; gap: .4rem .6rem; }
   .model select {
     min-width: 0; max-width: 100%; min-height: 2.4rem; padding: 0 .4rem; font: inherit;
     color: var(--text); background: var(--well); border: 1px solid var(--line); border-radius: .4rem;
@@ -216,7 +237,11 @@
   <section id="count"><h2>TRUE COUNT</h2><div id="countBody">waiting for read.py ...</div></section>
   <section id="deck"><h2>CARDS LEFT</h2><div id="deckBody"></div></section>
   <section id="seats"><h2 id="seatsTitle">HANDS</h2><div id="seatsBody"></div></section>
-  <section id="keys"><h2>KEYS (press them in the video window, or use the buttons; grey ones work in the window only)</h2><div id="keysBody" class="keylist"></div></section>
+  <section id="keys">
+    <h2><button id="keysToggle" class="toggle" aria-expanded="true" aria-controls="keysNote keysBody" title="fold or open (K)">KEYS</button></h2>
+    <p id="keysNote" class="note">Press them in the video window, or use the buttons. Grey ones work in the window only. K folds this section.</p>
+    <div id="keysBody" class="keylist"></div>
+  </section>
   <footer id="status"></footer>
 </main>
 <script>
@@ -322,23 +347,31 @@
     return "";
   }
 
-  // One line per key: a button when the page has one, a row of buttons for 1-5 (with the
-  // current player count filled in) and for < >, and a grey line for a key that works in the window only.
+  // One row per group of keys, in the order the snapshot lists them (a group's keys are consecutive).
   function renderKeys(keys, players) {
-    return keys.map((entry) => {
-      const label = `<kbd>${esc(entry.key)}</kbd>${esc(entry.label)}`;
-      if (entry.buttons.length === 1) {
-        return `<button class="key" data-action="${esc(entry.buttons[0].action)}">${label}</button>`;
-      }
-      if (entry.buttons.length > 1) {
-        const choices = entry.buttons.map((button) => {
-          const current = button.text === String(players) ? " class=\"current\"" : "";
-          return `<button data-action="${esc(button.action)}"${current}>${esc(button.text)}</button>`;
-        });
-        return `<div class="key choices"><span class="label">${label}</span>${choices.join("")}</div>`;
-      }
-      return `<div class="key window">${label}</div>`;
-    }).join("");
+    const rows = [];
+    keys.forEach((entry, i) => {
+      if (i === 0 || entry.group !== keys[i - 1].group) rows.push([]);
+      rows[rows.length - 1].push(renderKey(entry, players));
+    });
+    return rows.map((row) => `<div class="keygroup">${row.join("")}</div>`).join("");
+  }
+
+  // A button when the page has one, a set of buttons for 1-5 (with the current player count
+  // filled in) and for < >, and a grey entry for a key that works in the window only.
+  function renderKey(entry, players) {
+    const label = `<kbd>${esc(entry.key)}</kbd><span class="action">${esc(entry.label)}</span>`;
+    if (entry.buttons.length === 1) {
+      return `<button class="key" data-action="${esc(entry.buttons[0].action)}">${label}</button>`;
+    }
+    if (entry.buttons.length > 1) {
+      const choices = entry.buttons.map((button) => {
+        const current = button.text === String(players) ? " class=\"current\"" : "";
+        return `<button data-action="${esc(button.action)}"${current}>${esc(button.text)}</button>`;
+      });
+      return `<div class="key choices"><span class="label">${label}</span><span class="options">${choices.join("")}</span></div>`;
+    }
+    return `<div class="key window">${label}</div>`;
   }
 
   // body: {action: "<name>"} plus any string fields the action takes
@@ -359,7 +392,7 @@
     if (!model.choices.some((choice) => choice.path === model.current)) {
       options.unshift(`<option value="" selected disabled>${esc(modelName(model))}</option>`);
     }
-    return `<label class="key choices model"><span class="label">model</span>`
+    return `<label class="key model"><span>model</span>`
       + `<select id="modelSelect">${options.join("")}</select></label>`;
   }
 
@@ -439,6 +472,25 @@
     postAction({ action: "switch_model", path: choice.value });
     written.delete("keysBody");
   });
+
+  // The arrow by KEYS, or K anywhere on the page outside a text field or dropdown, folds the
+  // section to its title. The browser remembers the choice; one that cannot store it still folds.
+  const keysToggle = document.getElementById("keysToggle");
+  function setKeysCollapsed(collapsed) {
+    document.getElementById("keys").classList.toggle("collapsed", collapsed);
+    keysToggle.setAttribute("aria-expanded", String(!collapsed));
+    try { localStorage.setItem("keysCollapsed", collapsed ? "1" : "0"); } catch (error) { /* storage off */ }
+  }
+  function keysCollapsed() {
+    return keysToggle.getAttribute("aria-expanded") === "false";
+  }
+  keysToggle.addEventListener("click", () => setKeysCollapsed(!keysCollapsed()));
+  document.addEventListener("keydown", (event) => {
+    if (event.key.toLowerCase() !== "k" || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (document.activeElement.matches("input, select, textarea")) return;
+    setKeysCollapsed(!keysCollapsed());
+  });
+  try { setKeysCollapsed(localStorage.getItem("keysCollapsed") === "1"); } catch (error) { /* storage off */ }
 
   // Clicking a seat's name opens a text field in its place. Enter saves (an empty name
   // restores the default); Escape cancels, and so does leaving the field unchanged.
