@@ -59,6 +59,32 @@ def test_every_table_row(player, expected):
     assert plays == [PLAYS[code] for code in expected.split()]
 
 
+# Pairs in a hand that is already one half of a split: no resplitting, so the hard or soft total.
+PAIRS_UNSPLITTABLE = [
+    (["2S", "2H"], "H H H H H H H H H H"),   # hard 4
+    (["4S", "4H"], "H H H H H H H H H H"),   # hard 8
+    (["5S", "5H"], "D D D D D D D D H H"),   # hard 10
+    (["6S", "6H"], "H H S S S H H H H H"),   # hard 12
+    (["7S", "7H"], "S S S S S H H H H H"),   # hard 14
+    (["8S", "8H"], "S S S S S H H H H H"),   # hard 16
+    (["9S", "9H"], "S S S S S S S S S S"),   # hard 18
+    (["JS", "QH"], "S S S S S S S S S S"),   # hard 20
+    (["AS", "AH"], "H H H H H H H H H H"),   # soft 12
+]
+
+
+@pytest.mark.parametrize(("player", "expected"), PAIRS_UNSPLITTABLE)
+def test_a_pair_that_cannot_split_is_played_as_its_total(player, expected):
+    plays = [hint(player, [up_card], can_split=False) for up_card in DEALER_UP_CARDS]
+    assert plays == [PLAYS[code] for code in expected.split()]
+
+
+@pytest.mark.parametrize(("player", "expected"), HARD + SOFT)
+def test_can_split_changes_nothing_but_pairs(player, expected):
+    plays = [hint(player, [up_card], can_split=False) for up_card in DEALER_UP_CARDS]
+    assert plays == [PLAYS[code] for code in expected.split()]
+
+
 def test_double_becomes_hit_or_stand_after_two_cards():
     assert hint(["2S", "4H", "5D"], ["6C"]) == "hit"      # hard 11
     assert hint(["AS", "3H", "4D"], ["4C"]) == "stand"    # soft 18 against 3 to 6

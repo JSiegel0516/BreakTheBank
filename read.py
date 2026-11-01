@@ -26,13 +26,21 @@ With --web the window shows the video and the bottom bar only, and a page served
 on WEB_PORT in settings.py (cardReader/sidebar/) shows the count, the Cards Left
 grid, every seat's hand with a basic strategy hint, the keys, and the status. It
 updates as the reader runs. Most keys also have a button on the page (all but E, V,
-L, and S), which does exactly what the key does. Clicking a seat's name on the page
-renames it (up to 16 characters; empty restores P1 or DEALER). Names are saved in
-SEATS_FILE and shown on the page and in the window's Game view; the terminal and
---log keep the seat ids. The page's model dropdown lists every models/<run>/weights/best.pt
-(provenance.available_models) and its status line names the model running. Choosing
-one loads it in place of the current model (the video pauses for the load), prints and
-flashes its name, and keeps the tracker's cards; from capture mode it starts detection.
+L, and S; Shift+1-5 has its buttons on the hands), which does exactly what the key
+does. Clicking a seat's name on the page renames it (up to 16 characters; empty
+restores P1 or DEALER). Names are saved in SEATS_FILE and shown on the page and in
+the window's Game view; the terminal and --log keep the seat ids. The page's model
+dropdown lists every models/<run>/weights/best.pt (provenance.available_models) and
+its status line names the model running. Choosing one loads it in place of the
+current model (the video pauses for the load), prints and flashes its name, and
+keeps the tracker's cards; from capture mode it starts detection.
+
+A player holding a pair can split it: the split button on the page's hand, or
+Shift+1-5 in the window for P1-P5. The seat then shows two hands, its name followed
+by 1 and 2, each with its own total and hint; a later card joins the hand whose
+first card lies nearest. The join button, or the same key again, makes one hand.
+r, x, Shift+R, a player count change, and the end of a round clear every split.
+The terminal and --log keep the seat id.
 
 Card tags on the video show only the card's name. Press n to add each card's
 placement number in a yellow badge, and n again to hide it; the hands on the page
@@ -41,7 +49,8 @@ are pressed one per frame, in order, so each gets the frame a turn before it lef
 each message reaches the page. With --no-display --web there is no window and the
 page is the only way to drive the reader; its Q button quits.
 
-Keys: 1-5 number of players | e edit zones with the mouse (e again saves them)
+Keys: 1-5 number of players | Shift+1-5 split or join the pair of P1-P5 (! @ # $ % on a US layout)
+      e edit zones with the mouse (e again saves them)
       v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
       n show or hide the placement numbers on the video tags
       r new round | x rescan this round (fix a misread) | Shift+R new shoe (count back to 0)
@@ -261,8 +270,9 @@ def _project_path(path: Path) -> str:
 def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetector) -> list[int]:
     """The key codes for the page's button actions, in order, to be pressed one per frame.
 
-    rename_seat (with "seat" and "name") and switch_model (with "path") are done straight away
-    and press no key. An unknown action name is printed and skipped."""
+    rename_seat (with "seat" and "name"), split_seat and join_seat (with "seat"), and
+    switch_model (with "path") are done straight away and press no key. An unknown action
+    name is printed and skipped."""
     keys = []
     for action in actions:
         name = action["action"]
@@ -270,6 +280,10 @@ def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetecto
             keys.append(ACTION_KEYS[name])
         elif name == "rename_seat":
             reader.rename_seat(action.get("seat", ""), action.get("name", ""))
+        elif name == "split_seat":
+            reader.split_seat(action.get("seat", ""))
+        elif name == "join_seat":
+            reader.join_seat(action.get("seat", ""))
         elif name == "switch_model":
             models.switch(action.get("path", ""), reader.hud)
         else:
@@ -440,7 +454,8 @@ def main():
                                                 editor=reader.editor, dealt=DealtCards.from_tracker(tracker),
                                                 stage_ms=timer.smoothed, no_signal=no_signal,
                                                 preprocess=reader.preprocess, showing_raw=showing_raw,
-                                                sidebar=server is None, seat_names=reader.seat_names))
+                                                sidebar=server is None, seat_names=reader.seat_names,
+                                                splits=reader.table.splits))
                     key = wait_key_draining_mouse(EDIT_MOUSE_MS) if reader.editor.active else cv2.waitKey(1)
                     window_key = key & 0xFF
                     timer.lap("draw", start)

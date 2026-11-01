@@ -73,7 +73,8 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert [card["label"] for card in hands["P1"]["cards"]] == ["KS", "6H"]
     assert hands["P1"]["total"] == "16" and hands["P1"]["hint"] == "stand"   # hard 16 against a 6
     assert hands["P2"]["hint"] is None                                       # one card: no hint
-    assert hands["P3"] == {"seat": "P3", "name": "P3", "kind": "player", "cards": [], "total": "-", "hint": None}
+    assert hands["P3"] == {"seat": "P3", "name": "P3", "part": None, "kind": "player", "cards": [], "total": "-",
+                           "hint": None, "can_split": False}
 
     assert snapshot["players"] == 3 and snapshot["edit_help"] == []
     keys = {entry["key"]: entry for entry in snapshot["keys"]}
@@ -101,6 +102,33 @@ def test_snapshot_hands_carry_the_seat_id_and_its_display_name(reader):
     reader.rename_seat("dealer", "House")
     hands = {hand["seat"]: hand["name"] for hand in snapshot_of(reader)["hands"]}
     assert hands == {"dealer": "House", "P1": "Ann", "P2": "P2", "P3": "P3"}
+
+
+def hand_rows(snapshot):
+    return [(hand["seat"], hand["name"], hand["part"], [card["label"] for card in hand["cards"]], hand["hint"],
+             hand["can_split"]) for hand in snapshot["hands"]]
+
+
+def test_snapshot_offers_a_split_only_on_a_players_pair_and_shows_split_hands_by_part(tmp_path):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
+    reader.rename_seat("P1", "Ann")
+    table = [("6C", 0, -30), ("6D", 0, 30), ("8S", 1, -30), ("8H", 1, 30), ("9S", 2, -30), ("9H", 2, 30)]
+    place(reader, *table)
+    assert hand_rows(snapshot_of(reader)) == [
+        ("dealer", "DEALER", None, ["6C", "6D"], None, False),         # the dealer's pair is never split
+        ("P1", "Ann", None, ["8S", "8H"], "split", True),
+        ("P2", "P2", None, ["9S", "9H"], "split", True),
+        ("P3", "P3", None, [], None, False)]
+
+    reader.split_seat("P1")
+    assert hand_rows(snapshot_of(reader))[1:3] == [
+        ("P1", "Ann", 1, ["8S"], None, False), ("P1", "Ann", 2, ["8H"], None, False)]
+
+    place(reader, *table, ("8D", 1, -70), ("3C", 1, 70))
+    assert hand_rows(snapshot_of(reader))[1:3] == [
+        ("P1", "Ann", 1, ["8S", "8D"], "stand", False),                # 8,8 again: hard 16, no resplit
+        ("P1", "Ann", 2, ["8H", "3C"], "double", False)]
 
 
 @pytest.fixture

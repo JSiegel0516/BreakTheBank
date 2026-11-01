@@ -7,12 +7,15 @@ frame, so the server leaves it out when deciding whether anything changed.
 
 A page button posts its action name; read.py presses ACTION_KEYS[name] for it, so a
 button does exactly what its key does. Renaming a seat posts "rename_seat" with the
-seat id and the new name, which read.py passes to Reader.rename_seat. Choosing a
-model posts "switch_model" with its weights path, which read.LiveDetector loads.
+seat id and the new name, which read.py passes to Reader.rename_seat. A hand's split
+and join buttons post "split_seat" and "join_seat" with the seat id, for
+Reader.split_seat and Reader.join_seat; they stand in for keys Shift+1-5, which
+have no button in the keys list. Choosing a model posts "switch_model" with its
+weights path, which read.LiveDetector loads.
 """
 from __future__ import annotations
 
-from ..blackjack import CARDS_PER_DECK, hi_lo
+from ..blackjack import CARDS_PER_DECK, hi_lo, is_pair
 from ..deck import SUITS
 from ..hud import EDIT_HELP, GRID_RANKS, KEY_LIST, DealtCards, count_cue, seat_title
 from ..reader import Reader
@@ -21,7 +24,7 @@ from ..strategy import hint
 from ..table import OTHER, Hand
 
 # The page's buttons, by the KEY_LIST key they stand for: (action name, the key it presses).
-# Keys left out (E, V, L, S) work in the window only.
+# Keys left out (E, V, L, S) work in the window only; Shift+1-5 has its buttons on the hands instead.
 BUTTONS = {
     f"1-{MAX_PLAYERS}": [(f"players_{n}", str(n)) for n in range(1, MAX_PLAYERS + 1)],
     "G": [("grey_boxes", "g")],
@@ -98,15 +101,21 @@ def _grid_row(rank: str, dealt: DealtCards) -> dict:
 
 
 def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str]) -> dict:
-    """One seat's block: its id ("dealer", "P1", "OTHER"), the name to show, and its cards.
-    Only player seats get a strategy hint."""
+    """One hand's block: its seat id ("dealer", "P1", "OTHER"), the seat's display name, and its cards.
+
+    part: 1 or 2 for a hand of a split seat, else None; the page shows it after the name.
+    can_split: a player seat that is not split and holds a pair, so the page offers a split button.
+    Only player seats get a strategy hint, which never says split for a hand of a split seat."""
     kind = {DEALER: "dealer", OTHER: "other"}.get(hand.seat, "player")
     cards = [{"order": card.order, "label": card.label, "hidden": card.hidden} for card in hand.cards]
+    unsplit = hand.part is None
     return {
         "seat": hand.seat,
         "name": seat_title(hand.seat, names),
+        "part": hand.part,
         "kind": kind,
         "cards": cards,
         "total": hand.total,
-        "hint": hint(hand.labels, dealer_labels) if kind == "player" else None,
+        "hint": hint(hand.labels, dealer_labels, can_split=unsplit) if kind == "player" else None,
+        "can_split": kind == "player" and unsplit and is_pair(hand.labels),
     }

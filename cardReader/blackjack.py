@@ -48,6 +48,11 @@ def is_blackjack(labels: list[str]) -> bool:
     return len(faces) == 2 and hand_value(faces)[0] == 21
 
 
+def is_pair(labels: list[str]) -> bool:
+    """Whether labels are exactly two face-up cards of equal value, so a jack and a queen are a pair of tens."""
+    return len(labels) == 2 and BACK not in labels and card_value(labels[0]) == card_value(labels[1])
+
+
 def describe(labels: list[str]) -> str:
     """Short text for a hand, e.g. '17', 'soft 18', 'BLACKJACK', 'BUST (24)', '10 +1 hidden'."""
     if not labels:

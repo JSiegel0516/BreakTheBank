@@ -7,11 +7,13 @@ Each table row lists the play against the dealer's up card 2, 3, 4, 5, 6, 7,
 8, 9, 10, A: H hit, S stand, P split, D double (hit with more than two cards),
 Ds double (stand with more than two cards). Hard 8 or less always hits, hard
 17 or more and soft 19 or more always stand. A pair is two cards of the same
-value, so a jack and a queen are a pair of tens.
+value, so a jack and a queen are a pair of tens. A hand already split from a
+pair cannot split again, so its pair is played as a hard or soft total (A,A as
+soft 12).
 """
 from __future__ import annotations
 
-from .blackjack import card_value, hand_value, is_blackjack
+from .blackjack import card_value, hand_value, is_blackjack, is_pair
 from .deck import BACK
 
 HARD = {
@@ -26,6 +28,7 @@ HARD = {
 }
 
 SOFT = {
+    12: "H  H  H  H  H  H  H  H  H  H",  # A,A when it cannot be split
     13: "H  H  H  D  D  H  H  H  H  H",
     14: "H  H  H  D  D  H  H  H  H  H",
     15: "H  H  D  D  D  H  H  H  H  H",
@@ -53,10 +56,9 @@ ALWAYS_STAND = "S  S  S  S  S  S  S  S  S  S"
 PLAYS = {"H": "hit", "S": "stand", "P": "split"}
 
 
-def _table_row(player_labels: list[str]) -> str:
+def _table_row(player_labels: list[str], can_split: bool) -> str:
     total, soft = hand_value(player_labels)
-    is_pair = len(player_labels) == 2 and card_value(player_labels[0]) == card_value(player_labels[1])
-    if is_pair:
+    if can_split and is_pair(player_labels):
         return PAIRS[card_value(player_labels[0])]
     if soft:
         return ALWAYS_STAND if total >= 19 else SOFT[total]
@@ -67,12 +69,14 @@ def _table_row(player_labels: list[str]) -> str:
     return HARD[total]
 
 
-def hint(player_labels: list[str], dealer_labels: list[str]) -> str | None:
+def hint(player_labels: list[str], dealer_labels: list[str], can_split: bool = True) -> str | None:
     """Return "hit", "stand", "double" or "split" for a player hand, or None for no hint.
 
     The dealer's up card is the first face-up label in dealer_labels. There is
     no hint when the player hand has a face-down card (BACK), fewer than two
     cards, is bust or is a blackjack, or when the dealer has no face-up card.
+    can_split: False for a hand that is already one half of a split, since
+    resplitting is not allowed; a pair is then played as its hard or soft total.
     """
     up_card = next((label for label in dealer_labels if label != BACK), None)
     if up_card is None or BACK in player_labels or len(player_labels) < 2:
@@ -81,7 +85,7 @@ def hint(player_labels: list[str], dealer_labels: list[str]) -> str | None:
         return None
 
     column = card_value(up_card) - 2
-    play = _table_row(player_labels).split()[column]
+    play = _table_row(player_labels, can_split).split()[column]
     first_two_cards = len(player_labels) == 2
     if play == "D":
         return "double" if first_two_cards else "hit"

@@ -24,6 +24,7 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
    Place cards one at a time. Each gets a number in the order placed.
 4. Press `1` to `5` for the number of players. Rounds end on their own when the table is cleared.
    The tags on the video show each card's name; press `N` to add its placement number.
+   When a player splits a pair, press `Shift+1` to `Shift+5` for that seat to track two hands.
    If a card is misread, press `X` before the round ends to read the round again; earlier
    rounds stay counted. Press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
    `no signal`, reconnect the camera's cable or wake the phone and press `C` to reopen it.

@@ -344,6 +344,17 @@ def test_a_page_rename_reaches_the_reader_and_the_next_snapshot(monkeypatch, tmp
     assert json.loads(seats_file.read_text())["names"] == {"P1": "Ann"}
 
 
+def test_page_split_and_join_reach_the_reader_and_press_no_key(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(read.Reader, "split_seat", lambda self, seat: calls.append(("split", seat)))
+    monkeypatch.setattr(read.Reader, "join_seat", lambda self, seat: calls.append(("join", seat)))
+    posts = {2: [{"action": "split_seat", "seat": "P1"}], 3: [{"action": "join_seat", "seat": "P2"}], 4: ["quit"]}
+    _, handled, _ = run_with_page(monkeypatch, tmp_path, posts, [255] * 10)
+
+    assert handled == [ord("q")]
+    assert calls == [("split", "P1"), ("join", "P2")]
+
+
 def test_no_display_with_web_runs_from_the_page_alone_and_quits_from_it(monkeypatch, tmp_path):
     drawn = []
     monkeypatch.setattr(read.Hud, "draw", lambda *a, **kw: drawn.append(1))

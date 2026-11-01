@@ -54,7 +54,8 @@ the window is too small for both, the legend is left out.
 
 The **Game view** lists each seat's total (`17`, `soft 18`, `BLACKJACK`,
 `BUST (24)`, `9 +1 hidden`) and its cards in placement order. Cards outside
-every seat are listed as OTHER. The video, the card tags, and the zone editor
+every seat are listed as OTHER. A split seat has two lines, its name followed
+by `1` and `2` (see [Split hands](#seats-hands-and-the-hi-lo-count)). The video, the card tags, and the zone editor
 look the same in both views. A card hidden longer than `HIDDEN_SECONDS` (5 s)
 leaves its seat's hand in the Game view, and its total, but stays in the count
 and in the Cards Left grid (see [Rules the tracker assumes](#rules-the-tracker-assumes)).
@@ -84,6 +85,7 @@ The bottom bar lists the main keys; the legend lists them all.
 | Key | Action | Page button |
 |---|---|---|
 | `1` to `5` | number of players; loads your saved layout for that count, or the template | yes, one per count |
+| `Shift+1` to `Shift+5` | split the pair of P1 to P5 into two hands, or join a split seat back into one (see [Split hands](#seats-hands-and-the-hi-lo-count)). On a US keyboard these send `!` `@` `#` `$` `%` | yes, `split` or `join` on the player's line under Hands |
 | `E` | edit zones with the mouse; press `E` again to save them and lock | no |
 | `V` | switch the sidebar between the Cards Left view and the Game view; the tabs and a message name the new one | no |
 | `L` | show or hide the legend and key list | no |
@@ -188,15 +190,17 @@ video, so on a laptop screen it is cramped. With `--web` the window shows only
 the video, its tags and zones, and the bottom bar. The reader prints
 `dashboard at http://127.0.0.1:8765/`; open that address in any browser. The
 page holds what the sidebar did, with real fonts, and reflows to fit the browser
-window without scrolling sideways:
+window without scrolling sideways. It is drawn on casino-felt greens, so its
+colours are paler than the window's: red text is pink, green text is mint, and
+the Hi-Lo rows are tinted emerald (+1), grey-green (0), and brown (-1):
 
 | On the page | Meaning |
 |---|---|
 | True count | the Hi-Lo true count in large type with whom it favours, then the running count and cards left (`39/52`) |
-| Cards Left | the largest part of the page: one row per rank with its Hi-Lo value, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a faint red tint. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
-| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out |
+| Cards Left | the largest part of the page: one row per rank with its Hi-Lo value, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
+| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | first a `model` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. `E`, `V`, `L`, and `S` are grey: they work in the window only |
+| Keys | first a `model` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
@@ -226,7 +230,13 @@ the zone labels on the video, the terminal, and the `--log` CSV keep the seat id
 (`P1`), so `evaluate.py` scores any run. In a small window the Game view
 shortens a long name to fit, ending it in `..`, so the cards keep their room. The
 window draws letters outside plain ASCII (such as `é`) as `?`. OTHER cannot be renamed, and there is no renaming
-from the window.
+from the window. Both lines of a split seat rename the same seat.
+
+**Splitting a pair.** A `split` button appears on a player's line while it holds
+exactly two face-up cards of equal value (a jack and a queen are a pair of tens).
+Clicking it does what `Shift+1` to `Shift+5` do in the window, with the same
+message; a split line's `join` button undoes it. The dealer and OTHER lines never
+have either button.
 
 **Switching models.** The `model` dropdown lists every trained run in `models/`
 that has `weights/best.pt`, by folder name, with the live model first as
@@ -430,7 +440,22 @@ While editing, the detector runs on one frame in three (`EDIT_DETECT_EVERY` in
 
 **Hands.** Each seat's cards make one hand. Aces count 11 unless that busts,
 then 1. Face-down cards are left out of the total and shown as `+1 hidden`.
-Split hands are not separated yet.
+
+**Split hands.** A player holding a pair can split it into two hands with
+`Shift+1` to `Shift+5` (P1 to P5) or the page's `split` button. The seat must
+hold exactly two cards, both face up and of equal value; anything else is refused
+with a message and nothing changes. The seat then shows two lines, its name
+followed by `1` and `2`; hand 1 starts from the card further left in the image.
+Every later card in the seat joins the hand whose first card lies nearest. Each
+hand has its own total and hint.
+
+- The same key or the `join` button makes one hand again.
+- `R`, `X`, `Shift+R`, a new player count, and the end of a round clear every split.
+- Taking either of the two first cards off the table makes the seat one hand again.
+- The terminal prints one line per split or join, such as
+  `--- P1 split: 8S | 8H ---`. The `--log` CSV is unchanged: every card keeps
+  the seat id (`P1`), so `evaluate.py` scores the seat as one hand.
+- A split hand that receives another pair cannot split again.
 
 **Hi-Lo count.** Every face card adds to the running count once per shoe:
 
@@ -462,8 +487,10 @@ dealer's up card: `hit`, `stand`, `double` or `split`. The
 [browser dashboard](#browser-dashboard) shows it at the end of each player seat's line. The up card is the
 dealer's first face-up card. There is no hint when the hand has a face-down
 card, fewer than two cards, is bust or is a blackjack, or when the dealer has no
-face-up card. Split hands are not separated yet, so after a split the hint is for
-all the seat's cards together.
+face-up card. After a split each hand gets its own hint. Resplitting is not
+allowed, so a split hand never shows `split`: a second pair is played as its hard
+or soft total (8, 8 is hard 16, A, A is soft 12, always hit). Split aces get the
+ordinary tables, with no stop after one card.
 
 The table is the common multi-deck one, with these rules:
 
@@ -670,7 +697,9 @@ the measured fps when it is more than a fifth away from `FPS`.
 
 - **One deck.** Two sightings of the same face are treated as one card, so a
   shoe with several decks would merge real duplicates, and its count would be wrong.
-- **Splits** are shown as one hand per seat.
+- **Splits** must be marked by hand (`Shift+1` to `Shift+5` or the page), at most
+  two hands per seat. The `--log` CSV records the seat, not the hand, so
+  `evaluate.py` scores a split seat as one hand.
 - **Face-down cards.** All `BACK` training examples are synthetic, drawn with a
   placeholder design. Photograph your deck's back (see
   [Using your own deck](training.md#using-your-own-deck-for-synthetic-images)) before relying on it.
