@@ -1,6 +1,6 @@
 import pytest
 
-from cardReader.blackjack import describe, hand_value, hi_lo, is_blackjack, shoe_count
+from cardReader.blackjack import describe, hand_value, hi_lo, is_blackjack, is_pair, shoe_count
 from cardReader.seats import DEALER, MAX_PLAYERS, SeatLayout
 
 
@@ -21,6 +21,13 @@ def test_describe():
     assert describe(["KS", "BACK"]) == "10 +1 hidden"
     assert describe(["BACK"]) == "1 hidden"
     assert describe([]) == "-"
+
+
+def test_is_pair_needs_two_face_up_cards_of_equal_value():
+    assert is_pair(["8S", "8H"]) and is_pair(["JS", "QH"]) and is_pair(["AS", "AD"])
+    assert not is_pair(["8S", "9H"])
+    assert not is_pair(["8S"]) and not is_pair(["8S", "8H", "8D"]) and not is_pair([])
+    assert not is_pair(["BACK", "BACK"]) and not is_pair(["8S", "BACK"])
 
 
 def test_hi_lo_values():

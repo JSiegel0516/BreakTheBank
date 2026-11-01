@@ -27,7 +27,8 @@
           a line below gives the face-down cards never revealed.
         - Game: each seat under its display name (renamed from the browser
           page), its total, and its cards in placement order, each with its
-          placement badge whatever key N is set to
+          placement badge whatever key N is set to. A split seat (Shift+1 to
+          Shift+5) has two lines, its name followed by 1 and 2.
     * a legend at the bottom of the sidebar explaining the colours of the
       current view, then every key (key L hides it). The Game legend lists the
       placement badge only while key N shows it on the video. In the Cards Left view it
@@ -76,11 +77,12 @@ SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 NAME_COLUMN = 0.40  # the Game view's seat names take at most this fraction of the sidebar width
 # the bottom bar
 KEYS = "[V] view    [L] legend/keys    [R] round    [X] rescan    [Shift+R] shoe    [< >] turn    [Q] quit"
-KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), ("E", "edit zones"), ("V", "switch view"), ("L", "hide legend"),
-            ("G", "grey boxes"), ("N", "placement numbers"), ("R", "new round"), ("X", "rescan round"),
-            ("Shift+R", "new shoe"), ("S", "save frame"),
+KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), (f"Shift+1-{MAX_PLAYERS}", "split seat"), ("E", "edit zones"),
+            ("V", "switch view"), ("L", "hide legend"), ("G", "grey boxes"), ("N", "placement numbers"),
+            ("R", "new round"), ("X", "rescan round"), ("Shift+R", "new shoe"), ("S", "save frame"),
             ("C", "reconnect camera"), ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"),
             ("< >", "turn view"), ("Q", "quit")]
+SPLIT_KEYS = "!@#$%"  # Shift+1 to Shift+5 on a US layout: split or join P1 to P5
 EDIT_HELP = ["drag a corner: reshape", "drag a +: add a corner", "right-click a corner: remove it",
              "drag inside: move the zone", "right-click inside: reset the zone", "E: save and lock"]
 NO_SIGNAL = "no signal: press C to reconnect"
@@ -212,7 +214,8 @@ class Hud:
              stage_ms: dict[str, float] | None = None, no_signal: bool = False,
              preprocess: str = "off", showing_raw: bool = False,
              bound: list[Card | None] | None = None, sidebar: bool = True,
-             seat_names: dict[str, str] | None = None) -> np.ndarray:
+             seat_names: dict[str, str] | None = None,
+             splits: dict[str, tuple[int, int]] | None = None) -> np.ndarray:
         """Return the frame with the overlay, plus the sidebar on its right. The frame is not changed.
 
         cards: every card of the round, hidden ones included, in placement order.
@@ -228,7 +231,9 @@ class Hud:
         frame rather than the preprocessed one; both are named in the bottom bar.
         sidebar: False returns the video with its overlay and bottom bar only, as wide as the frame.
         seat_names: display names by seat id (Reader.seat_names) for the Game view; the zone
-        labels on the video keep the seat ids."""
+        labels on the video keep the seat ids.
+        splits: the split seats (Reader.table.splits), each shown as two hands in the Game view.
+        A split whose seed card has left its seat is dropped from it, as Table.hands does."""
         view = frame.copy()
         W = view.shape[1]
         self.s = min(max(W / 1600, 0.6), 2.5)  # 1.2 at 1080p, 2.4 at 4K
@@ -270,7 +275,10 @@ class Hud:
         else:
             if self.show_legend:
                 bottom = self._legend(side, bottom)
-            self._seat_blocks(side, Table(layout).hands(cards), y, bottom, seat_names or {})
+            table = Table(layout)
+            if splits is not None:
+                table.splits = splits
+            self._seat_blocks(side, table.hands(cards), y, bottom, seat_names or {})
         canvas = np.hstack([view, side])
         self._bottom_bar(canvas, status, capture_mode, W)
         return canvas
@@ -610,11 +618,19 @@ class Hud:
     def _seat_blocks(self, side, hands: list[Hand], y: int, bottom: int, names: dict[str, str]):
         """One line per hand: the seat's display name (from names, else its id), its cards in
         placement order, and its total on the right. A long hand wraps onto more lines. Loose
-        cards come last, as OTHER. A name wider than NAME_COLUMN of the sidebar is shortened
-        and ends in "..", so one long name cannot push every hand's cards out of view."""
+        cards come last, as OTHER. The two hands of a split seat are titled with the name
+        followed by 1 and 2. A name wider than NAME_COLUMN of the sidebar is shortened and
+        ends in "..", keeping the 1 or 2, so one long name cannot push every hand's cards out of view."""
         side_w = side.shape[1]
         longest = round(NAME_COLUMN * side_w) - 2 * self.pad
-        titles = [self._fit(seat_title(hand.seat, names), longest, 0.65) for hand in hands]
+        titles = []
+        for hand in hands:
+            title = seat_title(hand.seat, names)
+            if hand.part is None:
+                titles.append(self._fit(title, longest, 0.65))
+                continue
+            part = f" {hand.part}"
+            titles.append(self._fit(title, longest - self._size(part, 0.65)[0], 0.65) + part)
         name_w = max(self._size(title, 0.65)[0] for title in titles) + 2 * self.pad
         line_h = 2 * self.r + self.pad
         for hand, title in zip(hands, titles, strict=True):

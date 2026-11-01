@@ -319,6 +319,30 @@ def test_game_view_shows_display_names_and_the_video_keeps_seat_ids(monkeypatch)
     assert texts.count("P2") == 2 and texts.count("Ann") == 1
 
 
+@pytest.mark.parametrize(("W", "H", "name"), [(1280, 720, "Ann"), (640, 360, "W" * 16)])
+def test_game_view_shows_a_split_seat_as_two_numbered_lines(monkeypatch, W, H, name):
+    layout = SeatLayout(3, W, H)
+    cx, cy = map(float, layout.seats[1].polygon.mean(axis=0))
+    cards = [Card(1, "8S", cx - 20, cy, 1), Card(2, "8H", cx + 20, cy, 2)]
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    hud = Hud()
+    hud.view, hud.show_legend = "game", False
+    splits = {"P1": (1, 2)}
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], cards, 30.0, layout, shoe_count(["8S", "8H"]),
+             seat_names={"P1": name}, splits=splits)
+    titles = [text for text in texts if text.startswith(name[:2])]
+    assert len(titles) == 2 and titles[0].endswith(" 1") and titles[1].endswith(" 2")   # a long name keeps its part
+    assert splits == {"P1": (1, 2)}
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], cards[:1], 30.0, layout, shoe_count(["8S"]), splits=splits)
+    assert splits == {}                                                 # a seed left: the split is dropped
+
+
+def test_split_keys_are_listed():
+    assert ("Shift+1-5", "split seat") in KEY_LIST
+
+
 def test_a_wide_display_name_is_shortened_so_every_hand_keeps_room_for_its_cards(monkeypatch):
     W, H = 640, 360                                                    # the narrowest sidebar: 192 pixels
     layout = SeatLayout(3, W, H)

@@ -7,18 +7,23 @@
 <link rel="icon" href="data:,">  <!-- no icon, so the browser does not ask the server for one -->
 
 <style>
+  /* Felt greens: card-table green behind the page, poker green for the sections. Every text
+     colour keeps a contrast of at least 4.5:1 on the section green, so the coloured ones are
+     pale tints of their hues (pink for red, mint for green) rather than the window's colours. */
   :root {
-    --panel: #191919;
-    --card: #222;
+    --panel: #00512C;
+    --card: #35654d;
+    --well: #003d21;      /* buttons and fields, a shade darker than the page */
+    --line: rgba(255, 255, 255, .25);
     --text: #f2f2f2;
-    --grey: #969696;
-    --dim: #5f5f5f;
+    --grey: #d2e4d8;
+    --dim: #c6dacd;
     --badge: #ffdc00;
-    --amber: #ffbe00;
-    --red: #ff4646;
+    --amber: #ffd27a;
+    --red: #ffc8c8;
     --ink-red: #d4161b;
-    --green: #5adc5a;
-    --seat: #78dcff;
+    --green: #b0ffb0;
+    --seat: #9ae6ff;
     --duplicate: #ff3cff;
     /* one row of the Cards Left grid by height: 15 rows (suits, 13 ranks, face down) fill the screen */
     --screen-row: clamp(2rem, calc((100vh - 7rem) / 15), 5rem);
@@ -86,7 +91,9 @@
   }
   .tile.red { color: var(--ink-red); }
   .tile.pending { box-shadow: inset 0 0 0 .14em var(--badge); }
-  /* the slash and the cross sit behind the rank and suit, so both stay readable */
+  /* the slash and the cross sit behind the rank and suit, which are backed by the tile's own
+     opaque colour, so the markings show around the text but never under its strokes */
+  .tile .face { padding: 0 .12em; border-radius: .2em; background: inherit; }
   .tile.pending::before, .tile.locked::before {
     content: "";
     position: absolute;
@@ -97,7 +104,7 @@
   .tile.pending::before {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'%3E%3Cline x1='0' y1='10' x2='10' y2='0' stroke='%23111' stroke-width='7' vector-effect='non-scaling-stroke'/%3E%3Cline x1='0' y1='10' x2='10' y2='0' stroke='%23ffdc00' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
   }
-  .tile.locked { background: rgba(255, 70, 70, .16); color: #b89a9a; }
+  .tile.locked { background: #2f382a; color: #d9b8b8; }  /* opaque, so .face can back the text with it */
   .tile.locked::before {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'%3E%3Cline x1='0' y1='0' x2='10' y2='10' stroke='%23ff4646' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3Cline x1='0' y1='10' x2='10' y2='0' stroke='%23ff4646' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
   }
@@ -115,20 +122,20 @@
     align-items: center;
     gap: .6rem;
     padding: .45rem 0;
-    border-top: 1px solid #333;
+    border-top: 1px solid var(--line);
     font-size: 1.25rem;
   }
   .hand:first-of-type { border-top: 0; }
   .hand .seat { grid-area: seat; }
   .hand .cards { grid-area: cards; }
   .hand .total { grid-area: total; }
-  .hand .hint { grid-area: hint; }
+  .hand .play { grid-area: hint; display: flex; align-items: center; gap: .4rem; }
   .seat { font-weight: 700; color: var(--seat); overflow-wrap: anywhere; }
   .seat[data-seat] { cursor: text; }
   .seat[data-seat]:hover { text-decoration: underline dotted; }
   .seat input {
     width: 100%; padding: .1em .3em; font: inherit; color: var(--text);
-    background: #111; border: 1px solid var(--badge); border-radius: .3em;
+    background: var(--well); border: 1px solid var(--badge); border-radius: .3em;
   }
   .hand.dealer .seat { color: var(--amber); }
   .hand.other .seat { color: var(--grey); }
@@ -155,6 +162,12 @@
   .hint.stand { background: var(--green); }
   .hint.double { background: var(--seat); }
   .hint.split { background: var(--duplicate); }
+  .play button {
+    padding: .15em .5em; font: inherit; font-size: .8em; color: var(--text); background: var(--well);
+    border: 1px solid var(--line); border-radius: .4em; cursor: pointer;
+  }
+  .play button:hover { border-color: var(--badge); }
+  .play button:active { background: var(--panel); }
   @media (max-width: 599px) {
     /* the seat, total and hint share the first line and the cards go below it; the seat
        keeps its full name while it fits (a long one wraps), the total wraps in the space
@@ -173,11 +186,11 @@
   }
   .key { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 0; min-height: 2.6rem; padding: .3rem .5rem; }
   .keylist button {
-    font: inherit; color: var(--text); background: #2e2e2e;
-    border: 1px solid #444; border-radius: .4rem; cursor: pointer;
+    font: inherit; color: var(--text); background: var(--well);
+    border: 1px solid var(--line); border-radius: .4rem; cursor: pointer;
   }
   .keylist button:hover { border-color: var(--badge); }
-  .keylist button:active { background: #444; }
+  .keylist button:active { background: var(--panel); }
   button.key { text-align: left; }
   .key.window { color: var(--grey); }
   .key.choices { grid-column: 1 / -1; }
@@ -186,7 +199,7 @@
   .choices button.current { background: var(--badge); border-color: var(--badge); color: #000; }
   .model select {
     min-width: 0; max-width: 100%; min-height: 2.4rem; padding: 0 .4rem; font: inherit;
-    color: var(--text); background: #2e2e2e; border: 1px solid #444; border-radius: .4rem;
+    color: var(--text); background: var(--well); border: 1px solid var(--line); border-radius: .4rem;
   }
 
   #status {
@@ -212,7 +225,8 @@
   const glyph = (code) => String.fromCodePoint(code, 0xFE0E);
   const SUIT = { S: glyph(0x2660), H: glyph(0x2665), D: glyph(0x2666), C: glyph(0x2663) };
   const RED_SUITS = new Set(["H", "D"]);
-  const SHADE = { "1": "rgba(90, 220, 90, .14)", "0": "rgba(150, 150, 150, .12)", "-1": "rgba(255, 70, 70, .14)" };
+  // Hi-Lo row tints darken the section green (emerald, grey-green, brown), so pale text stays readable on them.
+  const SHADE = { "1": "rgba(0, 95, 25, .5)", "0": "rgba(0, 0, 0, .22)", "-1": "rgba(110, 0, 0, .4)" };
   const HI_LO_COLOUR = { "1": "var(--green)", "0": "var(--grey)", "-1": "var(--red)" };
   const CUE_CLASS = { "favours player": "favours-player", "favours dealer": "favours-dealer", "neutral": "favours-neither" };
 
@@ -264,7 +278,7 @@
         if (RED_SUITS.has(card.suit)) classes.push("red");
         if (card.duplicate) classes.push("duplicate");
         cells += `<div class="${classes.join(" ")}" style="grid-area: ${line} / ${column + 3}"`
-          + ` title="${esc(card.name)}: ${card.state}">${esc(card.rank)}${SUIT[card.suit]}</div>`;
+          + ` title="${esc(card.name)}: ${card.state}"><span class="face">${esc(card.rank)}${SUIT[card.suit]}</span></div>`;
       });
       cells += `<div class="left${row.left ? "" : " none"}" style="grid-area: ${line} / 7">${row.left}</div>`;
     });
@@ -285,16 +299,27 @@
     }
     for (const hand of snapshot.hands) {
       const empty = !hand.cards.length;
-      // a dealer or player seat can be renamed by clicking its name; OTHER cannot
-      const renamable = hand.kind === "other" ? "" : ` data-seat="${esc(hand.seat)}" title="click to rename"`;
+      // a dealer or player seat can be renamed by clicking its name; OTHER cannot. Both hands
+      // of a split seat rename the seat, so the field starts from its name without the part.
+      const renamable = hand.kind === "other" ? ""
+        : ` data-seat="${esc(hand.seat)}" data-name="${esc(hand.name)}" title="click to rename"`;
+      const title = hand.part ? `${hand.name} ${hand.part}` : hand.name;
       html += `<div class="hand ${hand.kind}">
-        <div class="seat"${renamable}>${esc(hand.name)}</div>
+        <div class="seat"${renamable}>${esc(title)}</div>
         <div class="cards">${hand.cards.map(renderChip).join("")}</div>
         <div class="total${empty ? " empty" : ""}">${esc(hand.total)}</div>
-        <div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div>
+        <div class="play">${splitButton(hand)}<div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div></div>
       </div>`;
     }
     return html;
+  }
+
+  // A split button on a player's pair, a join button on each hand of a split seat, else nothing.
+  function splitButton(hand) {
+    const seat = esc(hand.seat);
+    if (hand.can_split) return `<button data-action="split_seat" data-seat="${seat}" title="split into two hands">split</button>`;
+    if (hand.part) return `<button data-action="join_seat" data-seat="${seat}" title="make one hand again">join</button>`;
+    return "";
   }
 
   // One line per key: a button when the page has one, a row of buttons for 1-5 (with the
@@ -418,7 +443,7 @@
   // Clicking a seat's name opens a text field in its place. Enter saves (an empty name
   // restores the default); Escape cancels, and so does leaving the field unchanged.
   function startRename(cell) {
-    const original = cell.textContent;
+    const original = cell.dataset.name;
     const input = document.createElement("input");
     input.maxLength = 16;
     input.value = original;
@@ -444,6 +469,11 @@
     input.select();
   }
   document.getElementById("seatsBody").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (button) {
+      postAction({ action: button.dataset.action, seat: button.dataset.seat });
+      return;
+    }
     const cell = event.target.closest(".seat[data-seat]");
     if (cell && !renaming) startRename(cell);
   });

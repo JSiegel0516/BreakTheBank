@@ -2,6 +2,7 @@ import csv
 import io
 
 import numpy as np
+import pytest
 
 from cardReader.cards import Detection
 from cardReader.hud import Hud
@@ -288,3 +289,113 @@ def test_reader_starts_at_the_rotation_it_is_given(tmp_path):
                rotation=1)
     r.handle_key(ord(">"), np.zeros((W, H, 3), np.uint8))
     assert r.rotation == 2 and "180 degrees" in r.hud._message
+
+
+def deal(r, *cards, seat=1):
+    """Show cards (label, dx, dy), placed around the centre of seat i, until they are confirmed.
+    Every card still on the table must be in cards, or it goes hidden."""
+    cx, cy = r.layout.seats[seat].polygon.mean(axis=0)
+    dets = [Detection(label, 0.9, float(cx + dx), float(cy + dy)) for label, dx, dy in cards]
+    r.process(frame(), dets)
+    return r.process(frame(), dets)
+
+
+def p1_hands(r):
+    return [(h.part, h.labels) for h in r.table.hands(r.tracker.round) if h.seat == "P1"]
+
+
+def test_split_seat_makes_two_hands_and_later_cards_go_to_the_nearest_seed(tmp_path, capsys):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    pair = [("8H", 25, 0), ("8S", -25, 0)]
+    deal(r, *pair)
+    assert r.split_seat("P1") is True
+    assert r.hud._message == "P1 split: 8S | 8H"
+    assert "--- P1 split: 8S | 8H ---" in capsys.readouterr().out
+    assert p1_hands(r) == [(1, ["8S"]), (2, ["8H"])]
+    deal(r, *pair, ("3D", -25, 30), ("KC", 25, -30))
+    assert p1_hands(r) == [(1, ["8S", "3D"]), (2, ["8H", "KC"])]
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert [row[4:6] for row in rows] == [["8H", "P1"], ["8S", "P1"], ["3D", "P1"], ["KC", "P1"]]
+
+
+def test_split_seat_allows_a_jack_and_a_queen(tmp_path):
+    r = make_reader(tmp_path)
+    deal(r, ("JS", -25, 0), ("QH", 25, 0))
+    assert r.split_seat("P1") is True
+    assert p1_hands(r) == [(1, ["JS"]), (2, ["QH"])]
+
+
+@pytest.mark.parametrize(("seat", "cards", "message"), [
+    ("P1", [("8S", 0, 0)], "P1 can split two cards, not 1"),
+    ("P1", [("8S", -25, 0), ("8H", 25, 0), ("8D", 0, 30)], "P1 can split two cards, not 3"),
+    ("P1", [("8S", -25, 0), ("BACK", 25, 0)], "P1 cannot split a face-down card"),
+    ("P1", [("8S", -25, 0), ("9H", 25, 0)], "P1 cannot split 8S and 9H: not a pair"),
+    ("P4", [("8S", -25, 0), ("8H", 25, 0)], "no seat P4 at a 3-player table"),
+    ("dealer", [("8S", -25, 0), ("8H", 25, 0)], "the dealer's hand cannot be split"),
+])
+def test_split_seat_refuses_anything_but_a_face_up_pair(tmp_path, seat, cards, message):
+    r = make_reader(tmp_path)
+    deal(r, *cards, seat=0 if seat == "dealer" else 1)
+    assert r.split_seat(seat) is False
+    assert r.hud._message == message and r.table.splits == {}
+
+
+def test_split_seat_refuses_a_seat_already_split(tmp_path):
+    r = make_reader(tmp_path)
+    deal(r, ("8S", -25, 0), ("8H", 25, 0))
+    r.split_seat("P1")
+    splits = dict(r.table.splits)
+    assert r.split_seat("P1") is False
+    assert r.hud._message == "P1 is already split" and r.table.splits == splits
+
+
+def test_join_seat_and_toggle_split_undo_a_split(tmp_path, capsys):
+    r = make_reader(tmp_path)
+    deal(r, ("8S", -25, 0), ("8H", 25, 0))
+    assert r.join_seat("P1") is False and r.hud._message == "P1 is not split"
+    r.split_seat("P1")
+    assert r.join_seat("P1") is True
+    assert r.hud._message == "P1 joined" and "--- P1 joined: 8S | 8H ---" in capsys.readouterr().out
+    assert p1_hands(r) == [(None, ["8S", "8H"])]
+    assert r.toggle_split("P1") is True and r.table.splits
+    assert r.toggle_split("P1") is True and r.table.splits == {}
+
+
+def test_shift_digit_keys_toggle_the_split_of_p1_to_p5(tmp_path):
+    r = make_reader(tmp_path)
+    deal(r, ("8S", -25, 0), ("8H", 25, 0), seat=2)
+    assert r.handle_key(ord("@"), frame()) is True
+    assert r.hud._message == "P2 split: 8S | 8H" and set(r.table.splits) == {"P2"}
+    r.handle_key(ord("@"), frame())
+    assert r.hud._message == "P2 joined" and r.table.splits == {}
+    r.handle_key(ord("!"), frame())
+    assert r.hud._message == "P1 can split two cards, not 0"
+    r.handle_key(ord("%"), frame())
+    assert r.hud._message == "no seat P5 at a 3-player table"
+
+
+@pytest.mark.parametrize("key", ["r", "x", "R", "5"])
+def test_round_rescan_shoe_and_player_count_keys_clear_every_split(tmp_path, key):
+    r = make_reader(tmp_path)
+    dets = []
+    for seat, (left, right) in [(1, ("8S", "8H")), (2, ("5C", "5D"))]:
+        cx, cy = r.layout.seats[seat].polygon.mean(axis=0)
+        dets += [Detection(left, 0.9, float(cx - 25), float(cy)), Detection(right, 0.9, float(cx + 25), float(cy))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    r.split_seat("P1")
+    r.split_seat("P2")
+    assert set(r.table.splits) == {"P1", "P2"}
+    r.handle_key(ord(key), frame())
+    assert r.table.splits == {}
+
+
+def test_the_end_of_a_round_clears_every_split(tmp_path):
+    r = make_reader(tmp_path)
+    deal(r, ("8S", -25, 0), ("8H", 25, 0))
+    r.split_seat("P1")
+    kinds = []
+    while "round_over" not in kinds and r.tracker.frame < 200:
+        kinds = [e.kind for e in r.process(frame(), [])]
+    assert "round_over" in kinds and r.table.splits == {}

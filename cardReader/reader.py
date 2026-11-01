@@ -7,10 +7,16 @@ everything in between, so it can be driven in a test without either:
     events = reader.process(frame, detections)     # tracker -> seats -> print, log, flash
     keep_going = reader.handle_key(key, frame)     # the keys listed in hud.KEY_LIST (C is read.py's)
     reader.rename_seat("P1", "Ann")                # from the browser page; "" restores P1
+    reader.split_seat("P1"), reader.join_seat("P1") # from the browser page; keys Shift+1-5 toggle_split
 
 reader.seat_names maps seat ids to display names, loaded from and saved to the
 seats file and shared by every player count. They are for people only: events
 are printed and logged with the seat ids, so evaluate.py reads any run.
+
+A player seat holding a pair can be split into two hands (see table.py). The
+split is for the totals and hints only: both hands keep the seat id in the
+terminal and the CSV log. Every split is cleared by keys R, X, Shift+R, a
+change of player count, and the end of a round.
 
 reader.preprocess (key P) and reader.show_enhanced (key Shift+V) tell read.py
 how to preprocess each frame for the detector and which frame to show.
@@ -35,11 +41,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .blackjack import ShoeCount, shoe_count
-from .cards import Detection, Event
-from .hud import VIEWS, Hud, seat_title
+from .blackjack import ShoeCount, is_pair, shoe_count
+from .cards import Card, Detection, Event
+from .deck import BACK
+from .hud import SPLIT_KEYS, VIEWS, Hud, seat_title
 from .preprocess import MODES
-from .seats import MAX_PLAYERS, SeatLayout, ZoneEditor, load_seat_names, save_seat_names
+from .seats import DEALER, MAX_PLAYERS, SeatLayout, ZoneEditor, load_seat_names, save_seat_names
 from .table import Table
 from .tracker import CardTracker
 
@@ -78,8 +85,8 @@ class Reader:
         """Feed one frame's detections to the tracker and report what changed.
 
         Follows a change of frame size by rescaling the seat layout. Prints each
-        event, flashes "round over" on the overlay, and appends a row per event to
-        the CSV log if there is one. Returns the tracker's events for this frame."""
+        event, flashes "round over" on the overlay and clears every split, and appends
+        a row per event to the CSV log if there is one. Returns the tracker's events for this frame."""
         h, w = frame.shape[:2]
         if (w, h) != (self.layout.width, self.layout.height):
             self.set_layout(self.layout.resized(w, h))
@@ -92,6 +99,7 @@ class Reader:
             count_text = f"count {self.count.running:+d}" if event.kind in ("placed", "renamed") else ""
             print(event, seat_text, count_text)
             if event.kind == "round_over":
+                self.table.clear_splits()
                 self.hud.flash("round over: table cleared")
             if self.log:
                 self.log.writerow([f"{time.time():.3f}", event.frame, event.kind,
@@ -108,6 +116,8 @@ class Reader:
             return False
         if ord("1") <= k <= ord(str(MAX_PLAYERS)):
             self.set_players(k - ord("0"), frame.shape[1], frame.shape[0])
+        elif k in map(ord, SPLIT_KEYS):
+            self.toggle_split(f"P{SPLIT_KEYS.index(chr(k)) + 1}")
         elif k == ord("e"):
             self.toggle_edit()
         elif k == ord("l"):
@@ -123,10 +133,12 @@ class Reader:
             self.hud.flash(f"{VIEWS[self.hud.view]} view")
         elif k == ord("r"):
             self.tracker.new_round()
+            self.table.clear_splits()
             print("--- new round ---")
             self.hud.flash("new round: numbering restarts at 1")
         elif k == ord("x"):
             placed_this_round = self.tracker.rescan()
+            self.table.clear_splits()
             self.count = self._recount()
             print("--- rescan: this round is read again ---")
             self.hud.flash("rescan: reading this round again")
@@ -136,6 +148,7 @@ class Reader:
                                    self.count.running, "", ""])
         elif k == ord("R"):
             self.tracker.new_shoe()
+            self.table.clear_splits()
             self.count = self._recount()
             print("--- new shoe: count reset ---")
             self.hud.flash("new shoe: count reset to 0")
@@ -170,8 +183,9 @@ class Reader:
         self.hud.flash(f"camera turned to {degrees} degrees: CAMERA_ROTATION = {degrees} keeps it", 2.5)
 
     def set_players(self, n: int, width: int, height: int):
-        """Switch to n seats: the layout saved for that count, else the template."""
+        """Switch to n seats: the layout saved for that count, else the template. Clears every split."""
         saved = SeatLayout.load(self.seats_file, width, height, n)
+        self.table.clear_splits()
         self.set_layout(saved or SeatLayout(n, width, height))
         self.hud.flash(f"{n} player{'s' if n > 1 else ''}: {'your saved layout' if saved else 'template layout'}")
 
@@ -195,6 +209,59 @@ class Reader:
             self.hud.flash(f"{default} is {default} again")
         save_seat_names(self.seats_file, self.seat_names)
         return True
+
+    def split_seat(self, seat: str) -> bool:
+        """Split a player seat's pair into two hands, part 1 the card further left; prints and flashes it.
+
+        Returns False, with a message and nothing changed, unless the seat is a player seat at
+        the table, not split already, holding exactly two face-up cards of equal value."""
+        if seat not in self.layout.names():
+            self.hud.flash(f"no seat {seat} at a {self.layout.players}-player table", 2.5)
+            return False
+        if seat == DEALER:
+            self.hud.flash("the dealer's hand cannot be split", 2.5)
+            return False
+        cards = self._seat_cards(seat)
+        labels = [c.label for c in cards]
+        if self.table.seeds(seat, cards):
+            self.hud.flash(f"{seat} is already split", 2.5)
+            return False
+        if len(cards) != 2:
+            self.hud.flash(f"{seat} can split two cards, not {len(cards)}", 2.5)
+            return False
+        if BACK in labels:
+            self.hud.flash(f"{seat} cannot split a face-down card", 2.5)
+            return False
+        if not is_pair(labels):
+            self.hud.flash(f"{seat} cannot split {labels[0]} and {labels[1]}: not a pair", 2.5)
+            return False
+        self.table.split(seat, cards)
+        first, second = self.table.seeds(seat, cards)
+        message = f"{seat} split: {first.label} | {second.label}"
+        print(f"--- {message} ---")
+        self.hud.flash(message)
+        return True
+
+    def join_seat(self, seat: str) -> bool:
+        """Make a split seat one hand again; prints it with the seed cards and flashes it.
+        Returns False, with a message and nothing changed, when the seat is not split."""
+        seeds = self.table.seeds(seat, self._seat_cards(seat))
+        if not seeds:
+            self.hud.flash(f"{seat} is not split", 2.5)
+            return False
+        self.table.join(seat)
+        print(f"--- {seat} joined: {seeds[0].label} | {seeds[1].label} ---")
+        self.hud.flash(f"{seat} joined")
+        return True
+
+    def toggle_split(self, seat: str) -> bool:
+        """Join the seat if it is split, else split it. Returns whether anything changed."""
+        if self.table.seeds(seat, self._seat_cards(seat)):
+            return self.join_seat(seat)
+        return self.split_seat(seat)
+
+    def _seat_cards(self, seat: str) -> list[Card]:
+        return [c for c in self.tracker.round if self.table.seat_of(c) == seat]
 
     def toggle_edit(self):
         """Enter zone editing, or leave it and save the zones."""
