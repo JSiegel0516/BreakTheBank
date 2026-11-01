@@ -5,28 +5,48 @@
     python read.py --source round1.mp4 --log round1.csv --no-display
     python read.py --list-cameras                    # which number is which camera?
     python read.py --preprocess auto                 # contrast help for a dim or washed-out table
+    python read.py --web                             # the sidebar moves to a browser page; open the printed URL
+    python read.py --web --web-host 0.0.0.0          # ... which a phone on the same network can open too
+    python read.py --no-display --web                # no window: the page shows everything and has the buttons
 
-Per frame:  camera -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
+Per frame:  camera -> rotate -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
 
-Every event (placed, hidden, returned, renamed, duplicate, round over) is printed
+Every event (placed, hidden, returned, removed, renamed, duplicate, round over) is printed
 as it happens, and appended to --log as CSV if given. Without a trained model it runs
 in capture mode: it shows the live feed and lets you press 's' to save frames
 for labelling.
 
-The sidebar starts in the counter view, a rank by suit grid of the deck: a card
-counted this round is slashed (pending), one counted in an earlier round is
-crossed off (locked), and a duplicate is ringed. Press v for the seats view,
-each seat's hand.
+Tabs at the top of the sidebar name the two views, CARDS LEFT and GAME, and
+highlight the current one. It starts in the Cards Left view, a rank by suit grid
+of the deck: a card counted this round is slashed (pending), one counted in an
+earlier round is crossed off (locked), and a duplicate is ringed. Press v for
+the Game view, each seat's hand.
+
+With --web the window shows the video and the bottom bar only, and a page served
+on WEB_PORT in settings.py (cardReader/sidebar/) shows the count, the Cards Left
+grid, every seat's hand with a basic strategy hint, the keys, and the status. It
+updates as the reader runs. Most keys also have a button on the page (all but E, V,
+L, and S), which does exactly what the key does. Keys and buttons waiting together
+are pressed one per frame, in order, so each gets the frame a turn before it left and
+each message reaches the page. With --no-display --web there is no window and the
+page is the only way to drive the reader; its Q button quits.
 
 Keys: 1-7 number of players | e edit zones with the mouse (e again saves them)
-      v counter or seats view | l legend and key list | g show or hide the grey boxes
-      r new round | Shift+R new shoe (count back to 0) | s save frame to data/raw/frames
+      v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
+      r new round | x rescan this round (fix a misread) | Shift+R new shoe (count back to 0)
+      s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
-      Shift+V show the raw camera frame or the preprocessed one | q quit
+      Shift+V show the raw camera frame or the preprocessed one
+      < > turn the view a quarter turn anticlockwise or clockwise | q quit
 
 The detector always gets the preprocessed frame (cardReader/preprocess.py); the
 window shows it too unless Shift+V switches to the raw frame. s always saves the
 raw frame.
+
+Each camera frame is first turned by CAMERA_ROTATION in settings.py (0, 90, 180, or
+270 degrees clockwise), for a camera mounted sideways or upside down. < and > turn
+it live; the message names the CAMERA_ROTATION that keeps the new angle. Everything
+after uses the turned frame: detection, zones, tags, and the frame s saves.
 
 If a live camera sends no new frame for two seconds (a cable pulled, the phone
 locked), the window says "no signal" over the last frame and the tracker waits.
@@ -34,11 +54,15 @@ Press c to reopen the same source.
 
 The bottom bar shows the fps, the smoothed detect milliseconds, and the preprocess
 mode with its milliseconds. On quit the average milliseconds per stage are printed: read (the newest
-camera frame), preprocess, detect, and draw (the overlay and the window).
+camera frame), preprocess, detect, and draw (the overlay and the window). When the fps
+averaged over the run is more than a fifth away from FPS in settings.py, both are printed:
+the tracker's *_SECONDS settings are turned into frames at FPS, so FPS should match.
 
 While editing zones (key E) the detector runs on one frame in EDIT_DETECT_EVERY and the
 cards found are reused in between, and each frame spends EDIT_MOUSE_MS handling the mouse
 (counted in draw), so a drag starts where it was clicked even when detection is slow.
+The frame after < or > is always detected, since reused cards would be in the old turn's
+coordinates.
 
 This file only owns the command line, the camera, and the window. What happens
 per frame and per key is cardReader/reader.py; the overlay is cardReader/hud.py.
@@ -48,6 +72,7 @@ from __future__ import annotations
 import argparse
 import csv
 import time
+from collections import deque
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -55,18 +80,21 @@ import cv2
 import numpy as np
 
 import settings
-from cardReader.camera import Camera, parse_source, snapshot_cameras
+from cardReader.camera import Camera, parse_source, rotate, snapshot_cameras
 from cardReader.hud import DealtCards, Hud
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
 from cardReader.provenance import live_model
 from cardReader.reader import LOG_HEADER, Reader
 from cardReader.seats import MAX_PLAYERS, SeatLayout
+from cardReader.sidebar.server import SidebarServer
+from cardReader.sidebar.snapshot import ACTION_KEYS, build_snapshot
 from cardReader.tracker import CardTracker, TrackerConfig
 
 WINDOW = "card reader"
 STAGES = ("read", "preprocess", "detect", "draw")  # the timed parts of one pass of the loop
 EDIT_DETECT_EVERY = 3  # while editing zones, detect on one frame in this many and reuse its detections between
 EDIT_MOUSE_MS = 40     # while editing zones, time per frame spent handling mouse events
+NO_KEY = 0xFF          # cv2.waitKey's -1 (no key pressed) after & 0xFF
 
 
 def wait_key_draining_mouse(budget_ms: float) -> int:
@@ -108,6 +136,15 @@ class StageTimer:
 
     def summary(self) -> str:
         return ", ".join(f"{stage} {ms:.1f} ms" for stage, ms in self.averages().items())
+
+
+def fps_note(measured: float, expected: float) -> str:
+    """The quit summary's warning when the measured fps is more than a fifth away from FPS in
+    settings.py, which turns every *_SECONDS setting into frames; "" when they are close enough."""
+    if abs(measured - expected) <= 0.2 * expected:
+        return ""
+    return (f"measured {measured:.1f} fps, but FPS in settings.py is {expected}: "
+            f"set FPS to about {measured:.1f} so the *_SECONDS settings take the time they say")
 
 
 def list_cameras():
@@ -154,6 +191,41 @@ def reconnect(cam: Camera, hud: Hud, source):
         hud.flash("reconnect failed: press C to try again", 2.5)
 
 
+def page_keys(actions: list[str]) -> list[int]:
+    """The key codes for actions posted from the page's buttons, in order. An unknown name is printed and skipped."""
+    keys = []
+    for action in actions:
+        if action in ACTION_KEYS:
+            keys.append(ACTION_KEYS[action])
+        else:
+            print(f"ignored unknown page action {action!r}")
+    return keys
+
+
+def press_key(key: int, reader: Reader, cam: Camera, hud: Hud, source, frame: np.ndarray) -> bool:
+    """Act on one key code, from the window or a page button. Returns False when the reader should quit.
+
+    C reconnects a live camera here, since read.py owns the camera; every other key goes to Reader.handle_key."""
+    if key == ord("c") and not cam.is_file:
+        reconnect(cam, hud, source)
+        return True
+    return reader.handle_key(key, frame)
+
+
+def start_web(host: str, port: int) -> SidebarServer:
+    """Start the browser dashboard's server and print where to open it. Exits with a message if the port is taken."""
+    try:
+        server = SidebarServer(host, port)
+    except OSError as error:
+        raise SystemExit(f"could not serve the page on {host}:{port} ({error}): "
+                         "set WEB_PORT in settings.py to a free port") from None
+    print(f"dashboard at {server.url}")
+    if host not in ("127.0.0.1", "localhost"):
+        print(f"  from another device on this network: http://<this computer's address>:{port}/ "
+              "(on macOS: ipconfig getifaddr en0)")
+    return server
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default=settings.CAMERA_SOURCE, help="camera index, video file, or stream URL")
@@ -170,8 +242,13 @@ def main():
     ap.add_argument("--preprocess", choices=MODES, default=settings.PREPROCESS,
                     help="contrast help before detection (default: PREPROCESS in settings.py; key P cycles it)")
     ap.add_argument("--log", default=None, help="append every event to this CSV file")
-    ap.add_argument("--no-display", action="store_true")
+    ap.add_argument("--no-display", action="store_true",
+                    help="run without the window; with --web the page's buttons drive the reader")
     ap.add_argument("--list-cameras", action="store_true", help="show a snapshot from every camera, then exit")
+    ap.add_argument("--web", action="store_true",
+                    help="show the sidebar on a browser page (port WEB_PORT in settings.py) instead of in the window")
+    ap.add_argument("--web-host", default="127.0.0.1",
+                    help="address the page is served on; 0.0.0.0 lets other devices on the network open it")
     args = ap.parse_args()
     try:
         settings.validate(settings)
@@ -194,13 +271,15 @@ def main():
     cam = Camera(parse_source(args.source), args.width, args.height)
     W, H = cam.size
     print(f"source {args.source} at {W}x{H}")
+    rotation = settings.CAMERA_ROTATION // 90
+    view_w, view_h = (H, W) if rotation % 2 else (W, H)  # the frame size after the starting turn
 
     seats_file = settings.PROJECT_ROOT / settings.SEATS_FILE
-    layout = SeatLayout.load(seats_file, W, H, args.players)
+    layout = SeatLayout.load(seats_file, view_w, view_h, args.players)
     if layout is not None:
         print(f"loaded your saved {layout.players}-player zones from {settings.SEATS_FILE}")
     else:
-        layout = SeatLayout(args.players or settings.PLAYERS, W, H)
+        layout = SeatLayout(args.players or settings.PLAYERS, view_w, view_h)
 
     with ExitStack() as cleanup:  # closes the log file, if any, on the way out
         log = None
@@ -210,11 +289,14 @@ def main():
             if new_file:
                 log.writerow(LOG_HEADER)
 
-        tracker = CardTracker(TrackerConfig.from_settings(settings, W))
+        tracker = CardTracker(TrackerConfig.from_settings(settings, view_w))
         hud = Hud()
         reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log,
-                        preprocess=args.preprocess)
+                        preprocess=args.preprocess, rotation=rotation)
         preprocess_config = PreprocessConfig.from_settings(settings)
+        server = start_web(args.web_host, settings.WEB_PORT) if args.web else None
+        if server:
+            cleanup.callback(server.close)
         if not args.no_display:
             cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)  # resizable, so a 4K feed fits on a laptop screen
             cv2.setMouseCallback(WINDOW, reader.editor.on_mouse)
@@ -222,6 +304,9 @@ def main():
         t_last, fps = time.time(), 0.0
         signal_lost = False
         dets, frames_processed = [], 0
+        dets_rotation = reader.rotation  # the turn the cached dets were detected at
+        pending_keys: deque[int] = deque()  # window keys and page buttons not pressed yet, oldest first
+        run_start = time.perf_counter()
         try:
             while True:
                 start = time.perf_counter()
@@ -234,6 +319,7 @@ def main():
                     continue
                 if not ok:
                     frame = np.zeros((H, W, 3), np.uint8)  # it never sent a frame: say so over black
+                frame = rotate(frame, reader.rotation)
 
                 # A stale camera repeats its last frame: nothing new to detect, so the tracker is left alone.
                 no_signal = cam.stale
@@ -250,9 +336,12 @@ def main():
                     dets = []
                     time.sleep(0.01)
                 else:
-                    if detector and (not reader.editor.active or frames_processed % EDIT_DETECT_EVERY == 0):
+                    turned = dets_rotation != reader.rotation  # cached dets are in the old frame's coordinates
+                    editing_skip = reader.editor.active and frames_processed % EDIT_DETECT_EVERY != 0
+                    if detector and (turned or not editing_skip):
                         start = time.perf_counter()
                         dets = detector(enhanced)
+                        dets_rotation = reader.rotation
                         timer.lap("detect", start)
                     reader.process(frame, dets)
                     frames_processed += 1
@@ -260,24 +349,31 @@ def main():
                 now = time.time()
                 fps = 0.9 * fps + 0.1 / max(now - t_last, 1e-6)
                 t_last = now
-                if args.no_display:
-                    continue
-                start = time.perf_counter()
-                dealt = DealtCards(tracker.shoe_locked, tracker.shoe_pending, tracker.shoe_duplicates,
-                                   tracker.shoe_unrevealed)
                 shown = enhanced if reader.show_enhanced else frame
                 showing_raw = shown is not enhanced  # the window shows something other than what was detected
-                cv2.imshow(WINDOW, hud.draw(shown, dets, tracker.round, fps, reader.layout, reader.count,
-                                            bound=tracker.bound,
-                                            capture_mode=detector is None, editor=reader.editor, dealt=dealt,
-                                            stage_ms=timer.smoothed, no_signal=no_signal,
-                                            preprocess=reader.preprocess, showing_raw=showing_raw))
-                key = wait_key_draining_mouse(EDIT_MOUSE_MS) if reader.editor.active else cv2.waitKey(1)
-                key &= 0xFF
-                timer.lap("draw", start)
-                if key == ord("c") and not cam.is_file:  # read.py owns the camera, so C is handled here
-                    reconnect(cam, hud, args.source)
-                elif not reader.handle_key(key, frame):  # the raw frame, so S saves what the camera sent
+                window_key = NO_KEY
+                if not args.no_display:
+                    start = time.perf_counter()
+                    cv2.imshow(WINDOW, hud.draw(shown, dets, tracker.round, fps, reader.layout, reader.count,
+                                                bound=tracker.bound, capture_mode=detector is None,
+                                                editor=reader.editor, dealt=DealtCards.from_tracker(tracker),
+                                                stage_ms=timer.smoothed, no_signal=no_signal,
+                                                preprocess=reader.preprocess, showing_raw=showing_raw,
+                                                sidebar=server is None))
+                    key = wait_key_draining_mouse(EDIT_MOUSE_MS) if reader.editor.active else cv2.waitKey(1)
+                    window_key = key & 0xFF
+                    timer.lap("draw", start)
+                if server:
+                    server.publish(build_snapshot(reader, fps=fps, stage_ms=timer.smoothed, no_signal=no_signal,
+                                                  capture_mode=detector is None, showing_raw=showing_raw,
+                                                  flash=hud.pop_flash()))
+                    pending_keys.extend(page_keys(server.drain_actions()))
+                if window_key != NO_KEY:
+                    pending_keys.append(window_key)
+                # One key per frame: the next one gets the frame a turn leaves behind, and each key's
+                # message is published before the next key can replace it. The frame is turned but
+                # not preprocessed, so S saves what the camera sent.
+                if pending_keys and not press_key(pending_keys.popleft(), reader, cam, hud, args.source, frame):
                     break
         finally:
             cam.release()
@@ -286,6 +382,10 @@ def main():
             print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
             print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
             print(f"average time per frame: {timer.summary()}")
+            run_seconds = time.perf_counter() - run_start
+            note = fps_note(frames_processed / run_seconds, settings.FPS) if frames_processed else ""
+            if note:
+                print(note)
 
 
 if __name__ == "__main__":

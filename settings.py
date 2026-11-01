@@ -35,18 +35,25 @@ LIVE_MODEL_DIR = "models/cards"               # holds LIVE.txt naming the promot
 CAMERA_SOURCE = "0"        # "0" = first camera. A capture card is often "1". A video path also works.
 CAMERA_WIDTH = None        # e.g. 3840. None = whatever the camera gives.
 CAMERA_HEIGHT = None       # e.g. 2160
+CAMERA_ROTATION = 0        # degrees the frame is turned clockwise before anything else: 0, 90, 180, or 270.
+                           # For a camera mounted sideways or upside down; keys < and > in read.py turn it live.
 INPUT_SIZE = 1280          # frame is resized to this width before detection. Bigger = reads smaller indices, slower.
 CONFIDENCE = 0.6           # detections below this score are ignored
-CONFIRM_FRAMES = 15        # a card must be seen in this many frames ...
-CONFIRM_WINDOW = 20        # ... out of the last this many, so flicker never adds up (about 0.7 s at 30 fps)
+FPS = 12.4                 # frames per second the reader runs at; turns every *_SECONDS below into frames.
+                           # read.py prints the measured fps on quit when it is far from this.
+CONFIRM_SECONDS = 0.5      # a card must be seen for this long in total ...
+CONFIRM_WINDOW_SECONDS = 0.7  # ... within the last this long, so flicker never adds up
 CONFIRM_AGREEMENT = 0.8    # share of reads that must agree on the card's rank (0.8 = 80%); suits may differ
 CONFIRM_CONFIDENCE = 0.7   # the model's average confidence over those frames must be at least this
 STILL_DISTANCE = 0.006     # fraction of frame width the corner may move over those frames (about 12 px at 1080p)
-DROP_FRAMES = 30           # a card missing this many frames in a row becomes hidden (kept, shown greyed out)
+DROP_SECONDS = 1.0         # a card missing this long without a break becomes hidden (kept, shown greyed out)
+HIDDEN_SECONDS = 5.0       # a card hidden this long was picked up: removed from the round, still counted.
+                           # 0 removes a card as soon as it is hidden.
 MATCH_DISTANCE = 0.03      # fraction of frame width; detections closer than this are the same corner
-LABEL_WINDOW = 45          # a card's name is the vote over its last this many frames of reads, so a card
-                           # turned face up (a hole card) changes from BACK to its name in about half that
-ROUND_END_FRAMES = 90      # no card visible for this many frames (about 3 s at 30 fps) ends the round
+LABEL_WINDOW_SECONDS = 1.5  # a card's name is the vote over its reads in the last this long, so a card
+                            # turned face up (a hole card) changes from BACK to its name in about half that
+ROUND_END_SECONDS = 3.0    # no card visible for this long ends the round
+WEB_PORT = 8765            # port of the browser dashboard (read.py --web); change it if another program uses it
 
 # Preprocessing: contrast help for dim or washed-out tables (key P in read.py cycles the mode).
 PREPROCESS = "auto"        # "off", "gamma" (brighten), "clahe" (local contrast), or "auto" (gamma by brightness).
@@ -80,9 +87,12 @@ def validate(config) -> None:
     from cardReader.seats import MAX_PLAYERS
 
     rules = [
-        (("CONFIRM_FRAMES", "CONFIRM_WINDOW", "DROP_FRAMES", "LABEL_WINDOW", "ROUND_END_FRAMES",
-          "INPUT_SIZE", "TRAIN_INPUT_SIZE", "BATCH_SIZE", "EPOCHS", "PATIENCE", "PREPROCESS_CLAHE_TILES"),
+        (("INPUT_SIZE", "TRAIN_INPUT_SIZE", "BATCH_SIZE", "EPOCHS", "PATIENCE", "PREPROCESS_CLAHE_TILES"),
          lambda v: _is_whole(v) and v >= 1, "a whole number of 1 or more"),
+        (("FPS", "CONFIRM_SECONDS", "CONFIRM_WINDOW_SECONDS", "DROP_SECONDS", "LABEL_WINDOW_SECONDS",
+          "ROUND_END_SECONDS"),
+         lambda v: _is_number(v) and v > 0, "a number above 0"),
+        (("HIDDEN_SECONDS",), lambda v: _is_number(v) and v >= 0, "a number of 0 or more"),
         (("SYNTHETIC_IMAGES",), lambda v: _is_whole(v) and v >= 0, "a whole number of 0 or more"),
         (("CAMERA_WIDTH", "CAMERA_HEIGHT"),
          lambda v: v is None or (_is_whole(v) and v >= 1), "None or a whole number of 1 or more"),
@@ -95,6 +105,8 @@ def validate(config) -> None:
         (("CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
+        (("WEB_PORT",), lambda v: _is_whole(v) and 1 <= v <= 65535, "a whole number from 1 to 65535"),
+        (("CAMERA_ROTATION",),lambda v: _is_whole(v) and v in (0, 90, 180, 270), "one of 0, 90, 180, 270"),
         (("PREPROCESS",), lambda v: v in MODES, "one of " + ", ".join(repr(mode) for mode in MODES)),
         (("PREPROCESS_BRIGHTEN_GAMMA", "PREPROCESS_DARKEN_GAMMA", "PREPROCESS_CLAHE_CLIP"),
          lambda v: _is_number(v) and v > 0, "a number above 0"),
@@ -108,10 +120,10 @@ def validate(config) -> None:
             if not is_valid(value):
                 problems.append(f"{name} = {value!r}: must be {allowed}")
 
-    frames, window = config.CONFIRM_FRAMES, config.CONFIRM_WINDOW
-    if _is_whole(frames) and _is_whole(window) and frames > window:
-        problems.append(f"CONFIRM_FRAMES = {frames} must be at most CONFIRM_WINDOW = {window}, "
-                        "the frames it is counted in")
+    confirm, window = config.CONFIRM_SECONDS, config.CONFIRM_WINDOW_SECONDS
+    if _is_number(confirm) and _is_number(window) and confirm > window:
+        problems.append(f"CONFIRM_SECONDS = {confirm} must be at most CONFIRM_WINDOW_SECONDS = {window}, "
+                        "the time it is counted in")
     dark, bright = config.PREPROCESS_DARK_BELOW, config.PREPROCESS_BRIGHT_ABOVE
     if _is_number(dark) and _is_number(bright) and dark >= bright:
         problems.append(f"PREPROCESS_DARK_BELOW = {dark} must be below PREPROCESS_BRIGHT_ABOVE = {bright}")

@@ -54,7 +54,9 @@ def describe_export(folder: Path) -> dict:
 
     splits, label_files, boxes = {}, 0, 0
     digest, files, size = hashlib.sha256(), 0, 0
-    for path in sorted(folder.rglob("*")):
+    # Sort by name parts, not Path order: Windows compares paths case-insensitively,
+    # which would put README files elsewhere and change the digest.
+    for path in sorted(folder.rglob("*"), key=lambda p: p.relative_to(folder).parts):
         rel = path.relative_to(folder)
         if not path.is_file() or path.name in SKIP_FILES or SKIP_DIRS & set(rel.parts):
             continue

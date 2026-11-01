@@ -36,6 +36,8 @@ def main():
                     help="epochs without improvement before stopping")
     ap.add_argument("--imgsz", type=int, default=settings.TRAIN_INPUT_SIZE)
     ap.add_argument("--batch", type=int, default=settings.BATCH_SIZE)
+    ap.add_argument("--workers", type=int, default=8,
+                    help="data-loading processes; validation starts twice as many. Lower it on an out-of-memory crash")
     ap.add_argument("--name", default="cards",
                     help="run name: output goes to models/<name>/. read.py uses models/cards")
     ap.add_argument("--extract-art", metavar="EXPORT", help="make card art from a one-card-per-photo export, then stop")
@@ -79,12 +81,14 @@ def main():
     from ultralytics import YOLO
 
     device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    gpu_name = f": {torch.cuda.get_device_name(0)}" if device == "cuda" else ""
+    print(f"training on {device}{gpu_name}")
     models_dir = ROOT / settings.MODELS_DIR
     # A bare name such as yolo11s.pt is downloaded into models/ the first time, not into the current folder.
     base = Path(args.base) if Path(args.base).parent != Path(".") else models_dir / args.base
     model = YOLO(str(base))
     model.train(data=str(data_dir / "data.yaml"), epochs=args.epochs, patience=args.patience,
-                imgsz=args.imgsz, batch=args.batch, device=device,
+                imgsz=args.imgsz, batch=args.batch, device=device, workers=args.workers,
                 name=args.name, project=str(models_dir), exist_ok=True,
                 # Cards are never mirrored, so disable flips; keep rotation and colour jitter.
                 fliplr=0.0, flipud=0.0, degrees=15, hsv_v=0.4)

@@ -54,6 +54,23 @@ def test_duplicate_is_logged_with_its_seat_and_leaves_the_count(tmp_path):
     assert r.count.running == -1
 
 
+def test_removed_card_is_printed_and_logged_and_leaves_the_count(tmp_path, capsys):
+    buf = io.StringIO()
+    tracker = CardTracker(confirm_frames=2, drop_frames=2, match_dist=20, hidden_frames=3)
+    r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               log=csv.writer(buf))
+    seat = r.layout.seats[1].polygon.mean(axis=0)  # inside P1
+    dets = [Detection("KD", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    for _ in range(2 + 3):
+        r.process(frame(), [])                     # hidden, then removed
+    assert r.tracker.round == [] and r.count.running == -1
+    assert "removed  #1   KD (P1)" in capsys.readouterr().out
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert rows[-1][2:7] == ["removed", "1", "KD", "P1", "-1"]
+
+
 def test_face_down_card_takes_one_card_off_cards_left(tmp_path):
     r = make_reader(tmp_path)
     dets = [Detection("BACK", 0.9, 100, 100), Detection("5H", 0.9, 300, 100)]
@@ -98,15 +115,33 @@ def test_round_shoe_legend_view_save_and_quit_keys(tmp_path):
     legend = r.hud.show_legend
     r.handle_key(ord("l"), frame())
     assert r.hud.show_legend is not legend
-    assert r.hud.view == "counter"
+    assert r.hud.view == "cards_left"
     r.handle_key(ord("v"), frame())
-    assert r.hud.view == "seats"
+    assert r.hud.view == "game" and r.hud._message == "Game view"
     r.handle_key(ord("v"), frame())
-    assert r.hud.view == "counter"
+    assert r.hud.view == "cards_left" and r.hud._message == "Cards Left view"
     r.handle_key(ord("s"), frame())
     assert len(list((tmp_path / "frames").glob("frame_*.jpg"))) == 1
-    assert r.handle_key(ord("x"), frame()) is True       # unknown keys are ignored
+    assert r.handle_key(ord("z"), frame()) is True       # unknown keys are ignored
     assert r.handle_key(ord("q"), frame()) is False
+
+
+def test_x_rescans_the_round_recounts_and_logs_a_rescan_row(tmp_path, capsys):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    seat = r.layout.seats[1].polygon.mean(axis=0)
+    dets = [Detection("5H", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    assert r.count.running == 1
+    capsys.readouterr()
+    assert r.handle_key(ord("x"), frame()) is True
+    assert r.tracker.round == [] and r.tracker.shoe_seen == [] and r.count.running == 0
+    assert "--- rescan" in capsys.readouterr().out
+    assert r.hud._message.startswith("rescan")
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert len(rows[-1]) == len(LOG_HEADER)
+    assert rows[-1][1:] == [str(r.tracker.frame), "rescan", "", "", "", "0", "", ""]
 
 
 def test_p_cycles_the_preprocess_modes_and_shift_v_toggles_the_displayed_frame(tmp_path):
@@ -122,7 +157,7 @@ def test_p_cycles_the_preprocess_modes_and_shift_v_toggles_the_displayed_frame(t
     assert r.show_enhanced is False and r.hud._message == "showing the raw camera frame"
     r.handle_key(ord("V"), frame())
     assert r.show_enhanced is True and r.hud._message == "showing the frame the detector sees"
-    assert r.hud.view == "counter"                       # Shift+V is not V
+    assert r.hud.view == "cards_left"                    # Shift+V is not V
 
 
 def test_g_hides_and_shows_the_unmatched_boxes(tmp_path):
@@ -139,3 +174,54 @@ def test_reader_starts_in_the_mode_it_is_given(tmp_path):
                preprocess="clahe")
     r.handle_key(ord("p"), frame())
     assert r.preprocess == "auto"
+
+
+def test_angle_keys_turn_the_view_a_quarter_turn_and_wrap_around(tmp_path):
+    r = make_reader(tmp_path)
+    assert r.rotation == 0
+    r.handle_key(ord(">"), frame())
+    assert r.rotation == 1
+    assert r.hud._message == "camera turned to 90 degrees: CAMERA_ROTATION = 90 keeps it"
+    turned = np.zeros((W, H, 3), np.uint8)               # the next frame arrives turned
+    for _ in range(3):
+        r.handle_key(ord(">"), turned)
+        turned = np.zeros(turned.shape[1::-1] + (3,), np.uint8)
+    assert r.rotation == 0 and r.hud._message.startswith("camera turned to 0 degrees")
+    r.handle_key(ord("<"), frame())
+    assert r.rotation == 3 and r.hud._message == "camera turned to 270 degrees: CAMERA_ROTATION = 270 keeps it"
+
+
+def test_a_quarter_turn_reloads_the_layout_for_the_turned_size(tmp_path):
+    r = make_reader(tmp_path)
+    r.handle_key(ord("4"), frame())
+    r.handle_key(ord(">"), frame())
+    assert (r.layout.width, r.layout.height, r.layout.players) == (H, W, 4)
+    assert r.editor.layout is r.layout and r.table.layout is r.layout
+    assert (r.layout.seats[0].polygon == SeatLayout(4, H, W).seats[0].polygon).all()  # the template, not stretched
+    r.layout.seats[1].polygon += (5, 0)
+    r.layout.save(r.seats_file)
+    saved = r.layout.seats[1].polygon.copy()
+    r.handle_key(ord("<"), np.zeros((W, H, 3), np.uint8))
+    r.handle_key(ord(">"), frame())
+    assert np.abs(r.layout.seats[1].polygon - saved).max() <= 1  # the saved layout for 4 players
+
+
+def test_a_card_on_the_table_keeps_its_number_through_a_turn(tmp_path, capsys):
+    r = make_reader(tmp_path)
+    dets = [Detection("KH", 0.9, 100, 50)]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    r.handle_key(ord(">"), frame())
+    turned = np.zeros((W, H, 3), np.uint8)
+    capsys.readouterr()
+    for _ in range(3):
+        assert r.process(turned, [Detection("KH", 0.9, H - 1 - 50, 100)]) == []
+    assert [(c.order, c.label, c.x, c.y) for c in r.tracker.round] == [(1, "KH", H - 1 - 50, 100)]
+    assert r.tracker.cfg.match_dist == 20 * H / W
+
+
+def test_reader_starts_at_the_rotation_it_is_given(tmp_path):
+    r = Reader(CardTracker(), SeatLayout(3, H, W), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               rotation=1)
+    r.handle_key(ord(">"), np.zeros((W, H, 3), np.uint8))
+    assert r.rotation == 2 and "180 degrees" in r.hud._message

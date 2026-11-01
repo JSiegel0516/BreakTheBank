@@ -9,11 +9,18 @@ everything in between, so it can be driven in a test without either:
 
 reader.preprocess (key P) and reader.show_enhanced (key Shift+V) tell read.py
 how to preprocess each frame for the detector and which frame to show.
+reader.rotation (keys < and >) is how many quarter turns clockwise read.py
+turns each camera frame before anything else sees it. A turn moves the
+tracker's cards with the frame and reloads the seat layout for the turned size.
 
 Events are printed as they happen and appended to the CSV log as
     time, frame, event, order, card, seat, running_count, x, y
-A duplicate event (a name already counted in an earlier round) is logged like
-the rest, with the card's seat; it does not change the count.
+A duplicate event (a name already counted in an earlier round) and a removed
+event (a card hidden too long) are logged like the rest, with the card's seat
+where it was last seen; neither changes the count. Key X (rescan) logs one
+rescan row, with the running count after the rescan and no card, so
+evaluate.py reads the round again under the same number. A rescan before the
+round's first card logs nothing, since there is nothing to read again.
 """
 from __future__ import annotations
 
@@ -25,7 +32,7 @@ import numpy as np
 
 from .blackjack import ShoeCount, shoe_count
 from .cards import Detection, Event
-from .hud import Hud
+from .hud import VIEWS, Hud
 from .preprocess import MODES
 from .seats import MAX_PLAYERS, SeatLayout, ZoneEditor
 from .table import Table
@@ -36,8 +43,9 @@ LOG_HEADER = ["time", "frame", "event", "order", "card", "seat", "running_count"
 
 class Reader:
     def __init__(self, tracker: CardTracker, layout: SeatLayout, hud: Hud,
-                 seats_file: Path, frames_dir: Path, log=None, preprocess: str = "off"):
-        """preprocess: the starting preprocess mode, one of preprocess.MODES (key P cycles it)."""
+                 seats_file: Path, frames_dir: Path, log=None, preprocess: str = "off", rotation: int = 0):
+        """preprocess: the starting preprocess mode, one of preprocess.MODES (key P cycles it).
+        rotation: the starting turn in clockwise quarter turns, 0 to 3 (settings.CAMERA_ROTATION // 90)."""
         self.tracker, self.hud, self.log = tracker, hud, log
         self.seats_file, self.frames_dir = Path(seats_file), Path(frames_dir)
         self.editor = ZoneEditor(layout)
@@ -45,6 +53,7 @@ class Reader:
         self.count: ShoeCount = self._recount()
         self.preprocess = preprocess  # read.py preprocesses each frame with this mode before detection
         self.show_enhanced = True     # False: the window shows the raw camera frame instead (key Shift+V)
+        self.rotation = rotation % 4  # read.py turns each camera frame this many quarter turns clockwise
 
     @property
     def layout(self) -> SeatLayout:
@@ -86,7 +95,8 @@ class Reader:
     def handle_key(self, k: int, frame: np.ndarray) -> bool:
         """Act on a key code from cv2.waitKey. Returns False when the reader should quit.
 
-        frame: the raw camera frame, before preprocessing; S saves it."""
+        frame: the camera frame as turned by rotation, before preprocessing; S saves it, and
+        < and > turn from its size."""
         if k == ord("q"):
             return False
         if ord("1") <= k <= ord(str(MAX_PLAYERS)):
@@ -99,12 +109,21 @@ class Reader:
             self.hud.show_unmatched = not self.hud.show_unmatched
             self.hud.flash("unmatched boxes shown" if self.hud.show_unmatched else "unmatched boxes hidden")
         elif k == ord("v"):
-            self.hud.view = "seats" if self.hud.view == "counter" else "counter"
-            self.hud.flash(f"{self.hud.view} view")
+            self.hud.view = "game" if self.hud.view == "cards_left" else "cards_left"
+            self.hud.flash(f"{VIEWS[self.hud.view]} view")
         elif k == ord("r"):
             self.tracker.new_round()
             print("--- new round ---")
             self.hud.flash("new round: numbering restarts at 1")
+        elif k == ord("x"):
+            placed_this_round = self.tracker.rescan()
+            self.count = self._recount()
+            print("--- rescan: this round is read again ---")
+            self.hud.flash("rescan: reading this round again")
+            # R logs nothing, so a rescan row before this round's first card would drop the round R ended.
+            if self.log and placed_this_round:
+                self.log.writerow([f"{time.time():.3f}", self.tracker.frame, "rescan", "", "", "",
+                                   self.count.running, "", ""])
         elif k == ord("R"):
             self.tracker.new_shoe()
             self.count = self._recount()
@@ -119,7 +138,26 @@ class Reader:
                            else "showing the raw camera frame")
         elif k == ord("s"):
             self.save_frame(frame)
+        elif k == ord(">"):
+            self.turn(1, frame.shape[1], frame.shape[0])
+        elif k == ord("<"):
+            self.turn(-1, frame.shape[1], frame.shape[0])
         return True
+
+    def turn(self, quarter_turns: int, width: int, height: int):
+        """Turn the view clockwise by quarter_turns (-1: anticlockwise). width, height: the frame size before it.
+
+        The tracker's cards turn with the frame, so they keep their numbers. The seat layout is
+        reloaded for the turned size: the one saved for this player count, else the template."""
+        self.rotation = (self.rotation + quarter_turns) % 4
+        self.tracker.rotate(quarter_turns, width, height)
+        if quarter_turns % 2:
+            width, height = height, width
+        players = self.layout.players
+        self.set_layout(SeatLayout.load(self.seats_file, width, height, players) or SeatLayout(players, width, height))
+        degrees = 90 * self.rotation
+        print(f"camera turned to {degrees} degrees: set CAMERA_ROTATION = {degrees} in settings.py to start there")
+        self.hud.flash(f"camera turned to {degrees} degrees: CAMERA_ROTATION = {degrees} keeps it", 2.5)
 
     def set_players(self, n: int, width: int, height: int):
         """Switch to n seats: the layout saved for that count, else the template."""

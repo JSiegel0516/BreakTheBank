@@ -22,16 +22,30 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
 2. Point a camera straight down at the table (see [Setting up the camera](docs/reading.md#setting-up-the-camera)).
 3. Activate the environment (`source .venv/bin/activate`), then run `python read.py`.
    Place cards one at a time. Each gets a number in the order placed.
-4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared;
-   press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
+4. Press `1` to `7` for the number of players. Rounds end on their own when the table is cleared.
+   If a card is misread, press `X` before the round ends to read the round again; earlier
+   rounds stay counted. Press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
    `no signal`, reconnect the camera's cable or wake the phone and press `C` to reopen it.
    In a dim room or under uneven light, press `P` to cycle the preprocess modes (off, gamma,
    clahe, auto) and `Shift+V` to compare with the raw camera frame. See
    [Dim or washed-out tables](docs/reading.md#dim-or-washed-out-tables); glare that turns a
-   card's index pure white cannot be fixed in software.
-5. The sidebar starts in the counter view: a rank by suit grid that crosses off each card
-   dealt this shoe. Press `V` to switch to each seat's hand, and `L` to hide the legend
-   and key list. All keys are in [docs/reading.md](docs/reading.md#keys).
+   card's index pure white cannot be fixed in software. If the camera is mounted sideways or
+   upside down, press `<` or `>` to turn the view a quarter turn, and set `CAMERA_ROTATION`
+   in `settings.py` to the value the message names so it starts that way.
+5. The tabs at the top of the sidebar name its two views, CARDS LEFT and GAME, with the
+   current one highlighted. It starts in the Cards Left view: a rank by suit grid that
+   crosses off each card dealt this shoe. Press `V` for the Game view, each seat's hand,
+   and `L` to hide the legend and key list. All keys are in [docs/reading.md](docs/reading.md#keys).
+6. On a laptop screen, run `python read.py --web` instead and open the address it prints
+   (`http://127.0.0.1:8765/`) in a browser. The window then shows only the video, and the
+   page shows the count, the Cards Left grid, every hand with a basic strategy hint, the keys,
+   and the status, sized to fit the browser window. Its buttons do what the keys do;
+   `python read.py --no-display --web` runs with the page alone.
+   See [Browser dashboard](docs/reading.md#browser-dashboard), which also covers opening it on a phone.
+7. A covered card turns grey and stays in its hand. After 5 seconds out of sight
+   (`HIDDEN_SECONDS` in `settings.py`) it counts as picked up: it leaves its hand but stays
+   in the count. Every time in `settings.py` is in seconds; set `FPS` to the speed your
+   reader runs at (see [Tuning the reader](docs/reading.md#tuning-the-reader)).
 
 ## How it works
 
@@ -85,6 +99,8 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── hud.py                the overlay read.py draws on the live feed
 │   ├── seats.py              seat layout by number of players, and the mouse zone editor
 │   ├── blackjack.py          hand totals and the Hi-Lo count
+│   ├── strategy.py           basic strategy: hit, stand, double, or split for a hand
+│   ├── sidebar/              the browser dashboard of read.py --web: snapshot, server, page.html
 │   ├── tracker.py            detections -> cards in placement order (thresholds: TrackerConfig)
 │   ├── table.py              cards -> the hand at every seat
 │   ├── reader.py             per frame and per key: what read.py does between camera and window
@@ -98,7 +114,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_tracker.py       placement order, hidden cards, rounds, shoes, renaming
 │   ├── test_table.py         hands per seat
 │   ├── test_reader.py        events, logging, keys
-│   ├── test_read.py          stage timings, no signal and reconnect in the main loop
+│   ├── test_read.py          stage timings, no signal, reconnect, and page buttons in the main loop
 │   ├── test_camera.py        stale detection and reopening with a faked capture
 │   ├── test_preprocess.py    the preprocess modes: shape, auto's branches, colour kept
 │   ├── test_evaluate.py      scoring a log: missed, extra, wrong names, the count
@@ -108,6 +124,8 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_synthetic.py     card art, geometry, composed images
 │   ├── test_autolabel.py     corner completion with a faked model
 │   ├── test_blackjack.py     hand totals, Hi-Lo, seat layout
+│   ├── test_strategy.py      every row of the basic strategy tables
+│   ├── test_sidebar.py       the dashboard's snapshot, server, and button actions
 │   ├── test_seats.py         zone editing, saving and loading
 │   └── test_provenance.py    manifest checks, promotion
 ├── data/
@@ -155,7 +173,10 @@ pytest
 
 [uv](https://docs.astral.sh/uv/) installs Python 3.12 itself if needed. The
 dependencies are listed in `pyproject.toml` and pinned in `uv.lock`; `uv sync`
-after pulling keeps everyone on the same versions.
+after pulling keeps everyone on the same versions. The commands above are for
+macOS and Linux. On Windows, activate with `.venv\Scripts\activate`; `uv sync`
+there installs a PyTorch build that uses NVIDIA cards, see
+[Training on a Windows PC](docs/training.md#training-on-a-windows-pc-with-an-nvidia-gpu).
 
 Every command in this README and in `docs/` assumes this project's virtual
 environment is active (`source .venv/bin/activate`, run from the project folder).

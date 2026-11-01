@@ -1,6 +1,7 @@
+import hashlib
 import json
 
-from cardReader.provenance import check_manifest, live_model, promote, write_manifest
+from cardReader.provenance import check_manifest, describe_export, live_model, promote, write_manifest
 
 
 def fake_export(raw, group, name, labels=("0 0.5 0.5 0.05 0.05",), roboflow=True):
@@ -31,6 +32,16 @@ def test_manifest_records_source_counts_and_fingerprint(tmp_path):
     assert "source" not in m["exports"]["unused/oneCard"]
     written = json.loads((tmp_path / "manifest.json").read_text())
     assert written["exports"].keys() == {"labeled/tableA", "unused/oneCard"}
+
+
+def test_fingerprint_hashes_files_in_case_sensitive_order_on_every_os(tmp_path):
+    e = fake_export(tmp_path / "raw", "labeled", "tableA")
+    files = [p for p in e.rglob("*") if p.is_file()]
+    expected = hashlib.sha256()
+    for path in sorted(files, key=lambda p: p.relative_to(e).parts):
+        rel = path.relative_to(e).as_posix()
+        expected.update(f"{rel}\0{hashlib.sha256(path.read_bytes()).hexdigest()}\n".encode())
+    assert describe_export(e)["sha256"] == expected.hexdigest()
 
 
 def test_check_passes_then_catches_a_changed_label_and_a_missing_export(tmp_path):
