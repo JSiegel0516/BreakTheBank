@@ -370,6 +370,18 @@ def test_a_page_count_switch_reaches_the_reader_and_presses_no_key(monkeypatch, 
     assert "Uston APC running count +0" in capsys.readouterr().out
 
 
+def test_the_page_decks_button_cycles_the_shoe_and_presses_no_key(monkeypatch, tmp_path):
+    monkeypatch.setattr(read.settings, "DECKS", 2)
+    posts = {2: [{"action": "cycle_decks"}], 3: [{"action": "cycle_decks"}], 4: ["quit"]}
+    server, handled, _ = run_with_page(monkeypatch, tmp_path, posts, [255] * 10)
+
+    assert handled == [ord("q")]
+    shoes = [(snapshot["decks"], snapshot["count"]["deck_size"]) for snapshot in server.published]
+    assert shoes[:4] == [(2, 104), (2, 104), (3, 156), (1, 52)]     # starts on the setting, cycles on each post
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["3 decks", "1 deck"]
+
+
 def test_no_display_with_web_runs_from_the_page_alone_and_quits_from_it(monkeypatch, tmp_path):
     drawn = []
     monkeypatch.setattr(read.Hud, "draw", lambda *a, **kw: drawn.append(1))

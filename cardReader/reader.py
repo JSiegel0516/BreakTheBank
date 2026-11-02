@@ -9,9 +9,13 @@ everything in between, so it can be driven in a test without either:
     reader.rename_seat("P1", "Ann")                # from the browser page; "" restores P1
     reader.split_seat("P1"), reader.join_seat("P1") # from the browser page; keys Shift+1-5 toggle_split
     reader.set_count_system("uston_apc")           # from the browser page's dropdown: recounts the shoe
+    reader.cycle_decks()                           # from the browser page's deck button: 1 -> 2 -> 3 -> 1
 
 reader.count_system is the blackjack.COUNT_SYSTEMS id reader.count is made in.
 The running count printed with each placed card and logged in the CSV follows it.
+reader.decks is the decks in the shoe, from the tracker's config; the count's
+cards left start from 52 per deck. cycle_decks changes it and recounts the
+cards already seen.
 
 reader.seat_names maps seat ids to display names, loaded from and saved to the
 seats file and shared by every player count. They are for people only: events
@@ -30,7 +34,8 @@ tracker's cards with the frame and reloads the seat layout for the turned size.
 
 Events are printed as they happen and appended to the CSV log as
     time, frame, event, order, card, seat, running_count, x, y
-A duplicate event (a name already counted in an earlier round) and a removed
+A duplicate event (a card whose name already has every copy dealt, one per
+deck; see tracker.py for the placement and rename rules) and a removed
 event (a card hidden too long) are logged like the rest, with the card's seat
 where it was last seen; neither changes the count. Key X (rescan) logs one
 rescan row, with the running count after the rescan and no card, so
@@ -40,12 +45,14 @@ round's first card logs nothing, since there is nothing to read again.
 from __future__ import annotations
 
 import time
+from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from .blackjack import COUNT_SYSTEMS, DEFAULT_COUNT_SYSTEM, ShoeCount, is_pair, shoe_count
+from .blackjack import COUNT_SYSTEMS, DEFAULT_COUNT_SYSTEM, MAX_DECKS, ShoeCount, is_pair, shoe_count
 from .cards import Card, Detection, Event
 from .deck import BACK
 from .hud import SPLIT_KEYS, VIEWS, Hud, seat_title
@@ -80,8 +87,28 @@ class Reader:
     def layout(self) -> SeatLayout:
         return self.table.layout
 
+    @property
+    def decks(self) -> int:
+        """Decks in the shoe, held by the tracker's config (settings.DECKS at start-up)."""
+        return self.tracker.cfg.decks
+
     def _recount(self) -> ShoeCount:
-        return shoe_count(self.tracker.shoe_seen, unrevealed=self.tracker.shoe_unrevealed, system=self.count_system)
+        return shoe_count(self._counted_cards(), decks=self.decks, unrevealed=self.tracker.shoe_unrevealed,
+                          system=self.count_system)
+
+    def _counted_cards(self) -> list[str]:
+        """tracker.shoe_seen with each name kept at most `decks` times, its first copies.
+
+        After fewer decks are chosen mid-shoe the tracker keeps every copy it saw, so a
+        later return to more decks counts them again; only the count leaves out the extra
+        copies, as the Cards Left grid and the odds do (hud.DealtCards.seen)."""
+        copies: Counter = Counter()
+        counted = []
+        for name in self.tracker.shoe_seen:
+            copies[name] += 1
+            if copies[name] <= self.decks:
+                counted.append(name)
+        return counted
 
     def set_count_system(self, system: str) -> bool:
         """Count in another COUNT_SYSTEMS entry from now on, recounting the cards already seen this
@@ -96,6 +123,21 @@ class Reader:
         print(f"--- counting with {name}: running count {self.count.running:+d} ---")
         self.hud.flash(f"counting with {name}")
         return True
+
+    def cycle_decks(self) -> int:
+        """Use the next deck count, 1 -> 2 -> ... -> MAX_DECKS -> 1, from the browser page's button.
+
+        The cards already seen this shoe are recounted against the new shoe; nothing is cleared
+        (Shift+R starts a new shoe). Copies of a name beyond the new deck count stay in the
+        tracker but leave the count until more decks are chosen again. Prints and flashes the
+        new deck count. Returns it."""
+        decks = self.decks % MAX_DECKS + 1
+        self.tracker.cfg = replace(self.tracker.cfg, decks=decks)
+        self.count = self._recount()
+        shoe = f"{decks} deck{'s' if decks > 1 else ''}"
+        print(f"--- {shoe}: running count {self.count.running:+d}, {self.count.cards_left} cards left ---")
+        self.hud.flash(shoe)
+        return decks
 
     def set_layout(self, layout: SeatLayout):
         """Swap the seat layout everywhere it is held."""

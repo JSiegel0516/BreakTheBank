@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from cardReader.cards import Detection
-from cardReader.hud import Hud
+from cardReader.hud import GRID_RANKS, DealtCards, Hud
 from cardReader.reader import LOG_HEADER, Reader
 from cardReader.seats import SeatLayout
 from cardReader.tracker import CardTracker
@@ -35,6 +35,18 @@ def test_process_places_cards_logs_them_with_their_seat_and_counts(tmp_path):
     rows = list(csv.reader(io.StringIO(buf.getvalue())))
     assert len(rows) == 1 and len(rows[0]) == len(LOG_HEADER)
     assert rows[0][2:7] == ["placed", "1", "5H", "P1", "1"]
+
+
+@pytest.mark.parametrize("decks, cards_left", [(1, 51), (2, 103), (3, 155)])
+def test_reader_counts_cards_left_from_the_trackers_decks(tmp_path, decks, cards_left):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=decks)
+    r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
+    assert r.decks == decks and r.count.cards_left == 52 * decks
+    seat = r.layout.seats[1].polygon.mean(axis=0)
+    dets = [Detection("5H", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    assert r.count.cards_left == cards_left
 
 
 def test_rename_seat_trims_saves_and_an_empty_name_restores_the_default(tmp_path):
@@ -139,6 +151,47 @@ def test_switching_the_counting_system_recounts_the_shoe_and_the_log_follows(tmp
     rows = list(csv.reader(io.StringIO(buf.getvalue())))
     assert rows[-1][2:7] == ["placed", "2", "10S", "", "0"]       # +3 for the 5, -3 for the 10
     assert "count +0" in capsys.readouterr().out
+
+
+def test_cycling_the_decks_recounts_the_cards_seen_and_keeps_the_shoe(tmp_path, capsys):
+    r = make_reader(tmp_path)
+    seat = r.layout.seats[1].polygon.mean(axis=0)
+    five = [Detection("5H", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), five)
+    r.process(frame(), five)
+    shown = []
+    for _ in range(4):
+        decks = r.cycle_decks()
+        shown.append((decks, r.decks, r.tracker.cfg.decks, r.count.cards_left, r.count.decks, r.hud.pop_flash()))
+    assert shown == [(2, 2, 2, 103, 2, ("2 decks", 1.5)), (3, 3, 3, 155, 3, ("3 decks", 1.5)),
+                     (1, 1, 1, 51, 1, ("1 deck", 1.5)), (2, 2, 2, 103, 2, ("2 decks", 1.5))]
+    assert r.tracker.shoe_seen == ["5H"] and r.count.running == 1   # recounted, not cleared
+    assert "--- 2 decks: running count +1, 103 cards left ---" in capsys.readouterr().out
+
+
+def test_fewer_decks_mid_shoe_count_extra_copies_once_and_more_decks_bring_them_back(tmp_path):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=3)
+    r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
+    p1, p2 = r.layout.seats[1].polygon.mean(axis=0), r.layout.seats[2].polygon.mean(axis=0)
+    two_kings = [Detection("KH", 0.9, float(p1[0]), float(p1[1])), Detection("KH", 0.9, float(p2[0]), float(p2[1]))]
+    r.process(frame(), two_kings)
+    r.process(frame(), two_kings)
+    assert r.tracker.shoe_seen == ["KH", "KH"] and (r.count.cards_left, r.count.running) == (154, -2)
+
+    def agree():
+        """The count, the grid's copies left, and the odds' unseen cards tell the same story."""
+        dealt = DealtCards.from_tracker(r.tracker)
+        return r.count.cards_left == len(dealt.unseen()) == dealt.left(GRID_RANKS)
+
+    assert r.cycle_decks() == 1
+    assert (r.count.cards_left, r.count.running) == (51, -1) and agree()
+    r.process(frame(), two_kings)                                   # a later frame refreshes the count
+    assert (r.count.cards_left, r.count.running) == (51, -1) and agree()
+    assert r.tracker.shoe_seen == ["KH", "KH"]                      # the shoe's history is kept
+    assert r.cycle_decks() == 2
+    assert (r.count.cards_left, r.count.running) == (102, -2) and agree()
+    assert r.cycle_decks() == 3
+    assert (r.count.cards_left, r.count.running) == (154, -2) and agree()
 
 
 def test_an_unknown_counting_system_changes_nothing(tmp_path):

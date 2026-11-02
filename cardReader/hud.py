@@ -19,15 +19,19 @@
       chosen on the browser page), the true count as the headline, beside it
       what the count means and whom it favours (count_cue, one half per line:
       "high cards left" above "favours player"), then the running count and
-      cards left (e.g. 38/52). Then the current view:
+      cards left out of the shoe (e.g. 38/52, or 90/104 with two decks).
+      Then the current view:
         - Cards Left: the deck as a grid of mini cards (white, with the rank
           above the suit shape), one row per rank (2 to A) with its value in
           the counting system, shaded green above 0, red below, grey at 0, and
           darker the bigger the value, and one column per suit. A card counted this round has a
           yellow slash and border (pending), one counted in an earlier round is
           greyed and crossed off (locked), and a name reported as a duplicate
-          this shoe is ringed in magenta. Each row ends with how many of that rank are left, and
-          a line below gives the face-down cards never revealed.
+          this shoe is ringed in magenta. With two or three decks a card with
+          copies left is filled from the left by the share of its copies seen
+          (half for one of two), dim yellow if one was counted this round,
+          grey otherwise. Each row ends with how many copies of that rank are
+          left, and a line below gives the face-down cards never revealed.
         - Game: each seat under its display name (renamed from the browser
           page), its total, and its cards in placement order, each with its
           placement badge whatever key N is set to. A split seat (Shift+1 to
@@ -54,6 +58,7 @@ line sizes scale with the frame width so the overlay stays readable from 720p to
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 
 import cv2
@@ -77,6 +82,7 @@ AMBER = (0, 190, 255)
 BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
 DUPLICATE = (255, 60, 255)
+PENDING_FILL = (0, 140, 165)  # the seen share of a mini card with copies left, counted this round: a dim yellow
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 NAME_COLUMN = 0.40  # the Game view's seat names take at most this fraction of the sidebar width
 # the bottom bar
@@ -123,33 +129,49 @@ SUIT_SHAPES = {
 
 @dataclass
 class DealtCards:
-    """What the Cards Left grid shows. Names are face labels such as "10H"."""
-    locked: set[str] = field(default_factory=set)      # counted before this round began
-    pending: set[str] = field(default_factory=set)     # counted this round
+    """What the Cards Left grid shows. Names are face labels such as "10H".
+
+    locked and pending count copies per name; a set counts each of its names once."""
+    locked: Counter = field(default_factory=Counter)   # copies counted before this round began
+    pending: Counter = field(default_factory=Counter)  # copies counted this round
     duplicates: set[str] = field(default_factory=set)  # reported as a duplicate this shoe
     unrevealed: int = 0                                # face-down cards dealt and never turned over
+    decks: int = 1                                     # copies of each card in the shoe
+
+    def __post_init__(self):
+        self.locked, self.pending = Counter(self.locked), Counter(self.pending)
 
     @classmethod
     def from_tracker(cls, tracker) -> DealtCards:
         """The shoe's cards as a CardTracker holds them."""
-        return cls(tracker.shoe_locked, tracker.shoe_pending, tracker.shoe_duplicates, tracker.shoe_unrevealed)
+        return cls(tracker.locked_copies, tracker.pending_copies, tracker.shoe_duplicates, tracker.shoe_unrevealed,
+                   tracker.cfg.decks)
 
     def state(self, name: str) -> str:
-        """The grid state of one face name: "locked", "pending", or "unseen"."""
-        if name in self.locked:
-            return "locked"
-        if name in self.pending:
+        """The grid state of one face name: "pending" when a copy was counted this round, else
+        "locked" when one was counted earlier, else "unseen"."""
+        if self.pending[name]:
             return "pending"
+        if self.locked[name]:
+            return "locked"
         return "unseen"
 
+    def seen(self, name: str) -> int:
+        """Copies of the name counted this shoe, at most decks (fewer decks chosen mid-shoe)."""
+        return min(self.locked[name] + self.pending[name], self.decks)
+
+    def copies_left(self, name: str) -> int:
+        return self.decks - self.seen(name)
+
     def unseen(self) -> list[str]:
-        """Every face name the Cards Left grid shows as unseen, in grid order: the cards still to
-        come, the face-down cards never revealed among them."""
-        return [rank + suit for rank in GRID_RANKS for suit in SUITS if self.state(rank + suit) == "unseen"]
+        """Every copy the Cards Left grid shows as unseen, in grid order, a name once per copy left:
+        the cards still to come, the face-down cards never revealed among them."""
+        names = [rank + suit for rank in GRID_RANKS for suit in SUITS]
+        return [name for name in names for _ in range(self.copies_left(name))]
 
     def left(self, ranks) -> int:
-        """How many cards of these ranks are unseen, as the Cards Left grid counts them."""
-        return sum(self.state(rank + suit) == "unseen" for rank in ranks for suit in SUITS)
+        """How many copies of these ranks are unseen, as the Cards Left grid counts them."""
+        return sum(self.copies_left(rank + suit) for rank in ranks for suit in SUITS)
 
 
 def card_colour(label: str):
@@ -552,7 +574,7 @@ class Hud:
             self._text(side, self._fit(line, side.shape[1] - self.pad - cue_x, 0.55), (cue_x, line_y), 0.55, colour)
         y += 2 * self.pad + small_h
         col_w = (side.shape[1] - 2 * self.pad) // 2
-        parts = [("running", f"{count.running:+d}"), ("left", f"{count.cards_left}/{CARDS_PER_DECK}")]
+        parts = [("running", f"{count.running:+d}"), ("left", f"{count.cards_left}/{count.decks * CARDS_PER_DECK}")]
         for i, (title, value) in enumerate(parts):
             x = self.pad + i * col_w
             self._text(side, title, (x, y), 0.55, GREY)
@@ -593,13 +615,12 @@ class Hud:
             self._panel(side, self.pad, top, side_w - self.pad, top + row_h, alpha, tint)
             self._text(side, rank, (x + text_w - self._size(rank, scale)[0], text_y), scale, WHITE)
             self._text(side, signed(value), (x + rank_w, text_y), scale, tint)
-            dealt_here = 0
+            left = 0
             for i, suit in enumerate(SUITS):
                 name = rank + suit
-                state = dealt.state(name)
-                dealt_here += state != "unseen"
-                self._cell_mark(side, name, state, name in dealt.duplicates, cells_x + i * cell_w, top, cell_w, row_h)
-            left = len(SUITS) - dealt_here
+                left += dealt.copies_left(name)
+                self._cell_mark(side, name, dealt.state(name), name in dealt.duplicates, cells_x + i * cell_w, top,
+                                cell_w, row_h, seen=dealt.seen(name) / dealt.decks)
             self._text(side, str(left), (left_x, text_y), scale, WHITE if left else DIM)
 
         end = y + (len(GRID_RANKS) + 1) * row_h
@@ -607,23 +628,35 @@ class Hud:
                    (self.pad, end + row_h // 2 + th // 2), scale, AMBER if dealt.unrevealed else GREY)
         return end + row_h
 
-    def _cell_mark(self, side, name: str, state: str, duplicate: bool, x: int, y: int, w: int, h: int):
+    def _cell_mark(self, side, name: str, state: str, duplicate: bool, x: int, y: int, w: int, h: int,
+                   seen: float = 1.0):
         """The face name's mini card, centred in the w x h cell at (x, y) at a card's proportions:
         a white rounded card with its rank above its suit shape, red for hearts and diamonds and
         black for spades and clubs. state is a DealtCards.state: plain if unseen, a yellow slash
-        and border if pending, greyed and crossed off if locked. A duplicate is ringed in DUPLICATE."""
+        and border if pending, greyed and crossed off if locked. A duplicate is ringed in DUPLICATE.
+
+        seen: the share of the card's copies counted (a shoe of more than one deck). Below 1, that
+        share of the card is filled from the left in DIM (locked) or PENDING_FILL (pending), the
+        rank and suit keep their ink, and a locked card is not crossed off: copies are left."""
         inset = max(1, h // 10)
         card_h = h - 2 * inset
         card_w = max(1, min(w - 2 * inset, round(card_h * CARD_ASPECT)))
         x1, y1 = x + (w - card_w) // 2, y + inset
         x2, y2 = x1 + card_w, y1 + card_h
         corner = max(1, card_w // 5)
-        locked = state == "locked"
+        partial = state != "unseen" and seen < 1
+        locked = state == "locked" and not partial
         if locked:
             face, ink = DIM, GREY
         else:
             face, ink = WHITE, RED if suit_of(name) in RED_SUITS else BLACK
         self._rounded_rect(side, x1, y1, x2, y2, corner, face, -1)
+        if partial:
+            region = side[y1:y2 + 1, x1:x2 + 1]
+            filled = region.copy()
+            self._rounded_rect(filled, 0, 0, card_w, card_h, corner, DIM if state == "locked" else PENDING_FILL, -1)
+            seen_w = round(seen * card_w)
+            region[:, :seen_w] = filled[:, :seen_w]
         self._card_index(side, name, x1, y1, x2, y2, ink)
         if locked:
             cv2.line(side, (x1, y1), (x2, y2), WHITE, self.thick, cv2.LINE_AA)

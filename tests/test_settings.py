@@ -18,6 +18,12 @@ def test_shipped_settings_are_valid():
     settings.validate(settings)
 
 
+@pytest.mark.parametrize("decks", [1, 2, 3])
+def test_one_to_three_decks_are_valid_and_one_is_the_default(decks):
+    assert settings.DECKS == 1
+    settings.validate(shipped(DECKS=decks))
+
+
 def test_no_rotated_copies_is_valid():
     settings.validate(shipped(TRAIN_ROTATED_COPIES=()))
 
@@ -57,6 +63,11 @@ def test_no_rotated_copies_is_valid():
     ("WEB_PORT", "8765", "whole number from 1 to 65535"),
     ("COUNT_SYSTEM", "ko", "one of 'hi_lo', 'hi_opt_ii', 'uston_apc'"),
     ("COUNT_SYSTEM", ["hi_lo"], "one of 'hi_lo', 'hi_opt_ii', 'uston_apc'"),
+    ("DECKS", 0, "whole number from 1 to 3"),
+    ("DECKS", 4, "whole number from 1 to 3"),
+    ("DECKS", 1.5, "whole number from 1 to 3"),
+    ("DECKS", 2.0, "whole number from 1 to 3"),
+    ("DECKS", True, "whole number from 1 to 3"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:
