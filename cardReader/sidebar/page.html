@@ -589,11 +589,11 @@
     flashTimer = setTimeout(() => { flash = null; render(); }, message.seconds * 1000);
   }
 
-  // Confetti over the whole page for about 2.5 seconds, once per player hand that reaches
+  // Confetti over the whole page for about 3.25 seconds, once per player hand that reaches
   // blackjack. A hand is known by its seat, part, and the placement numbers of its cards, so a
   // heartbeat or another hand's change does not fire it again, but a new round's hand can.
   // Hands that leave the table are forgotten. Nothing is drawn under reduced motion.
-  const CONFETTI_MS = 2500;
+  const CONFETTI_MS = 3250;
   const CONFETTI_COLOURS = ["#ffdc00", "#ffffff", "#b0ffb0"];  // gold, white, mint
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const confetti = document.getElementById("confetti");
@@ -624,13 +624,13 @@
       confetti.width = innerWidth;
       confetti.height = innerHeight;
     }
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 208; i++) {
       const angle = Math.random() * 2 * Math.PI;
-      const speed = 0.3 + Math.random() * 0.9;   // pixels per millisecond
+      const speed = 0.4 + Math.random() * 1.2;   // pixels per millisecond
       particles.push({
         x: confetti.width / 2, y: confetti.height / 3,
         vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 0.4,
-        size: 6 + Math.random() * 6, spin: Math.random() * Math.PI, turn: (Math.random() - 0.5) * 0.02,
+        size: 8 + Math.random() * 8, spin: Math.random() * Math.PI, turn: (Math.random() - 0.5) * 0.02,
         colour: CONFETTI_COLOURS[i % CONFETTI_COLOURS.length],
       });
     }
