@@ -119,6 +119,42 @@ def test_removed_card_is_printed_and_logged_and_leaves_the_count(tmp_path, capsy
     assert rows[-1][2:7] == ["removed", "1", "KD", "P1", "-1"]
 
 
+def test_switching_the_counting_system_recounts_the_shoe_and_the_log_follows(tmp_path, capsys):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    seat = r.layout.seats[1].polygon.mean(axis=0)  # inside P1
+    five = [Detection("5H", 0.9, float(seat[0]), float(seat[1]))]
+    r.process(frame(), five)
+    r.process(frame(), five)
+    assert (r.count_system, r.count.running) == ("hi_lo", 1)
+
+    assert r.set_count_system("uston_apc")
+    assert (r.count_system, r.count.system, r.count.running) == ("uston_apc", "uston_apc", 3)
+    assert "--- counting with Uston APC: running count +3 ---" in capsys.readouterr().out
+    assert r.hud.pop_flash() == ("counting with Uston APC", 1.5)
+
+    ten = [Detection("5H", 0.9, float(seat[0]), float(seat[1])), Detection("10S", 0.9, float(seat[0]) + 60, 100)]
+    r.process(frame(), ten)
+    r.process(frame(), ten)
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert rows[-1][2:7] == ["placed", "2", "10S", "", "0"]       # +3 for the 5, -3 for the 10
+    assert "count +0" in capsys.readouterr().out
+
+
+def test_an_unknown_counting_system_changes_nothing(tmp_path):
+    r = make_reader(tmp_path)
+    assert not r.set_count_system("ko")
+    assert (r.count_system, r.count.system) == ("hi_lo", "hi_lo")
+    assert r.hud.pop_flash() == ("no counting system 'ko'", 2.5)
+
+
+def test_the_reader_starts_in_the_counting_system_it_is_given(tmp_path):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               count_system="hi_opt_ii")
+    assert (r.count_system, r.count.system) == ("hi_opt_ii", "hi_opt_ii")
+
+
 def test_face_down_card_takes_one_card_off_cards_left(tmp_path):
     r = make_reader(tmp_path)
     dets = [Detection("BACK", 0.9, 100, 100), Detection("5H", 0.9, 300, 100)]

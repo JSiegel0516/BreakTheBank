@@ -2,7 +2,7 @@
 
 A camera looks down at a blackjack table. The card reader, the component in this
 repository, recognises every card and reports them in the order they are placed,
-with each seat's hand and the Hi-Lo count.
+with each seat's hand and the card count (Hi-Lo, Hi-Opt II, or Uston APC).
 
 ```
 python train.py     # teach the detector what cards look like, using everything in data/raw
@@ -68,7 +68,7 @@ tracker       waits until a card is seen several frames in a row, ignores
    |          each new card the next placement number     cardReader/tracker.py
    v
 table         which seat each card is in, each seat's hand   cardReader/table.py
-   |          and total, the Hi-Lo count                    cardReader/blackjack.py
+   |          and total, the card count                     cardReader/blackjack.py
    v
 1:KH  2:7D  3:BACK  4:AS
 ```
@@ -80,7 +80,7 @@ A dealer's hole card turned face up keeps its number and is renamed from `BACK`
 to its face. The count's cards left also leaves out face-down cards that were
 never turned up. The true count divides by at least a quarter deck, so it stays
 sensible near the end of the deck. Details are in
-[docs/reading.md](docs/reading.md#seats-hands-and-the-hi-lo-count).
+[docs/reading.md](docs/reading.md#seats-hands-and-the-count).
 
 ## Repository structure
 
@@ -102,7 +102,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── cards.py              the Detection, Card and Event types
 │   ├── hud.py                the overlay read.py draws on the live feed
 │   ├── seats.py              seat layout by number of players, and the mouse zone editor
-│   ├── blackjack.py          hand totals and the Hi-Lo count
+│   ├── blackjack.py          hand totals and the counting systems
 │   ├── strategy.py           basic strategy: hit, stand, double, or split for a hand
 │   ├── sidebar/              the browser dashboard of read.py --web: snapshot, server, page.html
 │   ├── tracker.py            detections -> cards in placement order (thresholds: TrackerConfig)
@@ -127,7 +127,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_dataset.py       combining exports: class remap, splits, skips
 │   ├── test_synthetic.py     card art, geometry, composed images
 │   ├── test_autolabel.py     corner completion with a faked model
-│   ├── test_blackjack.py     hand totals, Hi-Lo, seat layout
+│   ├── test_blackjack.py     hand totals, counting systems, seat layout
 │   ├── test_strategy.py      every row of the basic strategy tables
 │   ├── test_sidebar.py       the dashboard's snapshot, server, and button actions
 │   ├── test_seats.py         zone editing, saving and loading

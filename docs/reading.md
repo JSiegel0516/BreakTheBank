@@ -11,7 +11,7 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 |---|---|
 | Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
 | Sidebar, top | tabs naming the two views, `CARDS LEFT` and `GAME`: the current one is filled in yellow, and `[V]` beside them is the key that switches (see below) |
-| Sidebar, under the tabs | the Hi-Lo true count in large type with whom it favours (`favours player`, `favours dealer`, `neutral`), then the running count and cards left (`38/52`) |
+| Sidebar, under the tabs | `TRUE COUNT` followed by the counting system's name (`Hi-Lo` unless [switched on the page](#browser-dashboard)), the true count in large type, beside it what the count means and whom it favours (`high cards left` over `favours player`, `low cards left` over `favours dealer`, or `even deck`), then the running count and cards left (`38/52`) |
 | Sidebar, below | the Cards Left view or the Game view (see below) |
 | Name on a card | that card's name: the rank followed by the suit's shape (`BACK` for a face-down card). `N` adds its placement number in a yellow badge before the name |
 | Grey name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
@@ -45,8 +45,11 @@ glance which cards have been dealt this shoe:
 | Grey, crossed off | locked: counted in an earlier round of this shoe |
 | Magenta ring | a `duplicate` was reported for this card this shoe (a misread, or a reshuffle without `Shift+R`) |
 
-Rows are tinted by Hi-Lo group and labelled with its value: green for 2 to 6
-(+1), grey for 7 to 9 (0), red for 10 to A (-1). The column on the right gives
+Rows are tinted and labelled with the rank's value in the counting system:
+green above 0, grey at 0, red below, and deeper for bigger values, so -3 is
+darker than -1. In Hi-Lo that is green for 2 to 6 (+1), grey for 7 to 9 (0),
+and red for 10 to A (-1). The legend lists each value with its ranks, so Hi-Opt
+II and Uston APC have longer legends. The column on the right gives
 how many cards of that rank are left. The line under the grid counts the
 face-down cards dealt and never turned over. `Shift+R` clears the grid. The
 grid assumes one 52-card deck. In the Cards Left view the grid comes first: when
@@ -55,7 +58,7 @@ the window is too small for both, the legend is left out.
 The **Game view** lists each seat's total (`17`, `soft 18`, `BLACKJACK`,
 `BUST (24)`, `9 +1 hidden`) and its cards in placement order. Cards outside
 every seat are listed as OTHER. A split seat has two lines, its name followed
-by `1` and `2` (see [Split hands](#seats-hands-and-the-hi-lo-count)). The video, the card tags, and the zone editor
+by `1` and `2` (see [Split hands](#seats-hands-and-the-count)). The video, the card tags, and the zone editor
 look the same in both views. A card hidden longer than `HIDDEN_SECONDS` (5 s)
 leaves its seat's hand in the Game view, and its total, but stays in the count
 and in the Cards Left grid (see [Rules the tracker assumes](#rules-the-tracker-assumes)).
@@ -76,7 +79,7 @@ view. The Cards Left view's colours are in the table above.
 | Amber outline | zones | the dealer's zone |
 | Light blue outline | zones | a player's zone |
 | Yellow tint | zones, edit mode | the zone you last clicked |
-| Green or red count | sidebar | a positive (favours the player) or negative (favours the dealer) count |
+| Green or red count | sidebar | a positive count (high cards left, favours the player) or a negative one (low cards left, favours the dealer) |
 
 ### Keys
 
@@ -85,7 +88,7 @@ The bottom bar lists the main keys; the legend lists them all.
 | Key | Action | Page button |
 |---|---|---|
 | `1` to `5` | number of players; loads your saved layout for that count, or the template | yes, one per count |
-| `Shift+1` to `Shift+5` | split the pair of P1 to P5 into two hands, or join a split seat back into one (see [Split hands](#seats-hands-and-the-hi-lo-count)). On a US keyboard these send `!` `@` `#` `$` `%` | yes, `split` or `join` on the player's line under Hands |
+| `Shift+1` to `Shift+5` | split the pair of P1 to P5 into two hands, or join a split seat back into one (see [Split hands](#seats-hands-and-the-count)). On a US keyboard these send `!` `@` `#` `$` `%` | yes, `split` or `join` on the player's line under Hands |
 | `E` | edit zones with the mouse; press `E` again to save them and lock | no |
 | `V` | switch the sidebar between the Cards Left view and the Game view; the tabs and a message name the new one | no |
 | `L` | show or hide the legend and key list | no |
@@ -190,17 +193,20 @@ video, so on a laptop screen it is cramped. With `--web` the window shows only
 the video, its tags and zones, and the bottom bar. The reader prints
 `dashboard at http://127.0.0.1:8765/`; open that address in any browser. The
 page holds what the sidebar did, with real fonts, and reflows to fit the browser
-window without scrolling sideways. It is drawn on casino-felt greens, so its
-colours are paler than the window's: red text is pink, green text is mint, and
-the Hi-Lo rows are tinted emerald (+1), grey-green (0), and brown (-1):
+window without scrolling sideways. A wide window puts Cards Left on the left and
+True Count, Hands, and Keys on the right. Under 900 pixels wide the sections
+stack in one column: True Count, Hands, Cards Left, Keys. It is drawn on
+casino-felt greens, so its colours are paler than the window's: red text is
+pink, green text is mint, and the grid rows are tinted emerald above 0,
+grey-green at 0, and brown below, deeper for bigger values:
 
 | On the page | Meaning |
 |---|---|
-| True count | the Hi-Lo true count in large type with whom it favours, then the running count and cards left (`39/52`) |
-| Cards Left | the largest part of the page: one row per rank with its Hi-Lo value, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
-| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button. Lines glow and gain tags as hands finish (see Outcome cues below) |
+| True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`high cards left · favours player`, `low cards left · favours dealer`, or `even deck`), then the running count, cards left (`39/52`), tens and aces left (`tens & aces 17/20`), and aces left (`aces 3/4`). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
+| Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
+| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A grey line under a hand gives its odds from the unseen cards (see Odds row below) |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | first a `model` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
+| Keys | first a `model` dropdown and a `count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
@@ -232,10 +238,27 @@ asks for reduced motion, the page skips the confetti and holds the dealer's
 amber outline still; the glows and tags stay. The cues are on the page only:
 the window, the terminal, and the `--log` CSV are unchanged.
 
+**Odds row.** A small grey line under a hand gives its chances as whole
+percentages. They are exact against the unseen cards: the deck minus every face
+seen this shoe. A face-down card never turned up is one of those unseen cards,
+so it counts as a random draw from them.
+
+| Hand | Odds row |
+|---|---|
+| Player with two or more cards, still playing | `next card: 21 8% · 20 8% · 19 8% · 18 6% · bust 60%`: the chance the next card brings the total to each of 21, 20, 19, and 18, or busts. A soft hand counts its ace as 1 when 11 would bust |
+| Empty player seat | `blackjack chance 5%`: the chance of a two-card blackjack, 2 × aces/N × tens/(N − 1) for N unseen cards |
+| Player with one card | `blackjack chance 31%`: the chance the second card makes a blackjack; 0% unless the card is an ace or a ten-value card |
+| Dealer with one card up and one face down | `blackjack chance 31%`: the chance the hole card makes a blackjack; 0% unless the up card is an ace or a ten-value card |
+
+There is no odds row for loose cards (OTHER), for a finished hand (blackjack,
+21, bust, or a win, push, or loss), for a hand with a face-down card, or for a
+dealer with no face-down card. Ten-value cards are 10, J, Q, and K. The odds
+are on the page only.
+
 **Folding the keys.** Click `KEYS` or its arrow, or press `K` on the page, to
 fold the Keys section to its title and give Hands the room. Do the same to
 open it again. The arrow points down when the section is open and right when
-it is folded. `K` does nothing while a seat name or the model dropdown has the
+it is folded. `K` does nothing while a seat name or a dropdown has the
 focus. The browser remembers the choice, so a reload keeps it. `K` is a page
 key only: the reader window does not use it.
 
@@ -273,6 +296,15 @@ the next start uses `--model` (or `MODEL_PATH`) again; promote a run with
 appears after the next switch. A path outside `models/`, a run without weights,
 or a file that fails to load is refused with a message, and the model running
 stays.
+
+**Switching counting systems.** The `count` dropdown lists Hi-Lo, Hi-Opt II,
+and Uston APC (see [Counting systems](#seats-hands-and-the-count)). The reader starts on
+`COUNT_SYSTEM` in `settings.py`. Choose another and the reader recounts every
+card seen this shoe in it at once. The terminal prints
+`--- counting with Uston APC: running count +3 ---`, and both the page and the
+window flash `counting with Uston APC`. The count title, the running and true
+counts, the grid's value column and shading, and the `--log` running count all
+follow. The window has no key for it. The next start uses `COUNT_SYSTEM` again.
 
 **Without a window.** `--no-display --web` runs the reader with no window: the
 page shows everything and its buttons drive it. Quit with the page's `Q` button,
@@ -419,7 +451,7 @@ sensor is saturated: those pixels are pure white and hold no trace of the
 index. Darkening them only gives grey. Move the light or angle the camera
 instead (see Placement above).
 
-### Seats, hands, and the Hi-Lo count
+### Seats, hands, and the count
 
 **Seats.** The layout is fixed and only depends on the number of players: the
 dealer strip across the top of the image and the player seats on an arc below
@@ -478,17 +510,33 @@ hand has its own total and hint.
   the seat id (`P1`), so `evaluate.py` scores the seat as one hand.
 - A split hand that receives another pair cannot split again.
 
-**Hi-Lo count.** Every face card adds to the running count once per shoe:
+**Counting systems.** Every face card adds its value to the running count once
+per shoe. The reader starts on `COUNT_SYSTEM` in `settings.py` (`"hi_lo"`,
+`"hi_opt_ii"`, or `"uston_apc"`), and the page's `count` dropdown switches it
+live. Each system sums to zero over a deck:
 
-| Cards | Value |
-|---|---|
-| 2, 3, 4, 5, 6 | +1 |
-| 7, 8, 9 | 0 |
-| 10, J, Q, K, A | -1 |
+| Cards | Hi-Lo | Hi-Opt II | Uston APC |
+|---|---|---|---|
+| 2 | +1 | +1 | +1 |
+| 3 | +1 | +1 | +2 |
+| 4 | +1 | +2 | +2 |
+| 5 | +1 | +2 | +3 |
+| 6 | +1 | +1 | +2 |
+| 7 | 0 | +1 | +2 |
+| 8 | 0 | 0 | +1 |
+| 9 | 0 | 0 | -1 |
+| 10, J, Q, K | -1 | -2 | -3 |
+| A | -1 | 0 | 0 |
 
-The true count is the running count divided by the decks still to be dealt, so a
-running count of +4 with half the deck left is a true count of +8. A positive
-true count means the remaining cards are rich in tens and aces.
+The true count is the running count divided by the decks still to be dealt
+(Hi-Lo, Hi-Opt II) or the half-decks (Uston APC). In Hi-Lo a running count of
++4 with half the deck left is a true count of +8; in Uston APC the same +4 is a
+true count of +4, since half a deck is one half-deck. Hi-Opt II and Uston APC
+count aces as 0, and the reader does not adjust for them; the page shows the
+aces left beside the count instead. A positive
+true count means the remaining cards are rich in high cards (tens and aces),
+which favours the player. A negative one means low cards are left, which
+favours the dealer.
 
 - **Cards left** is 52 minus the face cards seen, minus the face-down cards that
   were dealt and never turned up (swept away face down, for example). Those are
@@ -497,9 +545,10 @@ true count means the remaining cards are rich in tens and aces.
   "never turned up". A face-down card still on the table when you press `R`
   (new round, lowercase r) gets a new number, but is not taken off cards left a
   second time. `Shift+R` (new shoe) resets all of this.
-- **Decks left never drops below a quarter deck** (13 cards). Near the end of the
-  deck, dividing by a sliver of a deck would make the true count huge: with one
-  card left and a running count of -1 it reads -4, not -52.
+- **Decks left never drops below a quarter deck** (13 cards, which is half a
+  half-deck for Uston APC). Near the end of the deck, dividing by a sliver of a
+  deck would make the true count huge: in Hi-Lo, with one card left and a
+  running count of -1 it reads -4, not -52.
 
 ### Basic strategy hints
 
@@ -653,6 +702,8 @@ round 1 #3: expected KS, read KH (wrong suit)
 - Cards are matched by round and number. A missed card shifts the numbers after
   it, so the rest of that round shows as wrong names.
 - Use one shoe per log. `Shift+R` resets the logged running count.
+- The expected running count is Hi-Lo. The log records the running count in
+  the system the reader counts in, so record a run to score with Hi-Lo.
 - The exit code is 1 only when a file is missing or has a bad row, not when cards disagree.
 
 ## Tuning the reader
