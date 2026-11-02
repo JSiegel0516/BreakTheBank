@@ -228,7 +228,7 @@ quitting cannot be undone from the page. Zone editing (`E`) and saving frames
 (`S`) need the window.
 
 **Outcome cues.** The Hands lines show how each hand stands. A player
-blackjack sets off confetti over the whole page for about 2.5 seconds, once
+blackjack sets off confetti over the whole page for about 3.25 seconds, once
 per hand, and its line glows gold. A player 21, or a hand that beat the dealer,
 gets a gold outline and a gold total; a win also gets a `WIN` tag. A bust has a
 red total and a red glow. A hand that lost turns grey with a `LOST` tag, and a
