@@ -2,17 +2,20 @@ import pytest
 
 from cardReader.blackjack import (
     COUNT_SYSTEMS,
+    dealer_final_odds,
     dealer_finished,
     dealer_odds,
     describe,
     hand_value,
     hi_lo,
+    insurance,
     is_blackjack,
     is_pair,
     milestone,
     outcome,
     player_odds,
     shoe_count,
+    stand_odds,
 )
 from cardReader.seats import DEALER, MAX_PLAYERS, SeatLayout
 
@@ -135,6 +138,7 @@ def test_face_down_cards_never_revealed_leave_the_deck_but_not_the_count():
 
 
 GRID_ORDER = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+DECK = [rank + suit for suit in "SHDC" for rank in GRID_ORDER]
 
 
 @pytest.mark.parametrize(("system", "name", "values"), [
@@ -224,6 +228,108 @@ def test_the_dealer_hole_card_makes_blackjack_by_its_up_card(up, chance):
 @pytest.mark.parametrize("labels", [["AS"], ["AS", "KH"], ["BACK"], ["BACK", "BACK"], ["AS", "BACK", "5H"], []])
 def test_a_dealer_without_one_up_card_and_one_hole_card_has_no_odds(labels):
     assert dealer_odds(labels, ["KC", "AH"]) is None
+
+
+def test_the_dealer_with_its_hole_card_down_gets_blackjack_apart_from_its_other_21s():
+    # hole K: blackjack. Hole 5: soft 16 draws; K then 5 makes hard 21, 5 makes soft 21
+    assert dealer_final_odds(["AS", "BACK"], ["KC", "5D", "5H"]) == {
+        "blackjack": 33, "21": 67, "20": 0, "19": 0, "18": 0, "17": 0, "bust": 0}
+    # hole K: blackjack. Hole 6: soft 17 stands. Hole 5: soft 16 draws to a bust either way
+    assert dealer_final_odds(["BACK", "AS"], ["KC", "6D", "5H"]) == {
+        "blackjack": 33, "21": 0, "20": 0, "19": 0, "18": 0, "17": 33, "bust": 33}
+
+
+def test_the_dealer_over_a_fresh_deck_shows_an_ace():
+    unseen = [card for card in DECK if card != "AS"]
+    assert dealer_final_odds(["AS", "BACK"], unseen) == {
+        "blackjack": 31, "21": 5, "20": 13, "19": 13, "18": 13, "17": 13, "bust": 12}
+
+
+def test_a_dealer_with_two_cards_up_under_17_keeps_drawing():
+    # 15 + 2: 17. + 6: 21. + K: bust. + A: 16 draws again from 2, 6, K: 18 or bust
+    odds = dealer_final_odds(["10S", "5H"], ["2C", "6D", "AH", "KD"])
+    assert odds == {"21": 25, "20": 0, "19": 0, "18": 8, "17": 25, "bust": 42}
+    assert 99 <= sum(odds.values()) <= 101
+
+
+def test_the_dealer_stands_on_a_soft_17_it_draws_to():
+    # A2 + 4: soft 17 stands. + 5: soft 18. + 9: hard 12 draws 4 then 5 (21) or 5 (17)
+    assert dealer_final_odds(["AS", "2H"], ["4C", "9D", "5S"]) == {
+        "21": 17, "20": 0, "19": 0, "18": 33, "17": 50, "bust": 0}
+
+
+def test_a_dealer_with_one_card_up_and_no_hole_card_draws_its_second_card():
+    # 6 + K: 16 draws A (17) or 5 (21). + A: soft 17. + 5: 11 draws K (21) or A (12, then K busts)
+    assert dealer_final_odds(["6S"], ["KC", "AH", "5D"]) == {
+        "21": 33, "20": 0, "19": 0, "18": 0, "17": 50, "bust": 17}
+
+
+@pytest.mark.parametrize("labels", [["10S", "7H"], ["AS", "6H"], ["10S", "6H", "KD"], ["BACK"], ["BACK", "BACK"], []])
+def test_a_finished_dealer_or_one_with_no_card_up_has_no_final_odds(labels):
+    assert dealer_final_odds(labels, ["KC", "AH", "5D"]) is None
+
+
+@pytest.mark.parametrize(("dealer", "unseen"), [
+    (["2S", "3H"], ["2C"]),                                    # 7 draws the last card and still needs more
+    (["AS", "2H"], ["4C", "9D"]),                              # a 4 stands on soft 17, but a 9 makes 12, then 16
+])
+def test_a_dealer_the_unseen_cards_can_run_out_on_has_no_final_odds_or_stand_odds(dealer, unseen):
+    assert dealer_final_odds(dealer, unseen) is None
+    assert stand_odds(["KS", "8H"], dealer, unseen) is None
+
+
+def test_no_unseen_cards_means_no_final_odds_stand_odds_or_insurance():
+    assert dealer_final_odds(["AS", "BACK"], []) is None
+    assert stand_odds(["10S", "8H"], ["6C"], []) is None
+    assert insurance(["AS", "BACK"], []) is None
+
+
+@pytest.mark.parametrize(("player", "dealer", "unseen", "odds"), [
+    (["10S", "8H"], ["AS", "BACK"], ["KC", "6D", "5H"], {"win": 67, "push": 0, "lose": 33}),     # blackjack loses
+    (["10S", "8H"], ["10C", "5H"], ["2C", "6D", "AH", "KD"], {"win": 67, "push": 8, "lose": 25}),
+    (["10S", "8H"], ["6S"], ["KC", "AH", "5D"], {"win": 67, "push": 0, "lose": 33}),
+    (["10S", "7H"], ["6S"], ["KC", "AH", "5D"], {"win": 17, "push": 50, "lose": 33}),
+    (["10S", "6H"], ["6S"], ["KC", "AH", "5D"], {"win": 17, "push": 0, "lose": 83}),             # only a bust wins
+])
+def test_a_live_hand_gets_its_chances_if_it_stands_now(player, dealer, unseen, odds):
+    assert stand_odds(player, dealer, unseen) == odds
+
+
+@pytest.mark.parametrize(("player", "dealer"), [
+    (["10S", "8H"], ["10C", "9D"]),                            # the dealer is finished: the hand lost
+    (["10S", "8H"], ["BACK"]),                                 # no dealer card up
+    (["10S", "8H"], []),
+    (["10S"], ["6C"]),                                         # one card
+    ([], ["6C"]),
+    (["10S", "BACK"], ["6C"]),                                 # a face-down card
+    (["10S", "5H", "6D"], ["6C"]),                             # 21
+    (["10S", "5H", "9D"], ["6C"]),                             # bust
+])
+def test_a_hand_that_cannot_stand_now_has_no_stand_odds(player, dealer):
+    assert stand_odds(player, dealer, ["KC", "AH", "5D"]) is None
+
+
+@pytest.mark.parametrize(("unseen", "call"), [
+    (["KC", "QD", "5H"], "take"),                              # two thirds ten-value
+    (["KC", "5H", "6D"], "skip"),                              # exactly one third: break-even
+    (["KC", "5H", "6D", "7S"], "skip"),
+])
+def test_insurance_pays_when_more_than_a_third_of_the_unseen_cards_are_ten_value(unseen, call):
+    assert insurance(["AS", "BACK"], unseen) == call
+    assert insurance(["BACK", "AH"], unseen) == call
+
+
+def test_insurance_over_a_fresh_deck_is_skipped_until_low_cards_leave():
+    unseen = [card for card in DECK if card != "AS"]           # 16 tens in 51
+    assert insurance(["AS", "BACK"], unseen) == "skip"
+    for low in ["2S", "3S", "4S", "5S"]:                       # 16 tens in 47
+        unseen.remove(low)
+    assert insurance(["AS", "BACK"], unseen) == "take"
+
+
+@pytest.mark.parametrize("dealer", [["KS", "BACK"], ["AS"], ["AS", "KH"], ["AS", "BACK", "5H"], ["BACK", "BACK"], []])
+def test_insurance_is_offered_only_for_an_ace_over_a_hole_card(dealer):
+    assert insurance(dealer, ["KC", "QD", "5H"]) is None
 
 
 def test_an_unknown_counting_system_is_refused():
