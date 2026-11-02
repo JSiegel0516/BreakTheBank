@@ -70,6 +70,8 @@ PREPROCESS_CLAHE_TILES = 8       # "clahe": the frame is split into this many ti
 # Table.
 PLAYERS = 5                # player seats when nothing is saved yet; change live with keys 1-5 in read.py
 SEATS_FILE = "data/seats.json"  # zones edited with the mouse (key E in read.py), one layout per player count
+COUNT_SYSTEM = "hi_lo"     # card count read.py starts with: "hi_lo", "hi_opt_ii", or "uston_apc" (Uston APC).
+                           # The browser page's dropdown switches it live.
 
 
 def _is_whole(value) -> bool:
@@ -84,7 +86,8 @@ def validate(config) -> None:
     """Check the values in a settings module: this one, or any object with the same names.
 
     Raises ValueError listing every invalid value with its allowed range."""
-    from cardReader.dataset import ROTATIONS  # imported here so settings.py stays cheap to import
+    from cardReader.blackjack import COUNT_SYSTEMS  # imported here so settings.py stays cheap to import
+    from cardReader.dataset import ROTATIONS
     from cardReader.preprocess import MODES
     from cardReader.seats import MAX_PLAYERS
 
@@ -110,6 +113,8 @@ def validate(config) -> None:
         (("WEB_PORT",), lambda v: _is_whole(v) and 1 <= v <= 65535, "a whole number from 1 to 65535"),
         (("CAMERA_ROTATION",),lambda v: _is_whole(v) and v in (0, 90, 180, 270), "one of 0, 90, 180, 270"),
         (("PREPROCESS",), lambda v: v in MODES, "one of " + ", ".join(repr(mode) for mode in MODES)),
+        (("COUNT_SYSTEM",), lambda v: isinstance(v, str) and v in COUNT_SYSTEMS,
+         "one of " + ", ".join(repr(system) for system in COUNT_SYSTEMS)),
         (("PREPROCESS_BRIGHTEN_GAMMA", "PREPROCESS_DARKEN_GAMMA", "PREPROCESS_CLAHE_CLIP"),
          lambda v: _is_number(v) and v > 0, "a number above 0"),
         (("PREPROCESS_DARK_BELOW", "PREPROCESS_BRIGHT_ABOVE"),

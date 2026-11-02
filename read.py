@@ -9,7 +9,7 @@
     python read.py --web --web-host 0.0.0.0          # ... which a phone on the same network can open too
     python read.py --no-display --web                # no window: the page shows everything and has the buttons
 
-Per frame:  camera -> rotate -> preprocess -> detector -> tracker -> table (seats, hands, Hi-Lo count) -> overlay
+Per frame:  camera -> rotate -> preprocess -> detector -> tracker -> table (seats, hands, card count) -> overlay
 
 Every event (placed, hidden, returned, removed, renamed, duplicate, round over) is printed
 as it happens, and appended to --log as CSV if given. Without a trained model it runs
@@ -24,7 +24,8 @@ the Game view, each seat's hand.
 
 With --web the window shows the video and the bottom bar only, and a page served
 on WEB_PORT in settings.py (cardReader/sidebar/) shows the count, the Cards Left
-grid, every seat's hand with a basic strategy hint, the keys, and the status. It
+grid, every seat's hand with a basic strategy hint and a row of odds from the
+unseen cards (blackjack.player_odds, dealer_odds), the keys, and the status. It
 updates as the reader runs. Most keys also have a button on the page (all but E, V,
 L, and S; Shift+1-5 has its buttons on the hands), which does exactly what the key
 does. Clicking a seat's name on the page renames it (up to 16 characters; empty
@@ -34,6 +35,11 @@ dropdown lists every models/<run>/weights/best.pt (provenance.available_models) 
 its status line names the model running. Choosing one loads it in place of the
 current model (the video pauses for the load), prints and flashes its name, and
 keeps the tracker's cards; from capture mode it starts detection.
+
+The count starts in COUNT_SYSTEM from settings.py (Hi-Lo, Hi-Opt II, or Uston APC).
+The page's counting-system dropdown, beside the model dropdown, switches it and
+recounts the cards already seen this shoe. The page, the window, the terminal,
+and --log's running_count column all follow it; there is no key for it.
 
 A player holding a pair can split it: the split button on the page's hand, or
 Shift+1-5 in the window for P1-P5. The seat then shows two hands, its name followed
@@ -100,6 +106,7 @@ import cv2
 import numpy as np
 
 import settings
+from cardReader.blackjack import COUNT_SYSTEMS
 from cardReader.camera import Camera, parse_source, rotate, snapshot_cameras
 from cardReader.hud import DealtCards, Hud
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
@@ -270,9 +277,9 @@ def _project_path(path: Path) -> str:
 def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetector) -> list[int]:
     """The key codes for the page's button actions, in order, to be pressed one per frame.
 
-    rename_seat (with "seat" and "name"), split_seat and join_seat (with "seat"), and
-    switch_model (with "path") are done straight away and press no key. An unknown action
-    name is printed and skipped."""
+    rename_seat (with "seat" and "name"), split_seat and join_seat (with "seat"),
+    switch_model (with "path"), and switch_count (with "system", a COUNT_SYSTEMS id) are
+    done straight away and press no key. An unknown action name is printed and skipped."""
     keys = []
     for action in actions:
         name = action["action"]
@@ -286,6 +293,8 @@ def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetecto
             reader.join_seat(action.get("seat", ""))
         elif name == "switch_model":
             models.switch(action.get("path", ""), reader.hud)
+        elif name == "switch_count":
+            reader.set_count_system(action.get("system", ""))
         else:
             print(f"ignored unknown page action {name!r}")
     return keys
@@ -384,7 +393,7 @@ def main():
         tracker = CardTracker(TrackerConfig.from_settings(settings, view_w))
         hud = Hud()
         reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log,
-                        preprocess=args.preprocess, rotation=rotation)
+                        preprocess=args.preprocess, rotation=rotation, count_system=settings.COUNT_SYSTEM)
         preprocess_config = PreprocessConfig.from_settings(settings)
         models = LiveDetector(load, settings.PROJECT_ROOT / settings.MODELS_DIR, detector,
                               args.model if detector else None)
@@ -476,7 +485,8 @@ def main():
             cv2.destroyAllWindows()
             count = reader.count
             print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
-            print(f"running count {count.running:+d}, true count {count.true:+.1f}, {count.cards_left} cards left")
+            print(f"{COUNT_SYSTEMS[count.system].name} running count {count.running:+d}, "
+                  f"true count {count.true:+.1f}, {count.cards_left} cards left")
             print(f"average time per frame: {timer.summary()}")
             run_seconds = time.perf_counter() - run_start
             note = fps_note(frames_processed / run_seconds, settings.FPS) if frames_processed else ""

@@ -1,4 +1,4 @@
-"""Blackjack rules on top of the card labels: hand totals and the Hi-Lo count.
+"""Blackjack rules on top of the card labels: hand totals and the card count.
 
 Hand totals: aces count 11 unless that busts, then 1. Face-down cards (BACK)
 are left out of the total and reported as hidden.
@@ -9,15 +9,25 @@ once the dealer is finished: no card face down and a total of DEALER_STANDS_AT
 or more (the dealer stands on soft 17), or bust. A blackjack beats a finished
 dealer unless the dealer also has one, which is a push.
 
-Hi-Lo: every card seen adds to the running count, 2-6 as +1, 7-9 as 0, and
-10-A as -1. The true count divides it by the decks still to be dealt. Cards
+Counting: every card seen adds its value in the chosen system (COUNT_SYSTEMS)
+to the running count. Hi-Lo counts 2-6 as +1, 7-9 as 0, and 10-A as -1;
+Hi-Opt II and Uston APC give some ranks two or three points. Each system sums
+to zero over a deck. The true count divides the running count by the decks
+still to be dealt (Hi-Lo, Hi-Opt II) or the half-decks (Uston APC). Cards
 left is the deck minus the face cards seen and minus the face-down cards that
 were dealt and never turned over: those are gone from the deck, but nobody saw
-what they were, so they do not change the running count. Decks left is cards
-left / 52, but never less than MIN_DECKS_LEFT (a quarter deck, 13 cards), so
-the true count does not blow up as the last few cards come out. A positive
-true count means the cards left are rich in tens and aces, which favours the
-player.
+what they were, so they do not change the running count. The divisor never
+counts fewer cards than MIN_DECKS_LEFT of a deck (a quarter deck, 13 cards,
+which is half a half-deck), so the true count does not blow up as the last
+few cards come out. A positive
+true count means the cards left are rich in high cards (tens and aces), which
+favours the player; a negative one means low cards are left, which favours the
+dealer.
+
+Odds: player_odds and dealer_odds give a hand's chances as whole percentages,
+exact against the unseen cards (the deck minus the faces seen). A face-down
+card never revealed is one of those unseen cards, so it counts as a random draw
+from them.
 """
 from __future__ import annotations
 
@@ -26,6 +36,7 @@ from dataclasses import dataclass
 from .deck import BACK, rank_of
 
 CARDS_PER_DECK = 52
+TEN_RANKS = ("10", "J", "Q", "K")  # the ranks worth ten
 MIN_DECKS_LEFT = 0.25  # floor for the true count's divisor, so a few cards left cannot make it huge
 DEALER_STANDS_AT = 17  # soft 17 included
 
@@ -121,31 +132,115 @@ def describe(labels: list[str]) -> str:
     return text
 
 
+@dataclass(frozen=True)
+class CountSystem:
+    name: str               # display name, e.g. "Hi-Opt II"
+    values: dict[str, int]  # rank -> what one card of it adds to the running count
+    unit_cards: int         # cards in one unit of the true count's divisor: a deck or a half-deck
+
+    def value(self, label: str) -> int:
+        """What one card adds to the running count. BACK is 0."""
+        return 0 if label == BACK else self.values[rank_of(label)]
+
+
+def _by_rank(groups: dict[str, int]) -> dict[str, int]:
+    """Values given for space-separated ranks, such as {"2 3": 1}, as one entry per rank."""
+    return {rank: value for ranks, value in groups.items() for rank in ranks.split()}
+
+
+DEFAULT_COUNT_SYSTEM = "hi_lo"
+COUNT_SYSTEMS = {  # system id -> system, in the order the page's dropdown lists them
+    "hi_lo": CountSystem("Hi-Lo", _by_rank({"2 3 4 5 6": 1, "7 8 9": 0, "10 J Q K A": -1}), CARDS_PER_DECK),
+    "hi_opt_ii": CountSystem("Hi-Opt II", _by_rank({"2 3 6 7": 1, "4 5": 2, "8 9 A": 0, "10 J Q K": -2}),
+                             CARDS_PER_DECK),
+    "uston_apc": CountSystem("Uston APC",
+                             _by_rank({"2 8": 1, "3 4 6 7": 2, "5": 3, "9": -1, "10 J Q K": -3, "A": 0}),
+                             CARDS_PER_DECK // 2),
+}
+
+
 def hi_lo(label: str) -> int:
     """Hi-Lo value of one card: +1 for 2-6, 0 for 7-9, -1 for 10, J, Q, K, A. BACK is 0."""
-    if label == BACK:
-        return 0
-    rank = rank_of(label)
-    if rank in ("2", "3", "4", "5", "6"):
-        return 1
-    if rank in ("7", "8", "9"):
-        return 0
-    return -1
+    return COUNT_SYSTEMS["hi_lo"].value(label)
 
 
 @dataclass
 class ShoeCount:
-    running: int      # sum of Hi-Lo values of every card seen this shoe
-    true: float       # running count per deck still to be dealt (at least MIN_DECKS_LEFT)
+    running: int      # sum of the system's values of every card seen this shoe
+    true: float       # running count per deck (half-deck for Uston APC) still to be dealt, floored as above
     cards_left: int   # cards not yet dealt: the deck minus faces seen and face-down cards never revealed
+    system: str = DEFAULT_COUNT_SYSTEM  # the COUNT_SYSTEMS id it was counted in
 
 
-def shoe_count(seen: list[str], decks: int = 1, unrevealed: int = 0) -> ShoeCount:
-    """Count for the face cards seen since the last shuffle.
+def shoe_count(seen: list[str], decks: int = 1, unrevealed: int = 0,
+               system: str = DEFAULT_COUNT_SYSTEM) -> ShoeCount:
+    """Count for the face cards seen since the last shuffle, in the COUNT_SYSTEMS entry `system`.
 
     unrevealed: face-down cards dealt this shoe and never turned over. They
-    leave the deck, so they lower cards_left, but add nothing to the running count."""
-    running = sum(hi_lo(label) for label in seen)
+    leave the deck, so they lower cards_left, but add nothing to the running count.
+    The true count divides by the system's units left (decks, or half-decks for Uston APC),
+    counting never fewer cards than MIN_DECKS_LEFT of a deck. Raises KeyError for an unknown system."""
+    counting = COUNT_SYSTEMS[system]
+    running = sum(counting.value(label) for label in seen)
     cards_left = max(decks * CARDS_PER_DECK - len(seen) - unrevealed, 0)
-    decks_left = max(cards_left / CARDS_PER_DECK, MIN_DECKS_LEFT)
-    return ShoeCount(running, running / decks_left, cards_left)
+    divisor_cards = max(cards_left, MIN_DECKS_LEFT * CARDS_PER_DECK)
+    units_left = divisor_cards / counting.unit_cards
+    return ShoeCount(running, running / units_left, cards_left, system)
+
+
+NEXT_CARD_TOTALS = (21, 20, 19, 18)  # the totals a live hand's odds give a chance for, then bust
+
+
+def _percent(part: int | float, whole: int | float) -> int:
+    return round(100 * part / whole)
+
+
+def _completes_blackjack(label: str, unseen: list[str]) -> int:
+    """The chance, as a whole percentage, that one card drawn from unseen makes a blackjack with label:
+    a ten-value card for an ace, an ace for a ten-value card, else 0."""
+    rank = rank_of(label)
+    if rank == "A":
+        wanted = sum(rank_of(card) in TEN_RANKS for card in unseen)
+    elif rank in TEN_RANKS:
+        wanted = sum(rank_of(card) == "A" for card in unseen)
+    else:
+        wanted = 0
+    return _percent(wanted, len(unseen))
+
+
+def player_odds(labels: list[str], dealer_labels: list[str], unseen: list[str]) -> dict[str, int] | None:
+    """A player hand's chances from the unseen card labels, as whole percentages.
+
+    No cards: {"blackjack": p}, the chance of a two-card blackjack, 2 * aces/N * tens/(N - 1).
+    One face-up card: {"blackjack": p}, the chance the next card completes a blackjack.
+    Two or more face-up cards, still live: the chance the next card makes each NEXT_CARD_TOTALS
+    total and the chance it busts, e.g. {"21": 8, "20": 8, "19": 8, "18": 8, "bust": 31};
+    totals follow hand_value, so soft hands count an ace as 1 once 11 busts.
+    None when nothing is unseen, a card is face down, or the hand is finished: any outcome
+    against dealer_labels (bust, blackjack, twenty-one, win, push, lose), which every
+    two-card-or-more hand of 21 or over has."""
+    if not unseen or BACK in labels or outcome(labels, dealer_labels) is not None:
+        return None
+    if not labels:
+        if len(unseen) < 2:
+            return {"blackjack": 0}
+        aces = sum(rank_of(card) == "A" for card in unseen)
+        tens = sum(rank_of(card) in TEN_RANKS for card in unseen)
+        return {"blackjack": _percent(2 * aces * tens, len(unseen) * (len(unseen) - 1))}
+    if len(labels) == 1:
+        return {"blackjack": _completes_blackjack(labels[0], unseen)}
+    totals = [hand_value(labels + [card])[0] for card in unseen]
+    odds = {str(total): _percent(totals.count(total), len(totals)) for total in NEXT_CARD_TOTALS}
+    odds["bust"] = _percent(sum(total > 21 for total in totals), len(totals))
+    return odds
+
+
+def dealer_odds(labels: list[str], unseen: list[str]) -> dict[str, int] | None:
+    """{"blackjack": p}, the chance as a whole percentage that a dealer holding one face-up card
+    and one face-down hole card has blackjack: the hole card drawn from the unseen card labels
+    completes it (0 unless the up card is an ace or ten-value). None for any other dealer hand,
+    such as no face-down card, or when nothing is unseen."""
+    faces = [label for label in labels if label != BACK]
+    if not unseen or len(labels) != 2 or len(faces) != 1:
+        return None
+    return {"blackjack": _completes_blackjack(faces[0], unseen)}

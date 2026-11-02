@@ -4,20 +4,24 @@ import cv2
 import numpy as np
 import pytest
 
-from cardReader.blackjack import shoe_count
+from cardReader.blackjack import COUNT_SYSTEMS, shoe_count
 from cardReader.cards import Card, Detection
 from cardReader.hud import (
     BADGE,
+    GREEN,
     GREY,
     KEY_LIST,
     KEYS,
     RED,
+    SHADE_ALPHA,
     SIDEBAR,
     WHITE,
     DealtCards,
     Hud,
     count_cue,
     status_text,
+    value_legend,
+    value_shade,
     view_tabs,
 )
 from cardReader.seats import SeatLayout, ZoneEditor
@@ -199,10 +203,59 @@ def test_no_signal_message_is_drawn_over_the_video_and_c_is_listed(W, H):
     assert ("C", "reconnect camera") in KEY_LIST
 
 
-def test_count_cue_follows_the_sign_of_the_true_count():
-    assert count_cue(1.5)[0] == "favours player"
-    assert count_cue(-0.2)[0] == "favours dealer"
-    assert count_cue(0.0)[0] == "neutral"
+def test_count_cue_says_which_cards_are_left_and_whom_that_favours():
+    assert count_cue(1.5) == ("high cards left \u00b7 favours player", GREEN)
+    assert count_cue(-0.2) == ("low cards left \u00b7 favours dealer", RED)
+    assert count_cue(0.0) == ("even deck", WHITE)
+
+
+def test_row_shading_darkens_with_the_size_of_the_value():
+    assert value_shade(0) == (GREY, SHADE_ALPHA)
+    assert [value_shade(value)[0] for value in (1, 3, -1, -3)] == [GREEN, GREEN, RED, RED]
+    alphas = [value_shade(value)[1] for value in (1, 2, 3)]
+    assert alphas[0] == SHADE_ALPHA and alphas[0] < alphas[1] < alphas[2]
+    assert value_shade(-3)[1] > value_shade(-1)[1]
+
+
+def test_the_legend_names_each_value_and_its_ranks():
+    assert [text for _, _, text in value_legend(COUNT_SYSTEMS["hi_lo"])] == ["2 to 6: +1", "7 to 9: 0", "10 to A: -1"]
+    assert [text for _, _, text in value_legend(COUNT_SYSTEMS["hi_opt_ii"])] == \
+        ["4, 5: +2", "2, 3, 6, 7: +1", "8, 9, A: 0", "10 to K: -2"]
+    assert [(value, text) for _, value, text in value_legend(COUNT_SYSTEMS["uston_apc"])] == \
+        [(3, "5: +3"), (2, "3, 4, 6, 7: +2"), (1, "2, 8: +1"), (0, "A: 0"), (-1, "9: -1"), (-3, "10 to K: -3")]
+
+
+def test_the_window_names_the_counting_system_and_shows_its_values(monkeypatch):
+    W, H = 1280, 720
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    layout = SeatLayout(3, W, H)
+    Hud().draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, layout, shoe_count([]))
+    assert "Hi-Lo" in texts and "+3" not in texts
+    texts.clear()
+    Hud().draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, layout, shoe_count([], system="uston_apc"))
+    assert "Uston APC" in texts and {"+3", "-3", "-1"} <= set(texts)
+
+
+def test_dealt_cards_count_the_unseen_cards_of_given_ranks():
+    dealt = DealtCards(locked={"AS", "KH"}, pending={"10D"})
+    assert dealt.left(["A"]) == 3
+    assert dealt.left(["10", "J", "Q", "K", "A"]) == 17
+    assert DealtCards().left(["A"]) == 4
+
+
+@pytest.mark.parametrize(("seen", "lines"), [(["2S"], {"high cards left", "favours player"}),
+                                              (["KS"], {"low cards left", "favours dealer"}),
+                                              ([], {"even deck"})])
+def test_the_window_draws_the_cue_one_half_per_line_in_plain_ascii(monkeypatch, seen, lines):
+    W, H = 1280, 720
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    Hud().draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H), shoe_count(seen))
+    assert lines <= set(texts)
+    assert not [text for text in texts if not text.isascii()]   # OpenCV cannot draw the middle dot
 
 
 def test_draw_in_capture_mode_with_nothing_on_the_table():

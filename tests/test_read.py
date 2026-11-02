@@ -355,6 +355,21 @@ def test_page_split_and_join_reach_the_reader_and_press_no_key(monkeypatch, tmp_
     assert calls == [("split", "P1"), ("join", "P2")]
 
 
+def test_a_page_count_switch_reaches_the_reader_and_presses_no_key(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(read.settings, "COUNT_SYSTEM", "hi_opt_ii")
+    posts = {2: [{"action": "switch_count", "system": "uston_apc"}],
+             3: [{"action": "switch_count", "system": "ko"}], 4: ["quit"]}
+    server, handled, _ = run_with_page(monkeypatch, tmp_path, posts, [255] * 10)
+
+    assert handled == [ord("q")]
+    systems = [snapshot["count_system"]["current"] for snapshot in server.published]
+    assert systems[:3] == ["hi_opt_ii", "hi_opt_ii", "uston_apc"]   # starts on the setting, switches on the post
+    assert systems[-1] == "uston_apc"                                 # an unknown id changes nothing
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["counting with Uston APC", "no counting system 'ko'"]
+    assert "Uston APC running count +0" in capsys.readouterr().out
+
+
 def test_no_display_with_web_runs_from_the_page_alone_and_quits_from_it(monkeypatch, tmp_path):
     drawn = []
     monkeypatch.setattr(read.Hud, "draw", lambda *a, **kw: drawn.append(1))

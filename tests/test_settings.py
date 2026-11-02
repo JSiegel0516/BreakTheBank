@@ -55,6 +55,8 @@ def test_no_rotated_copies_is_valid():
     ("WEB_PORT", 0, "whole number from 1 to 65535"),
     ("WEB_PORT", 70000, "whole number from 1 to 65535"),
     ("WEB_PORT", "8765", "whole number from 1 to 65535"),
+    ("COUNT_SYSTEM", "ko", "one of 'hi_lo', 'hi_opt_ii', 'uston_apc'"),
+    ("COUNT_SYSTEM", ["hi_lo"], "one of 'hi_lo', 'hi_opt_ii', 'uston_apc'"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:

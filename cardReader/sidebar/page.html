@@ -37,7 +37,7 @@
     gap: 1rem;
     padding: 1rem;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "count" "deck" "seats" "keys" "status";
+    grid-template-areas: "count" "seats" "deck" "keys" "status";
   }
   @media (min-width: 900px) {
     main {
@@ -133,6 +133,7 @@
   .hand .cards { grid-area: cards; }
   .hand .total { grid-area: total; }
   .hand .play { grid-area: hint; display: flex; align-items: center; gap: .4rem; }
+  .hand .odds { grid-column: 1 / -1; margin-top: -.3rem; font-size: .8rem; color: var(--grey); }
   .seat { font-weight: 700; color: var(--seat); overflow-wrap: anywhere; }
   .seat[data-seat] { cursor: text; }
   .seat[data-seat]:hover { text-decoration: underline dotted; }
@@ -249,8 +250,8 @@
   .choices .options { display: flex; flex-wrap: wrap; justify-content: center; gap: .3rem; }
   .choices button { min-width: 2.1rem; min-height: 2rem; font-weight: 700; }
   .choices button.current { background: var(--badge); border-color: var(--badge); color: #000; }
-  .key.model { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; gap: .4rem .6rem; }
-  .model select {
+  .key.picker { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; gap: .4rem .6rem; }
+  .picker select {
     min-width: 0; max-width: 100%; min-height: 2.4rem; padding: 0 .4rem; font: inherit;
     color: var(--text); background: var(--well); border: 1px solid var(--line); border-radius: .4rem;
   }
@@ -266,7 +267,7 @@
 </head>
 <body>
 <main>
-  <section id="count"><h2>TRUE COUNT</h2><div id="countBody">waiting for read.py ...</div></section>
+  <section id="count"><h2 id="countTitle">TRUE COUNT</h2><div id="countBody">waiting for read.py ...</div></section>
   <section id="deck"><h2>CARDS LEFT</h2><div id="deckBody"></div></section>
   <section id="seats"><h2 id="seatsTitle">HANDS</h2><div id="seatsBody"></div></section>
   <section id="keys">
@@ -283,10 +284,24 @@
   const glyph = (code) => String.fromCodePoint(code, 0xFE0E);
   const SUIT = { S: glyph(0x2660), H: glyph(0x2665), D: glyph(0x2666), C: glyph(0x2663) };
   const RED_SUITS = new Set(["H", "D"]);
-  // Hi-Lo row tints darken the section green (emerald, grey-green, brown), so pale text stays readable on them.
-  const SHADE = { "1": "rgba(0, 95, 25, .5)", "0": "rgba(0, 0, 0, .22)", "-1": "rgba(110, 0, 0, .4)" };
-  const HI_LO_COLOUR = { "1": "var(--green)", "0": "var(--grey)", "-1": "var(--red)" };
-  const CUE_CLASS = { "favours player": "favours-player", "favours dealer": "favours-dealer", "neutral": "favours-neither" };
+  // A Cards Left row's tint for its count value darkens the section green (emerald above 0,
+  // grey-green at 0, brown below), so pale text stays readable on it. Each step past 1, up
+  // to 3, deepens the tint, so -3 reads darker than -1 and +3 greener than +1.
+  function shade(value) {
+    if (value === 0) return "rgba(0, 0, 0, .22)";
+    const step = Math.min(Math.abs(value), 3) - 1;
+    return value > 0 ? `rgba(0, 95, 25, ${.5 + .15 * step})` : `rgba(110, 0, 0, ${.4 + .15 * step})`;
+  }
+  function valueColour(value) {
+    if (value === 0) return "var(--grey)";
+    return value > 0 ? "var(--green)" : "var(--red)";
+  }
+  // hud.count_cue's texts; \u00b7 is the middle dot between the halves
+  const CUE_CLASS = {
+    "high cards left \u00b7 favours player": "favours-player",
+    "low cards left \u00b7 favours dealer": "favours-dealer",
+    "even deck": "favours-neither",
+  };
   const OUTCOME_TAG = { win: "win", push: "push", lose: "lost" };
 
   let latest = null;
@@ -316,6 +331,8 @@
       <div class="figures">
         <div><span>running</span>${esc(count.running)}</div>
         <div><span>left</span>${count.cards_left}/${count.deck_size}</div>
+        <div><span>tens &amp; aces</span>${count.high_left}/${count.high_total}</div>
+        <div><span>aces</span>${count.aces_left}/${count.aces_total}</div>
       </div>`;
   }
 
@@ -327,11 +344,10 @@
     // Every cell below the header is placed explicitly, so the shading strip can sit under its row.
     grid.forEach((row, i) => {
       const line = i + 2;
-      const value = String(row.hi_lo);
-      cells += `<div class="shade" style="grid-area: ${line} / 1 / ${line + 1} / -1; background: ${SHADE[value]}"></div>`;
+      cells += `<div class="shade" style="grid-area: ${line} / 1 / ${line + 1} / -1; background: ${shade(row.value)}"></div>`;
       cells += `<div class="rank" style="grid-area: ${line} / 1">${esc(row.rank)}</div>`;
-      cells += `<div style="grid-area: ${line} / 2; color: ${HI_LO_COLOUR[value]}">`
-        + `${row.hi_lo > 0 ? "+" : ""}${row.hi_lo}</div>`;
+      cells += `<div style="grid-area: ${line} / 2; color: ${valueColour(row.value)}">`
+        + `${row.value > 0 ? "+" : ""}${row.value}</div>`;
       row.cards.forEach((card, column) => {
         const classes = ["tile", card.state];
         if (RED_SUITS.has(card.suit)) classes.push("red");
@@ -369,9 +385,20 @@
         <div class="cards">${hand.cards.map(renderChip).join("")}</div>
         <div class="total${empty ? " empty" : ""}">${esc(hand.total)}${outcomeTag(hand)}</div>
         <div class="play">${splitButton(hand)}<div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div></div>
+        ${renderOdds(hand.odds)}
       </div>`;
     }
     return html;
+  }
+
+  // A hand's odds as a muted line across it: the next card's totals for a live hand, else a
+  // blackjack chance. The totals are listed by hand, since an object lists "18" before "21".
+  const NEXT_CARD = ["21", "20", "19", "18", "bust"];
+  function renderOdds(odds) {
+    if (!odds) return "";
+    const text = "blackjack" in odds ? `blackjack chance ${odds.blackjack}%`
+      : "next card: " + NEXT_CARD.map((key) => `${key} ${odds[key]}%`).join(" \u00b7 ");
+    return `<div class="odds">${esc(text)}</div>`;
   }
 
   // A row's classes: its kind, its outcome, and for the dealer a pulse when it has blackjack
@@ -443,8 +470,24 @@
     if (!model.choices.some((choice) => choice.path === model.current)) {
       options.unshift(`<option value="" selected disabled>${esc(modelName(model))}</option>`);
     }
-    return `<label class="key model"><span>model</span>`
+    return `<label class="key picker"><span>model</span>`
       + `<select id="modelSelect">${options.join("")}</select></label>`;
+  }
+
+  // The name of the counting system the reader counts in.
+  function systemName(countSystem) {
+    const choice = countSystem.choices.find((option) => option.id === countSystem.current);
+    return choice ? choice.name : countSystem.current;
+  }
+
+  // A dropdown of the counting systems, with the one the reader counts in selected.
+  function renderCountSystem(countSystem) {
+    const options = countSystem.choices.map((choice) => {
+      const selected = choice.id === countSystem.current ? " selected" : "";
+      return `<option value="${esc(choice.id)}"${selected}>${esc(choice.name)}</option>`;
+    });
+    return `<label class="key picker"><span>count</span>`
+      + `<select id="countSelect">${options.join("")}</select></label>`;
   }
 
   // body: {action: "<name>"} plus any string fields the action takes
@@ -487,11 +530,13 @@
   function render() {
     setHtml("status", renderStatus(latest));
     if (!latest) return;
+    document.getElementById("countTitle").textContent = `TRUE COUNT \u00b7 ${systemName(latest.count_system)}`;
     setHtml("countBody", renderCount(latest.count));
     setHtml("deckBody", renderDeck(latest.grid, latest.unrevealed));
     document.getElementById("seatsTitle").textContent = `HANDS (${latest.players} player${latest.players > 1 ? "s" : ""})`;
     if (!renaming) setHtml("seatsBody", renderSeats(latest));  // rewriting would drop the name being typed
-    setHtml("keysBody", renderModel(latest.model) + renderKeys(latest.keys, latest.players));
+    setHtml("keysBody", renderModel(latest.model) + renderCountSystem(latest.count_system)
+      + renderKeys(latest.keys, latest.players));
   }
 
   function showFlash(message) {
@@ -596,11 +641,17 @@
 
   // Choosing a model asks the reader to load it. The dropdown goes back to the model the
   // reader runs until the reader reports the new one, which takes as long as loading it.
+  // Choosing a counting system asks the reader to recount in it, which it does at once.
   document.getElementById("keysBody").addEventListener("change", (event) => {
-    if (event.target.id !== "modelSelect") return;
-    const choice = event.target.selectedOptions[0];
-    showFlash({ text: `loading ${choice.textContent} ...`, seconds: 30 });
-    postAction({ action: "switch_model", path: choice.value });
+    if (event.target.id === "modelSelect") {
+      const choice = event.target.selectedOptions[0];
+      showFlash({ text: `loading ${choice.textContent} ...`, seconds: 30 });
+      postAction({ action: "switch_model", path: choice.value });
+    } else if (event.target.id === "countSelect") {
+      postAction({ action: "switch_count", system: event.target.value });
+    } else {
+      return;
+    }
     written.delete("keysBody");
   });
 

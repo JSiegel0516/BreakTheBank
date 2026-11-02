@@ -8,6 +8,10 @@ everything in between, so it can be driven in a test without either:
     keep_going = reader.handle_key(key, frame)     # the keys listed in hud.KEY_LIST (C is read.py's)
     reader.rename_seat("P1", "Ann")                # from the browser page; "" restores P1
     reader.split_seat("P1"), reader.join_seat("P1") # from the browser page; keys Shift+1-5 toggle_split
+    reader.set_count_system("uston_apc")           # from the browser page's dropdown: recounts the shoe
+
+reader.count_system is the blackjack.COUNT_SYSTEMS id reader.count is made in.
+The running count printed with each placed card and logged in the CSV follows it.
 
 reader.seat_names maps seat ids to display names, loaded from and saved to the
 seats file and shared by every player count. They are for people only: events
@@ -41,7 +45,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .blackjack import ShoeCount, is_pair, shoe_count
+from .blackjack import COUNT_SYSTEMS, DEFAULT_COUNT_SYSTEM, ShoeCount, is_pair, shoe_count
 from .cards import Card, Detection, Event
 from .deck import BACK
 from .hud import SPLIT_KEYS, VIEWS, Hud, seat_title
@@ -56,13 +60,16 @@ MAX_NAME_LENGTH = 16  # characters in a seat's display name
 
 class Reader:
     def __init__(self, tracker: CardTracker, layout: SeatLayout, hud: Hud,
-                 seats_file: Path, frames_dir: Path, log=None, preprocess: str = "off", rotation: int = 0):
+                 seats_file: Path, frames_dir: Path, log=None, preprocess: str = "off", rotation: int = 0,
+                 count_system: str = DEFAULT_COUNT_SYSTEM):
         """preprocess: the starting preprocess mode, one of preprocess.MODES (key P cycles it).
-        rotation: the starting turn in clockwise quarter turns, 0 to 3 (settings.CAMERA_ROTATION // 90)."""
+        rotation: the starting turn in clockwise quarter turns, 0 to 3 (settings.CAMERA_ROTATION // 90).
+        count_system: the starting COUNT_SYSTEMS id (settings.COUNT_SYSTEM); set_count_system changes it."""
         self.tracker, self.hud, self.log = tracker, hud, log
         self.seats_file, self.frames_dir = Path(seats_file), Path(frames_dir)
         self.editor = ZoneEditor(layout)
         self.table = Table(layout)
+        self.count_system = count_system  # the COUNT_SYSTEMS id every count is made in
         self.count: ShoeCount = self._recount()
         self.preprocess = preprocess  # read.py preprocesses each frame with this mode before detection
         self.show_enhanced = True     # False: the window shows the raw camera frame instead (key Shift+V)
@@ -74,7 +81,21 @@ class Reader:
         return self.table.layout
 
     def _recount(self) -> ShoeCount:
-        return shoe_count(self.tracker.shoe_seen, unrevealed=self.tracker.shoe_unrevealed)
+        return shoe_count(self.tracker.shoe_seen, unrevealed=self.tracker.shoe_unrevealed, system=self.count_system)
+
+    def set_count_system(self, system: str) -> bool:
+        """Count in another COUNT_SYSTEMS entry from now on, recounting the cards already seen this
+        shoe; prints and flashes the new running count. Returns False, with a message and nothing
+        changed, for an unknown system id."""
+        if system not in COUNT_SYSTEMS:
+            self.hud.flash(f"no counting system {system!r}", 2.5)
+            return False
+        self.count_system = system
+        self.count = self._recount()
+        name = COUNT_SYSTEMS[system].name
+        print(f"--- counting with {name}: running count {self.count.running:+d} ---")
+        self.hud.flash(f"counting with {name}")
+        return True
 
     def set_layout(self, layout: SeatLayout):
         """Swap the seat layout everywhere it is held."""

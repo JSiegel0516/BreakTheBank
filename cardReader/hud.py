@@ -15,12 +15,15 @@
     * a sidebar to the right of the video, so nothing covers the table. It
       starts with a tab strip naming the two views, CARDS LEFT and GAME, with
       the current one highlighted and a [V] hint (key V switches). Below it is
-      the Hi-Lo count: the true count as the headline, a word on whom it
-      favours, then the running count and cards left (e.g. 38/52). Then the
-      current view:
+      the count: TRUE COUNT with the counting system's name (ShoeCount.system,
+      chosen on the browser page), the true count as the headline, beside it
+      what the count means and whom it favours (count_cue, one half per line:
+      "high cards left" above "favours player"), then the running count and
+      cards left (e.g. 38/52). Then the current view:
         - Cards Left: the deck as a grid of mini cards (white, with the rank
-          above the suit shape), one row per rank (2 to A, shaded by Hi-Lo
-          group) and one column per suit. A card counted this round has a
+          above the suit shape), one row per rank (2 to A) with its value in
+          the counting system, shaded green above 0, red below, grey at 0, and
+          darker the bigger the value, and one column per suit. A card counted this round has a
           yellow slash and border (pending), one counted in an earlier round is
           greyed and crossed off (locked), and a name reported as a duplicate
           this shoe is ringed in magenta. Each row ends with how many of that rank are left, and
@@ -31,8 +34,9 @@
           Shift+5) has two lines, its name followed by 1 and 2.
     * a legend at the bottom of the sidebar explaining the colours of the
       current view, then every key (key L hides it). The Game legend lists the
-      placement badge only while key N shows it on the video. In the Cards Left view it
-      is left out when it does not fit below the grid.
+      placement badge only while key N shows it on the video. The Cards Left
+      legend gives each count value's ranks, so a system with more values has a
+      longer legend; it is left out when it does not fit below the grid.
     * bottom bar: the main keys, fps, detect milliseconds, the preprocess mode
       and its milliseconds ("showing raw" when the raw camera frame is shown,
       key Shift+V), and short messages such as "new round"
@@ -55,7 +59,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from .blackjack import CARDS_PER_DECK, ShoeCount, hi_lo
+from .blackjack import CARDS_PER_DECK, COUNT_SYSTEMS, DEFAULT_COUNT_SYSTEM, TEN_RANKS, CountSystem, ShoeCount
 from .cards import Card, Detection
 from .deck import BACK, RANKS, RED_SUITS, SUITS, rank_of, suit_of
 from .seats import DEALER, MAX_PLAYERS, SeatLayout, ZoneEditor
@@ -87,6 +91,7 @@ SPLIT_KEYS = "!@#$%"  # Shift+1 to Shift+5 on a US layout: split or join P1 to P
 EDIT_HELP = ["drag a corner: reshape", "drag a +: add a corner", "right-click a corner: remove it",
              "drag inside: move the zone", "right-click inside: reset the zone", "E: save and lock"]
 NO_SIGNAL = "no signal: press C to reconnect"
+CUE_SEPARATOR = " \u00b7 "  # a middle dot between the count cue's halves; the window draws them on two lines
 VIEWS = {"cards_left": "Cards Left", "game": "Game"}  # sidebar view id -> name, in tab order
 # Legend entries per view: (swatch kind, colour, meaning). Kinds are drawn by Hud._swatch;
 # a "name" entry gives a sample card name in place of the colour.
@@ -95,12 +100,13 @@ GAME_LEGEND = [("name", "KH", "hearts, diamonds"), ("name", "KS", "spades, clubs
                 ("box", AMBER, "face down"), ("thin", GREY, "not matched to a card"),
                 PLACEMENT_ENTRY, ("badge", DIM, "covered, still counted"),
                 ("line", AMBER, "dealer zone"), ("line", SEAT_LINE, "player zone")]
+# The Cards Left legend: these, then one "shade" entry per count value (value_legend), whose
+# colour slot holds the value.
 CARDS_LEFT_LEGEND = [("pending", BADGE, "pending: this round"), ("locked", WHITE, "locked: earlier round"),
-                     ("duplicate", DUPLICATE, "duplicate: misread?"), ("shade", GREEN, "2 to 6: +1"),
-                     ("shade", GREY, "7 to 9: 0"), ("shade", RED, "10 to A: -1")]
+                     ("duplicate", DUPLICATE, "duplicate: misread?")]
 GRID_RANKS = RANKS[1:] + RANKS[:1]  # 2 to 10, J, Q, K, A: the rows of the Cards Left grid
-HI_LO_SHADE = {1: GREEN, 0: GREY, -1: RED}
-SHADE_ALPHA = 0.2  # how strongly a Hi-Lo row is tinted
+HIGH_RANKS = [*TEN_RANKS, "A"]  # the high cards a positive count says are left
+SHADE_ALPHA = 0.2  # how strongly a row worth 0 or 1 is tinted; bigger values tint more (value_shade)
 CARD_ASPECT = 2.5 / 3.5  # a playing card's width over its height: the shape of a mini card
 MINI_RANK_MIN_H = 16     # pixels: a shorter mini card shows its suit shape without the rank
 LEGEND_CARD = "KH"       # the mini card the Cards Left legend samples show
@@ -136,6 +142,15 @@ class DealtCards:
             return "pending"
         return "unseen"
 
+    def unseen(self) -> list[str]:
+        """Every face name the Cards Left grid shows as unseen, in grid order: the cards still to
+        come, the face-down cards never revealed among them."""
+        return [rank + suit for rank in GRID_RANKS for suit in SUITS if self.state(rank + suit) == "unseen"]
+
+    def left(self, ranks) -> int:
+        """How many cards of these ranks are unseen, as the Cards Left grid counts them."""
+        return sum(self.state(rank + suit) == "unseen" for rank in ranks for suit in SUITS)
+
 
 def card_colour(label: str):
     if label == BACK:
@@ -144,12 +159,50 @@ def card_colour(label: str):
 
 
 def count_cue(true: float) -> tuple[str, tuple]:
-    """Who a true count favours, in words, and the colour to draw it in."""
+    """What a true count says about the cards left and whom it favours, in words, and the
+    colour to draw it in: "high cards left" and "favours player" (green) when positive,
+    "low cards left" and "favours dealer" (red) when negative, "even deck" (white) at zero.
+    The halves of a two-part cue are joined by CUE_SEPARATOR, a middle dot."""
     if true > 0:
-        return "favours player", GREEN
+        return CUE_SEPARATOR.join(["high cards left", "favours player"]), GREEN
     if true < 0:
-        return "favours dealer", RED
-    return "neutral", WHITE
+        return CUE_SEPARATOR.join(["low cards left", "favours dealer"]), RED
+    return "even deck", WHITE
+
+
+def signed(value: int) -> str:
+    """A count value as the grid shows it: "+2", "-1", or "0"."""
+    return "0" if value == 0 else f"{value:+d}"
+
+
+def value_shade(value: int) -> tuple[tuple, float]:
+    """A Cards Left row's tint for its count value, as (colour, alpha): green above 0, red below,
+    grey at 0. Each step past 1, up to 3, adds half of SHADE_ALPHA, so -3 reads darker than -1."""
+    if value == 0:
+        return GREY, SHADE_ALPHA
+    colour = GREEN if value > 0 else RED
+    return colour, SHADE_ALPHA * (1 + (min(abs(value), 3) - 1) / 2)
+
+
+def value_legend(counting: CountSystem) -> list[tuple]:
+    """The Cards Left legend's shading entries for a counting system, highest value first, each
+    naming its ranks: ("shade", 1, "2 to 6: +1") for Hi-Lo, ("shade", 2, "4, 5: +2") for Hi-Opt II."""
+    entries = []
+    for value in sorted(set(counting.values.values()), reverse=True):
+        ranks = [rank for rank in GRID_RANKS if counting.values[rank] == value]
+        entries.append(("shade", value, f"{_rank_list(ranks)}: {signed(value)}"))
+    return entries
+
+
+def _rank_list(ranks: list[str]) -> str:
+    """Ranks in GRID_RANKS order as text; three or more neighbours in a row read "first to last"."""
+    runs: list[list[str]] = []
+    for rank in ranks:
+        if runs and GRID_RANKS.index(rank) == GRID_RANKS.index(runs[-1][-1]) + 1:
+            runs[-1].append(rank)
+        else:
+            runs.append([rank])
+    return ", ".join(f"{run[0]} to {run[-1]}" if len(run) >= 3 else ", ".join(run) for run in runs)
 
 
 def status_text(fps: float, stage_ms: dict[str, float] | None, capture_mode: bool,
@@ -270,9 +323,10 @@ class Hud:
         if editing:
             bottom = self._edit_help(side, bottom)
         if self.view == "cards_left":
-            grid_bottom = self._deck_grid(side, dealt or DealtCards(), y, bottom)
+            counting = COUNT_SYSTEMS[count.system]
+            grid_bottom = self._deck_grid(side, dealt or DealtCards(), counting, y, bottom)
             if self.show_legend:
-                self._legend(side, bottom, ceiling=grid_bottom)
+                self._legend(side, bottom, ceiling=grid_bottom, counting=counting)
         else:
             if self.show_legend:
                 bottom = self._legend(side, bottom)
@@ -385,11 +439,12 @@ class Hud:
             self._text(side, text, (self.pad, y - self.pad // 2), 0.6, colour)
         return top
 
-    def _legend(self, side, bottom: int, ceiling: int = 0) -> int:
+    def _legend(self, side, bottom: int, ceiling: int = 0, counting: CountSystem | None = None) -> int:
         """The current view's colours, then every key, each in two columns above `bottom`.
+        The Cards Left view adds the row shading of counting (default Hi-Lo), one entry per value.
         Returns its top. If it would reach above `ceiling`, nothing is drawn and `bottom` is returned."""
         if self.view == "cards_left":
-            entries = CARDS_LEFT_LEGEND
+            entries = CARDS_LEFT_LEGEND + value_legend(counting or COUNT_SYSTEMS[DEFAULT_COUNT_SYSTEM])
         else:
             entries = [entry for entry in GAME_LEGEND if self.show_order or entry != PLACEMENT_ENTRY]
         scale = 0.45
@@ -428,7 +483,7 @@ class Hud:
 
     def _swatch(self, side, kind: str, colour, x: int, cy: int, w: int, th: int):
         """A legend sample of width w centred vertically on cy; th is the legend's text height.
-        For "name", colour is the card name to draw."""
+        For "name", colour is the card name to draw; for "shade", the count value (value_shade)."""
         y1, y2 = cy - th // 2 - 2, cy + th // 2 + 2
         card_h = th + self.pad  # a mini card sample, as tall as a legend row allows
         if kind == "name":
@@ -442,7 +497,8 @@ class Hud:
         elif kind == "line":
             cv2.line(side, (x, cy), (x + w, cy), colour, self.thick, cv2.LINE_AA)
         elif kind == "shade":
-            self._panel(side, x, y1, x + w, y2, SHADE_ALPHA, colour)
+            tint, alpha = value_shade(colour)
+            self._panel(side, x, y1, x + w, y2, alpha, tint)
         elif kind == "duplicate":
             self._cell_mark(side, LEGEND_CARD, "unseen", True, x, cy - card_h // 2, w, card_h)
         else:  # "pending" or "locked": a grid cell in that state
@@ -473,19 +529,27 @@ class Hud:
         return bottom
 
     def _count_block(self, side, count: ShoeCount, top: int) -> int:
-        """The Hi-Lo count below `top`: the true count as the headline with whom it favours,
-        then the running count and cards left. Returns the y below it."""
+        """The count below `top`: TRUE COUNT and the counting system's name, the true count as
+        the headline with the cue beside it (count_cue, one half per line, so it takes no more
+        height than the headline), then the running count and cards left. Returns the y below it."""
         cue, colour = count_cue(count.true)
-        title_h = self._size("TRUE COUNT", 0.5)[1]
+        title_w, title_h, _ = self._size("TRUE COUNT", 0.5)
         headline = f"{count.true:+.1f}"
         headline_w, headline_h, _ = self._size(headline, 1.5)
         small_h = self._size("Ag", 0.55)[1]
 
         y = top + 2 * self.pad + title_h
         self._text(side, "TRUE COUNT", (self.pad, y), 0.5, GREY)
+        system_x = 2 * self.pad + title_w
+        system = self._fit(COUNT_SYSTEMS[count.system].name, side.shape[1] - self.pad - system_x, 0.5)
+        self._text(side, system, (system_x, y), 0.5, WHITE)
         y += self.pad + headline_h
         self._text(side, headline, (self.pad, y), 1.5, colour)
-        self._text(side, cue, (2 * self.pad + headline_w, y), 0.55, colour)
+        cue_x = 2 * self.pad + headline_w
+        cue_lines = cue.split(CUE_SEPARATOR)
+        for i, line in enumerate(reversed(cue_lines)):  # the last line sits on the headline's baseline
+            line_y = y - i * (small_h + self.pad // 2)
+            self._text(side, self._fit(line, side.shape[1] - self.pad - cue_x, 0.55), (cue_x, line_y), 0.55, colour)
         y += 2 * self.pad + small_h
         col_w = (side.shape[1] - 2 * self.pad) // 2
         parts = [("running", f"{count.running:+d}"), ("left", f"{count.cards_left}/{CARDS_PER_DECK}")]
@@ -497,10 +561,11 @@ class Hud:
         cv2.line(side, (self.pad, y - self.pad), (side.shape[1] - self.pad, y - self.pad), DIM, 1)
         return y
 
-    def _deck_grid(self, side, dealt: DealtCards, y: int, bottom: int) -> int:
+    def _deck_grid(self, side, dealt: DealtCards, counting: CountSystem, y: int, bottom: int) -> int:
         """The Cards Left view between y and bottom: a suit header, one row per rank of mini
-        cards, then the face-down cards never revealed. Rows shrink to fit, and each cell
-        takes a card's proportions. Returns the y below it."""
+        cards, each row tinted and labelled with its rank's value in counting, then the
+        face-down cards never revealed. Rows shrink to fit, and each cell takes a card's
+        proportions. Returns the y below it."""
         side_w = side.shape[1]
         lines = len(GRID_RANKS) + 2  # suit header, ranks, unrevealed line
         full_h = 26 * self.s
@@ -508,12 +573,12 @@ class Hud:
         scale = 0.55 * min(1.0, row_h / full_h)
         text_w, th, _ = self._size("10", scale)
         rank_w = text_w + self.pad
-        hi_lo_w = self._size("+1", scale)[0] + self.pad
+        value_w = self._size("+1", scale)[0] + self.pad
         left_w = self._size("left", scale)[0] + self.pad
-        room = side_w - 2 * self.pad - rank_w - hi_lo_w - left_w
+        room = side_w - 2 * self.pad - rank_w - value_w - left_w
         cell_w = max(1, min(room // len(SUITS), round(row_h * CARD_ASPECT) + row_h // 8))  # a card, then a gap
         x = self.pad + max(0, room - cell_w * len(SUITS)) // 2  # centre the grid in the sidebar
-        cells_x = x + rank_w + hi_lo_w
+        cells_x = x + rank_w + value_w
         left_x = cells_x + cell_w * len(SUITS) + self.pad
 
         for i, suit in enumerate(SUITS):
@@ -523,10 +588,11 @@ class Hud:
         for row, rank in enumerate(GRID_RANKS, start=1):
             top = y + row * row_h
             text_y = top + row_h // 2 + th // 2
-            value = hi_lo(rank + SUITS[0])
-            self._panel(side, self.pad, top, side_w - self.pad, top + row_h, SHADE_ALPHA, HI_LO_SHADE[value])
+            value = counting.values[rank]
+            tint, alpha = value_shade(value)
+            self._panel(side, self.pad, top, side_w - self.pad, top + row_h, alpha, tint)
             self._text(side, rank, (x + text_w - self._size(rank, scale)[0], text_y), scale, WHITE)
-            self._text(side, "0" if value == 0 else f"{value:+d}", (x + rank_w, text_y), scale, HI_LO_SHADE[value])
+            self._text(side, signed(value), (x + rank_w, text_y), scale, tint)
             dealt_here = 0
             for i, suit in enumerate(SUITS):
                 name = rank + suit

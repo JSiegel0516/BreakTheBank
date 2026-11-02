@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from cardReader.cards import Detection
-from cardReader.hud import EDIT_HELP, KEY_LIST, Hud
+from cardReader.hud import CUE_SEPARATOR, EDIT_HELP, KEY_LIST, Hud, count_cue
 from cardReader.reader import Reader
 from cardReader.seats import SeatLayout
 from cardReader.sidebar import server as server_module
@@ -55,15 +55,19 @@ def snapshot_of(reader, flash=None):
 
 def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     snapshot = snapshot_of(reader, flash=("new round: numbering restarts at 1", 1.5))
-    assert snapshot["count"] == {"headline": "+2.2", "cue": "favours player", "running": "+2", "cards_left": 48,
-                                 "deck_size": 52}
+    assert snapshot["count"] == {"headline": "+2.2", "cue": "high cards left \u00b7 favours player", "running": "+2",
+                                 "cards_left": 48, "deck_size": 52, "high_left": 19, "high_total": 20,
+                                 "aces_left": 4, "aces_total": 4}
     rows = {row["rank"]: row for row in snapshot["grid"]}
     assert [row["rank"] for row in snapshot["grid"]] == ["2", "3", "4", "5", "6", "7", "8", "9", "10",
                                                          "J", "Q", "K", "A"]
     assert rows["2"]["cards"][0] == {"name": "2S", "rank": "2", "suit": "S", "state": "locked", "duplicate": True}
     assert [card["state"] for card in rows["6"]["cards"]] == ["unseen", "pending", "unseen", "pending"]
     assert (rows["2"]["left"], rows["6"]["left"], rows["K"]["left"], rows["A"]["left"]) == (3, 2, 3, 4)
-    assert (rows["2"]["hi_lo"], rows["8"]["hi_lo"], rows["A"]["hi_lo"]) == (1, 0, -1)
+    assert (rows["2"]["value"], rows["8"]["value"], rows["A"]["value"]) == (1, 0, -1)
+    assert snapshot["count_system"] == {"current": "hi_lo", "choices": [
+        {"id": "hi_lo", "name": "Hi-Lo"}, {"id": "hi_opt_ii", "name": "Hi-Opt II"},
+        {"id": "uston_apc", "name": "Uston APC"}]}
     assert snapshot["unrevealed"] == 0
 
     hands = {hand["seat"]: hand for hand in snapshot["hands"]}
@@ -74,7 +78,12 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert hands["P1"]["total"] == "16" and hands["P1"]["hint"] == "stand"   # hard 16 against a 6
     assert hands["P2"]["hint"] is None                                       # one card: no hint
     assert hands["P3"] == {"seat": "P3", "name": "P3", "part": None, "kind": "player", "cards": [], "total": "-",
-                           "hint": None, "can_split": False, "outcome": None}
+                           "hint": None, "can_split": False, "outcome": None,
+                           "odds": {"blackjack": 5}}               # 2 * 4/48 aces * 15/47 tens
+    # 48 unseen: 16 needs a 5, 4, 3, or 2 (three 2s left) for 21 to 18; a 6 (two left), 7, 8, 9, or ten busts
+    assert hands["P1"]["odds"] == {"21": 8, "20": 8, "19": 8, "18": 6, "bust": 60}
+    assert hands["P2"]["odds"] == {"blackjack": 0}                           # a 2 cannot make a blackjack
+    assert hands["dealer"]["odds"] is None                                   # no hole card
     assert hands["dealer"]["outcome"] is None and hands["P1"]["outcome"] is None and hands["P2"]["outcome"] is None
 
     assert snapshot["players"] == 3 and snapshot["edit_help"] == []
@@ -247,6 +256,66 @@ def test_the_page_has_a_keys_fold_button_and_a_note_under_the_title():
     assert '<button id="keysToggle" class="toggle" aria-expanded="true"' in page
     assert '<p id="keysNote" class="note">' in page
     assert 'localStorage.getItem("keysCollapsed")' in page
+
+
+def test_the_page_colours_every_count_cue_and_stacks_hands_above_cards_left_when_narrow():
+    page = server_module.PAGE.read_text()
+    for true, tone in [(1.0, "favours-player"), (-1.0, "favours-dealer"), (0.0, "favours-neither")]:
+        cue = count_cue(true)[0].replace(CUE_SEPARATOR, " \\u00b7 ")   # the page writes the dot as an escape
+        assert f'"{cue}": "{tone}"' in page
+    assert 'grid-template-areas: "count" "seats" "deck" "keys" "status";' in page
+    assert 'grid-template-areas: "deck count" "deck seats" "deck keys" "status status";' in page
+    assert "${count.high_left}/${count.high_total}" in page and "${count.aces_left}/${count.aces_total}" in page
+
+
+def test_the_count_facts_match_the_grid_after_a_shoe_of_high_cards(tmp_path):
+    reader = new_reader(tmp_path, 3)
+    place(reader, ("AS", 1, -30), ("KH", 1, 30), ("10D", 2, -30), ("AC", 2, 30))
+    snapshot = snapshot_of(reader)
+    rows = {row["rank"]: row for row in snapshot["grid"]}
+    high_in_grid = sum(rows[rank]["left"] for rank in ["10", "J", "Q", "K", "A"])
+    assert (snapshot["count"]["high_left"], snapshot["count"]["aces_left"]) == (16, 2)
+    assert (high_in_grid, rows["A"]["left"]) == (16, 2)
+    assert snapshot["count"]["cue"] == "low cards left \u00b7 favours dealer"
+
+
+def test_the_snapshot_follows_the_counting_system(reader):
+    reader.set_count_system("uston_apc")          # seen: 2S (locked), 6C, KS, 6H
+    snapshot = snapshot_of(reader)
+    rows = {row["rank"]: row for row in snapshot["grid"]}
+    assert snapshot["count_system"]["current"] == "uston_apc"
+    assert [rows[rank]["value"] for rank in ["2", "5", "9", "K", "A"]] == [1, 3, -1, -3, 0]
+    assert snapshot["count"]["running"] == "+2"     # 1 + 2 - 3 + 2
+    assert snapshot["count"]["headline"] == "+1.1"  # +2 per 48/26 half-decks left
+
+
+def test_the_dealer_with_a_hole_card_gets_its_blackjack_chance_and_loose_cards_none(tmp_path):
+    reader = new_reader(tmp_path, 2)
+    place(reader, ("AS", 0, -30), ("BACK", 0, 30))
+    loose = [Detection("7C", 0.9, 5.0, 5.0)]                       # a corner of the frame, in no seat
+    frame = np.zeros((H, W, 3), np.uint8)
+    reader.process(frame, loose)
+    reader.process(frame, loose)
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    assert hands["dealer"]["odds"] == {"blackjack": 32}            # 16 tens among 50 unseen (AS, 7C seen)
+    assert hands["OTHER"]["odds"] is None
+    assert hands["P1"]["odds"] == {"blackjack": 4}                 # 2 * 3/50 aces * 16/49 tens = 3.9%
+
+
+def test_the_page_renders_each_hands_odds_as_a_row_across_it():
+    page = server_module.PAGE.read_text()
+    assert "${renderOdds(hand.odds)}" in page
+    assert 'const NEXT_CARD = ["21", "20", "19", "18", "bust"];' in page
+    assert ".hand .odds { grid-column: 1 / -1;" in page
+
+
+def test_the_page_has_a_counting_system_dropdown_and_scales_the_row_shading():
+    page = server_module.PAGE.read_text()
+    assert '<select id="countSelect">' in page
+    assert 'postAction({ action: "switch_count", system: event.target.value });' in page
+    assert "TRUE COUNT \\u00b7 ${systemName(latest.count_system)}" in page
+    assert "background: ${shade(row.value)}" in page and "color: ${valueColour(row.value)}" in page
+    assert "row.hi_lo" not in page
 
 
 def test_the_page_marks_hand_outcomes_and_holds_a_confetti_canvas():
