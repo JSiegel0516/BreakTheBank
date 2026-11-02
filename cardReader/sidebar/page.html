@@ -109,6 +109,14 @@
   .tile.locked::before {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'%3E%3Cline x1='0' y1='0' x2='10' y2='10' stroke='%23ff4646' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3Cline x1='0' y1='10' x2='10' y2='0' stroke='%23ff4646' stroke-width='4' vector-effect='non-scaling-stroke'/%3E%3C/svg%3E");
   }
+  /* copies left (two or three decks): the share seen (--seen) is dimmed from the left in the
+     locked or pending colour; the rest stays white, the ink stays, and no cross is drawn */
+  .tile.locked.partial { --seen-tint: #2f382a; color: #111; }
+  .tile.locked.partial.red { color: var(--ink-red); }
+  .tile.pending.partial { --seen-tint: #a58c00; }
+  .tile.partial { background: linear-gradient(to right, var(--seen-tint) var(--seen), #fff var(--seen)); }
+  .tile.partial .face { background: #fff; }
+  .tile.locked.partial::before { display: none; }
   .tile.duplicate { outline: .14em solid var(--duplicate); outline-offset: .1em; }
   .unrevealed { margin-top: .4em; text-align: center; color: var(--grey); }
   .unrevealed.some { color: var(--amber); }
@@ -245,6 +253,7 @@
   .keylist button:hover { border-color: var(--badge); }
   .keylist button:active { background: var(--panel); }
   .key.window { color: var(--grey); }
+  .deckcount { min-width: 2em; color: var(--badge); font-size: .9rem; font-weight: 700; }
   /* 1-5 and < >: the key and what it does on one line, its buttons below */
   .choices .label { display: flex; align-items: center; gap: .35rem; }
   .choices .options { display: flex; flex-wrap: wrap; justify-content: center; gap: .3rem; }
@@ -352,13 +361,27 @@
         const classes = ["tile", card.state];
         if (RED_SUITS.has(card.suit)) classes.push("red");
         if (card.duplicate) classes.push("duplicate");
-        cells += `<div class="${classes.join(" ")}" style="grid-area: ${line} / ${column + 3}"`
-          + ` title="${esc(card.name)}: ${card.state}"><span class="face">${esc(card.rank)}${SUIT[card.suit]}</span></div>`;
+        // with copies left, the share seen is dimmed from the left
+        const partial = card.state !== "unseen" && card.seen < card.copies;
+        let fill = "";
+        if (partial) {
+          classes.push("partial");
+          fill = `; --seen: ${(100 * card.seen / card.copies).toFixed(1)}%`;
+        }
+        cells += `<div class="${classes.join(" ")}" style="grid-area: ${line} / ${column + 3}${fill}"`
+          + ` title="${esc(card.name)}: ${tileTitle(card)}"><span class="face">${esc(card.rank)}${SUIT[card.suit]}</span></div>`;
       });
       cells += `<div class="left${row.left ? "" : " none"}" style="grid-area: ${line} / 7">${row.left}</div>`;
     });
     return `<div class="grid">${cells}</div>
       <div class="unrevealed${unrevealed ? " some" : ""}">face down, never revealed: ${unrevealed}</div>`;
+  }
+
+  // A tile's hover text: its state, and with more than one deck its copies seen ("1 of 2 seen, pending").
+  function tileTitle(card) {
+    if (card.copies === 1) return card.state;
+    const seen = `${card.seen} of ${card.copies} seen`;
+    return card.state === "unseen" ? seen : `${seen}, ${card.state}`;
   }
 
   function renderChip(card) {
@@ -426,13 +449,22 @@
   }
 
   // One row per group of keys, in the order the snapshot lists them (a group's keys are consecutive).
-  function renderKeys(keys, players) {
+  // The table row ends with the decks button, which has no key.
+  function renderKeys(keys, players, decks) {
     const rows = [];
     keys.forEach((entry, i) => {
       if (i === 0 || entry.group !== keys[i - 1].group) rows.push([]);
       rows[rows.length - 1].push(renderKey(entry, players));
+      const groupEnds = i === keys.length - 1 || keys[i + 1].group !== entry.group;
+      if (entry.group === "table" && groupEnds) rows[rows.length - 1].push(renderDecks(decks));
     });
     return rows.map((row) => `<div class="keygroup">${row.join("")}</div>`).join("");
+  }
+
+  // The decks in the shoe; a click cycles 1, 2, 3 and the reader recounts the cards seen.
+  function renderDecks(decks) {
+    return `<button class="key" data-action="cycle_decks" title="decks in the shoe: click for 1, 2, or 3">`
+      + `<span class="deckcount">${decks}</span><span class="action">deck${decks > 1 ? "s" : ""}</span></button>`;
   }
 
   // A button when the page has one, a set of buttons for 1-5 (with the current player count
@@ -536,7 +568,7 @@
     document.getElementById("seatsTitle").textContent = `HANDS (${latest.players} player${latest.players > 1 ? "s" : ""})`;
     if (!renaming) setHtml("seatsBody", renderSeats(latest));  // rewriting would drop the name being typed
     setHtml("keysBody", renderModel(latest.model) + renderCountSystem(latest.count_system)
-      + renderKeys(latest.keys, latest.players));
+      + renderKeys(latest.keys, latest.players, latest.decks));
   }
 
   function showFlash(message) {

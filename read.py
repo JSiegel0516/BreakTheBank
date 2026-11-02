@@ -40,6 +40,10 @@ The count starts in COUNT_SYSTEM from settings.py (Hi-Lo, Hi-Opt II, or Uston AP
 The page's counting-system dropdown, beside the model dropdown, switches it and
 recounts the cards already seen this shoe. The page, the window, the terminal,
 and --log's running_count column all follow it; there is no key for it.
+The shoe holds DECKS decks from settings.py (1 to 3): each card may be counted
+once per deck before another read of it is reported as a duplicate. The page's
+decks button, in the table row of the keys, cycles 1, 2, 3 and recounts the
+cards already seen; there is no key for it.
 
 A player holding a pair can split it: the split button on the page's hand, or
 Shift+1-5 in the window for P1-P5. The seat then shows two hands, its name followed
@@ -278,8 +282,8 @@ def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetecto
     """The key codes for the page's button actions, in order, to be pressed one per frame.
 
     rename_seat (with "seat" and "name"), split_seat and join_seat (with "seat"),
-    switch_model (with "path"), and switch_count (with "system", a COUNT_SYSTEMS id) are
-    done straight away and press no key. An unknown action name is printed and skipped."""
+    switch_model (with "path"), switch_count (with "system", a COUNT_SYSTEMS id), and
+    cycle_decks are done straight away and press no key. An unknown action name is printed and skipped."""
     keys = []
     for action in actions:
         name = action["action"]
@@ -295,6 +299,8 @@ def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetecto
             models.switch(action.get("path", ""), reader.hud)
         elif name == "switch_count":
             reader.set_count_system(action.get("system", ""))
+        elif name == "cycle_decks":
+            reader.cycle_decks()
         else:
             print(f"ignored unknown page action {name!r}")
     return keys
@@ -390,7 +396,7 @@ def main():
             if new_file:
                 log.writerow(LOG_HEADER)
 
-        tracker = CardTracker(TrackerConfig.from_settings(settings, view_w))
+        tracker = CardTracker(TrackerConfig.from_settings(settings, view_w), decks=settings.DECKS)
         hud = Hud()
         reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log,
                         preprocess=args.preprocess, rotation=rotation, count_system=settings.COUNT_SYSTEM)

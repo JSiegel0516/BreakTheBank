@@ -61,7 +61,9 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     rows = {row["rank"]: row for row in snapshot["grid"]}
     assert [row["rank"] for row in snapshot["grid"]] == ["2", "3", "4", "5", "6", "7", "8", "9", "10",
                                                          "J", "Q", "K", "A"]
-    assert rows["2"]["cards"][0] == {"name": "2S", "rank": "2", "suit": "S", "state": "locked", "duplicate": True}
+    assert rows["2"]["cards"][0] == {"name": "2S", "rank": "2", "suit": "S", "state": "locked", "duplicate": True,
+                                     "seen": 1, "copies": 1}
+    assert snapshot["decks"] == 1
     assert [card["state"] for card in rows["6"]["cards"]] == ["unseen", "pending", "unseen", "pending"]
     assert (rows["2"]["left"], rows["6"]["left"], rows["K"]["left"], rows["A"]["left"]) == (3, 2, 3, 4)
     assert (rows["2"]["value"], rows["8"]["value"], rows["A"]["value"]) == (1, 0, -1)
@@ -277,6 +279,34 @@ def test_the_count_facts_match_the_grid_after_a_shoe_of_high_cards(tmp_path):
     assert (snapshot["count"]["high_left"], snapshot["count"]["aces_left"]) == (16, 2)
     assert (high_in_grid, rows["A"]["left"]) == (16, 2)
     assert snapshot["count"]["cue"] == "low cards left \u00b7 favours dealer"
+
+
+def test_with_two_decks_the_count_grid_and_odds_use_every_copy(tmp_path):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
+    place(reader, ("AS", 1, -30), ("KH", 1, 30), ("10D", 2, 0))
+    snapshot = snapshot_of(reader)
+    count = snapshot["count"]
+    assert snapshot["decks"] == 2
+    assert (count["cards_left"], count["deck_size"]) == (101, 104)
+    assert (count["high_left"], count["high_total"], count["aces_left"], count["aces_total"]) == (37, 40, 7, 8)
+    rows = {row["rank"]: row for row in snapshot["grid"]}
+    ace_of_spades = rows["A"]["cards"][0]
+    assert (ace_of_spades["state"], ace_of_spades["seen"], ace_of_spades["copies"]) == ("pending", 1, 2)
+    assert (rows["A"]["cards"][1]["state"], rows["A"]["cards"][1]["seen"]) == ("unseen", 0)
+    assert (rows["A"]["left"], rows["K"]["left"], rows["10"]["left"], rows["2"]["left"]) == (7, 7, 7, 8)
+    hands = {hand["seat"]: hand for hand in snapshot["hands"]}
+    assert hands["P2"]["odds"] == {"blackjack": 7}                # 7 aces among 101 unseen copies (one deck: 6%)
+
+
+def test_the_page_offers_the_decks_button_in_the_table_row_and_dims_tiles_by_copies_seen():
+    page = server_module.PAGE.read_text()
+    assert 'data-action="cycle_decks"' in page
+    assert "renderKeys(latest.keys, latest.players, latest.decks)" in page
+    assert 'if (entry.group === "table" && groupEnds) rows[rows.length - 1].push(renderDecks(decks));' in page
+    assert "linear-gradient(to right, var(--seen-tint) var(--seen), #fff var(--seen))" in page
+    assert "`${card.seen} of ${card.copies} seen`" in page
+    assert "--seen: ${(100 * card.seen / card.copies).toFixed(1)}%" in page
 
 
 def test_the_snapshot_follows_the_counting_system(reader):

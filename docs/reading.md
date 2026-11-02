@@ -11,7 +11,7 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 |---|---|
 | Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
 | Sidebar, top | tabs naming the two views, `CARDS LEFT` and `GAME`: the current one is filled in yellow, and `[V]` beside them is the key that switches (see below) |
-| Sidebar, under the tabs | `TRUE COUNT` followed by the counting system's name (`Hi-Lo` unless [switched on the page](#browser-dashboard)), the true count in large type, beside it what the count means and whom it favours (`high cards left` over `favours player`, `low cards left` over `favours dealer`, or `even deck`), then the running count and cards left (`38/52`) |
+| Sidebar, under the tabs | `TRUE COUNT` followed by the counting system's name (`Hi-Lo` unless [switched on the page](#browser-dashboard)), the true count in large type, beside it what the count means and whom it favours (`high cards left` over `favours player`, `low cards left` over `favours dealer`, or `even deck`), then the running count and cards left out of the shoe (`38/52`, or `90/104` with two decks) |
 | Sidebar, below | the Cards Left view or the Game view (see below) |
 | Name on a card | that card's name: the rank followed by the suit's shape (`BACK` for a face-down card). `N` adds its placement number in a yellow badge before the name |
 | Grey name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
@@ -44,15 +44,17 @@ glance which cards have been dealt this shoe:
 | Yellow slash and border | pending: counted this round, so a corrected misread can still change it |
 | Grey, crossed off | locked: counted in an earlier round of this shoe |
 | Magenta ring | a `duplicate` was reported for this card this shoe (a misread, or a reshuffle without `Shift+R`) |
+| Partly filled from the left | two or three decks: the share of this card's copies seen so far, dim yellow if one was counted this round, grey otherwise. One of two copies fills half the card; it is crossed off only once every copy is seen |
 
 Rows are tinted and labelled with the rank's value in the counting system:
 green above 0, grey at 0, red below, and deeper for bigger values, so -3 is
 darker than -1. In Hi-Lo that is green for 2 to 6 (+1), grey for 7 to 9 (0),
 and red for 10 to A (-1). The legend lists each value with its ranks, so Hi-Opt
 II and Uston APC have longer legends. The column on the right gives
-how many cards of that rank are left. The line under the grid counts the
-face-down cards dealt and never turned over. `Shift+R` clears the grid. The
-grid assumes one 52-card deck. In the Cards Left view the grid comes first: when
+how many cards of that rank are left, counting every copy. The line under the
+grid counts the face-down cards dealt and never turned over. `Shift+R` clears
+the grid. The grid shows the shoe of `DECKS` decks (see
+[Decks in the shoe](#decks-in-the-shoe)). In the Cards Left view the grid comes first: when
 the window is too small for both, the legend is left out.
 
 The **Game view** lists each seat's total (`17`, `soft 18`, `BLACKJACK`,
@@ -152,9 +154,10 @@ A `removed` line means a hidden card stayed out of sight long enough to count
 as picked up (see [Rules the tracker assumes](#rules-the-tracker-assumes)). It
 leaves its hand; the count is not changed.
 
-A `duplicate` line means a face card was placed (or renamed) under a name already
-counted this shoe in an earlier round. One deck holds one of each card, so it is
-a misread or a reshuffle nobody marked with `Shift+R`. The count is not changed.
+A `duplicate` line means a face card was placed (or renamed) under a name whose
+every copy was already counted this shoe. One deck holds one of each card, so a
+second King of Hearts is a misread or a reshuffle nobody marked with `Shift+R`.
+With two decks the third one is. The count is not changed.
 
 To fix a misread while the round is still open, press `X` to rescan the round.
 The reader forgets every card of this round and takes this round's names back
@@ -202,11 +205,11 @@ grey-green at 0, and brown below, deeper for bigger values:
 
 | On the page | Meaning |
 |---|---|
-| True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`high cards left · favours player`, `low cards left · favours dealer`, or `even deck`), then the running count, cards left (`39/52`), tens and aces left (`tens & aces 17/20`), and aces left (`aces 3/4`). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
-| Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. Below it: the face-down cards never revealed |
+| True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`high cards left · favours player`, `low cards left · favours dealer`, or `even deck`), then the running count, cards left (`39/52`, or `90/104` with two decks), tens and aces left (`tens & aces 17/20`, out of 40 with two decks), and aces left (`aces 3/4`, out of 8 with two decks). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
+| Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. With two or three decks a card with copies left is dimmed from the left by the share seen, and its hover text says so (`KH: 1 of 2 seen, locked`); the column on the right counts copies. Below it: the face-down cards never revealed |
 | Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A grey line under a hand gives its odds from the unseen cards (see Odds row below) |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | first a `model` dropdown and a `count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
+| Keys | first a `model` dropdown and a `count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
@@ -239,8 +242,8 @@ amber outline still; the glows and tags stay. The cues are on the page only:
 the window, the terminal, and the `--log` CSV are unchanged.
 
 **Odds row.** A small grey line under a hand gives its chances as whole
-percentages. They are exact against the unseen cards: the deck minus every face
-seen this shoe. A face-down card never turned up is one of those unseen cards,
+percentages. They are exact against the unseen cards: the shoe minus every face
+seen this shoe, with each copy of a card counted, so two decks hold eight aces. A face-down card never turned up is one of those unseen cards,
 so it counts as a random draw from them.
 
 | Hand | Odds row |
@@ -306,6 +309,9 @@ window flash `counting with Uston APC`. The count title, the running and true
 counts, the grid's value column and shading, and the `--log` running count all
 follow. The window has no key for it. The next start uses `COUNT_SYSTEM` again.
 
+**Changing the decks.** The decks button ends the table row of the Keys
+section; see [Decks in the shoe](#decks-in-the-shoe).
+
 **Without a window.** `--no-display --web` runs the reader with no window: the
 page shows everything and its buttons drive it. Quit with the page's `Q` button,
 or Ctrl+C in the terminal. Use it when the computer at the table has no screen
@@ -331,6 +337,30 @@ password, so use it only on a network you trust. Then:
 The page shows no video, so the phone needs little bandwidth. The phone's
 buttons work like the keys on the computer, so anyone who can open the page can
 also start a new shoe or quit the reader.
+
+### Decks in the shoe
+
+The reader starts with `DECKS` decks in the shoe, from `settings.py`: 1, 2, or
+3. The browser page's decks button, at the end of the table row of the Keys
+section, shows the current number and cycles 1, 2, 3, 1 on each click. The
+terminal prints `--- 2 decks: running count +1, 103 cards left ---`, and both
+the page and the window flash `2 decks`. The window has no key for it.
+
+Changing the number recounts the cards already seen against the new shoe.
+Nothing is cleared, so press `Shift+R` as well when the decks were reshuffled.
+Lowering the number keeps every copy seen, but counts at most one per deck:
+two Kings of Hearts seen in a 2-deck shoe count once at 1 deck, and twice
+again at 2 or 3.
+Cards left counts down from 52, 104, or 156. Tens and aces are out of 20 per
+deck, and aces out of 4 per deck. The odds row draws from every copy left.
+
+With more than one deck a card can really appear twice. Each card may be
+counted once per deck; one more read of it is a `duplicate`. Two corners of
+one card still join into one card when they are close: up to four times
+`MATCH_DISTANCE` apart, about a card's diagonal. A card of the same name
+farther away is a second copy. A card that is picked up and comes back
+elsewhere looks like a new copy too, so it is counted again while copies are
+left.
 
 ### Setting up the camera
 
@@ -538,9 +568,10 @@ true count means the remaining cards are rich in high cards (tens and aces),
 which favours the player. A negative one means low cards are left, which
 favours the dealer.
 
-- **Cards left** is 52 minus the face cards seen, minus the face-down cards that
-  were dealt and never turned up (swept away face down, for example). Those are
-  gone from the deck, but nobody saw them, so they do not change the running count.
+- **Cards left** is 52 per deck in the shoe (see [Decks in the shoe](#decks-in-the-shoe))
+  minus the face cards seen, minus the face-down cards that were dealt and never
+  turned up (swept away face down, for example). Those are gone from the shoe,
+  but nobody saw them, so they do not change the running count.
 - Face-down cards are counted when they are turned up, and then stop being
   "never turned up". A face-down card still on the table when you press `R`
   (new round, lowercase r) gets a new number, but is not taken off cards left a
@@ -607,7 +638,7 @@ The table is the common multi-deck one, with these rules:
 | 9,9 | P | P | P | P | P | S | P | P | S | S |
 | 10,10 | S | S | S | S | S | S | S | S | S | S |
 
-The count assumes one deck, but this table is the multi-deck one. The two
+The count can hold one to three decks, and this table is the multi-deck one. The two
 differ in a handful of close plays, such as hard 11 against an ace, which
 doubles in single deck.
 
@@ -626,10 +657,14 @@ doubles in single deck.
   Frames are given at `FPS` = 12.4, the speed the reader runs at.
   Reads split between suits of one rank (10H and 10D) agree, since the suit
   changes neither the hand nor the count; the card shows its most common name.
-- **One deck.** Two sightings of the same face are the same card. This merges a
+- **One deck (`DECKS` = 1).** Two sightings of the same face are the same card. This merges a
   card's corner indices, stops a stray misread from adding a duplicate, and means
   a card is counted once per shoe even if it leaves and comes back. A new card
   under a name counted in an earlier round prints as `duplicate`.
+- **Two or three decks.** Two sightings of the same face are the same card only
+  within four `MATCH_DISTANCE`s of each other; farther apart they are two copies.
+  Each card is counted once per deck, and one more copy prints as `duplicate`
+  (see [Decks in the shoe](#decks-in-the-shoe)).
 - **Covered is not removed, at first.** A card that disappears for
   `DROP_SECONDS` (1 s, 12 frames) becomes hidden: it keeps its number, stays in its hand, and is not
   counted again when it reappears. A face card is recognised by its name anywhere
@@ -767,8 +802,10 @@ the measured fps when it is more than a fifth away from `FPS`.
 
 ## Known limitations
 
-- **One deck.** Two sightings of the same face are treated as one card, so a
-  shoe with several decks would merge real duplicates, and its count would be wrong.
+- **At most three decks.** `DECKS` and the page's decks button allow 1 to 3.
+  With more than one deck the reader tells a second copy from the same card by
+  distance only, so a card picked up and put down far away counts as another copy
+  while copies are left, and two copies dealt touching may merge into one.
 - **Splits** must be marked by hand (`Shift+1` to `Shift+5` or the page), at most
   two hands per seat. The `--log` CSV records the seat, not the hand, so
   `evaluate.py` scores a split seat as one hand.

@@ -14,9 +14,9 @@ to the running count. Hi-Lo counts 2-6 as +1, 7-9 as 0, and 10-A as -1;
 Hi-Opt II and Uston APC give some ranks two or three points. Each system sums
 to zero over a deck. The true count divides the running count by the decks
 still to be dealt (Hi-Lo, Hi-Opt II) or the half-decks (Uston APC). Cards
-left is the deck minus the face cards seen and minus the face-down cards that
-were dealt and never turned over: those are gone from the deck, but nobody saw
-what they were, so they do not change the running count. The divisor never
+left is the shoe (1 to MAX_DECKS decks of 52) minus the face cards seen and
+minus the face-down cards that were dealt and never turned over: those are
+gone, but nobody saw what they were, so they do not change the running count. The divisor never
 counts fewer cards than MIN_DECKS_LEFT of a deck (a quarter deck, 13 cards,
 which is half a half-deck), so the true count does not blow up as the last
 few cards come out. A positive
@@ -25,9 +25,9 @@ favours the player; a negative one means low cards are left, which favours the
 dealer.
 
 Odds: player_odds and dealer_odds give a hand's chances as whole percentages,
-exact against the unseen cards (the deck minus the faces seen). A face-down
-card never revealed is one of those unseen cards, so it counts as a random draw
-from them.
+exact against the unseen cards: the shoe minus the faces seen, one entry per
+copy left. A face-down card never revealed is one of those unseen cards, so it
+counts as a random draw from them.
 """
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from .deck import BACK, rank_of
 
 CARDS_PER_DECK = 52
+MAX_DECKS = 3  # most decks a shoe may hold (settings.DECKS)
 TEN_RANKS = ("10", "J", "Q", "K")  # the ranks worth ten
 MIN_DECKS_LEFT = 0.25  # floor for the true count's divisor, so a few cards left cannot make it huge
 DEALER_STANDS_AT = 17  # soft 17 included
@@ -168,8 +169,9 @@ def hi_lo(label: str) -> int:
 class ShoeCount:
     running: int      # sum of the system's values of every card seen this shoe
     true: float       # running count per deck (half-deck for Uston APC) still to be dealt, floored as above
-    cards_left: int   # cards not yet dealt: the deck minus faces seen and face-down cards never revealed
+    cards_left: int   # cards not yet dealt: the shoe minus faces seen and face-down cards never revealed
     system: str = DEFAULT_COUNT_SYSTEM  # the COUNT_SYSTEMS id it was counted in
+    decks: int = 1    # decks in the shoe: cards_left starts from decks * CARDS_PER_DECK
 
 
 def shoe_count(seen: list[str], decks: int = 1, unrevealed: int = 0,
@@ -185,7 +187,7 @@ def shoe_count(seen: list[str], decks: int = 1, unrevealed: int = 0,
     cards_left = max(decks * CARDS_PER_DECK - len(seen) - unrevealed, 0)
     divisor_cards = max(cards_left, MIN_DECKS_LEFT * CARDS_PER_DECK)
     units_left = divisor_cards / counting.unit_cards
-    return ShoeCount(running, running / units_left, cards_left, system)
+    return ShoeCount(running, running / units_left, cards_left, system, decks)
 
 
 NEXT_CARD_TOTALS = (21, 20, 19, 18)  # the totals a live hand's odds give a chance for, then bust

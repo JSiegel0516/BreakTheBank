@@ -565,6 +565,159 @@ def test_face_down_card_still_down_through_a_new_round_is_dealt_only_once():
     assert tr.shoe_unrevealed == 0 and tr.shoe_seen == ["KS"]
 
 
+def deal_rounds(tr, *rounds):
+    """Deal each list of detections as one round: confirmed, then swept until round over."""
+    events = []
+    for dets in rounds:
+        events += run(tr, dets, 3)
+        events += run(tr, [], 20)
+    return events
+
+
+@pytest.mark.parametrize("decks", [1, 2, 3])
+def test_a_card_is_a_duplicate_only_once_every_deck_has_dealt_it(decks):
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=decks)
+    ev = deal_rounds(tr, *[[det("KH", 50 + 100 * i, 200)] for i in range(decks)])
+    assert "duplicate" not in [e.kind for e in ev]
+    assert tr.shoe_seen == ["KH"] * decks
+    ev = run(tr, [det("KH", 400, 200)], 3)
+    assert [(e.kind, e.card.label) for e in ev] == [("placed", "KH"), ("duplicate", "KH")]
+    assert tr.shoe_seen == ["KH"] * decks and tr.shoe_duplicates == {"KH"}
+
+
+def test_two_decks_two_far_apart_cards_of_one_name_are_both_counted_and_a_third_is_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    ev = run(tr, [det("KH", 50, 200), det("KH", 400, 200)], 3)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 1), ("placed", 2)]
+    assert tr.shoe_seen == ["KH", "KH"] and shoe_count(tr.shoe_seen, decks=2).running == -2
+    ev = run(tr, [det("KH", 50, 200), det("KH", 400, 200), det("KH", 600, 50)], 3)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 3), ("duplicate", 3)]
+    assert tr.shoe_seen == ["KH", "KH"]
+
+
+def test_two_decks_two_corners_of_one_card_are_still_one_card():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    ev = run(tr, [det("7D", 50, 200)], 3)
+    ev += run(tr, [det("7D", 50, 200), det("7D", 90, 260)], 3)  # 72 px away: within 4 match distances
+    assert [e.kind for e in ev] == ["placed"]
+    assert labels(tr) == ["7D"] and tr.shoe_seen == ["7D"]
+
+
+def test_two_decks_corners_with_real_geometry_are_one_card_and_two_seats_are_two():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, [*corners("KS", 600, 500), *corners("KS", 1300, 500)], 30)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KS"), (2, "KS")]
+    assert tr.shoe_seen == ["KS", "KS"]
+
+
+def test_two_decks_a_hole_card_reveal_joins_its_own_card_not_a_far_card_of_that_name():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, [det("BACK", 900, 300), *corners("QH", 1500, 300)], 30)
+    run(tr, [*corners("QH", 900, 300), *corners("QH", 1500, 300)], 120)  # the hole card is a QH too
+    assert [(c.order, c.label) for c in tr.round] == [(1, "QH"), (2, "QH")]
+    assert tr.shoe_seen == ["QH", "QH"] and tr.shoe_unrevealed == 0
+
+
+def test_two_decks_a_card_still_down_through_a_new_round_is_not_counted_again():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    run(tr, [det("QS", 50, 50)], 3)
+    tr.new_round()
+    ev = run(tr, [det("QS", 50, 50)], 1)
+    assert [e.kind for e in ev] == ["placed"]
+    assert tr.shoe_seen == ["QS"] and (tr.shoe_pending, tr.shoe_locked) == (set(), {"QS"})
+
+
+def test_two_decks_a_second_copy_beside_a_carried_one_is_counted_not_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    run(tr, [det("KH", 50, 50)], 3)
+    tr.new_round()                                       # the KH stays on the table
+    ev = run(tr, [det("KH", 50, 50), det("KH", 400, 200)], 3)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 1), ("placed", 2)]
+    assert tr.shoe_seen == ["KH", "KH"] and tr.shoe_duplicates == set()
+
+
+def test_two_decks_renaming_a_copy_away_beside_a_carried_one_gives_back_only_its_own_copy():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10, decks=2)
+    run(tr, [det("KH", 50, 50)], 3)
+    tr.new_round()                                       # the KH stays on the table
+    run(tr, [det("KH", 50, 50), det("KH", 400, 200)], 3)  # a second KH, really a misread 4D
+    run(tr, [det("KH", 50, 50), det("4D", 400, 200)], 8)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH"), (2, "4D")]
+    assert tr.shoe_seen == ["KH", "4D"]
+    assert shoe_count(tr.shoe_seen, decks=2).cards_left == 102
+
+
+def test_two_decks_a_carried_card_renamed_away_and_back_keeps_only_its_locked_copy():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=4, decks=2)
+    run(tr, [det("KH", 50, 50)], 3)
+    tr.new_round()                                       # the KH stays on the table
+    run(tr, [det("KH", 50, 50)], 1)
+    run(tr, [det("4D", 50, 50)], 8)                      # misread for a while
+    assert tr.shoe_seen == ["KH", "4D"]
+    run(tr, [det("KH", 50, 50)], 8)                      # then read right again
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH")]
+    assert tr.shoe_seen == ["KH"] and tr.shoe_pending == set()
+    assert shoe_count(tr.shoe_seen, decks=2).cards_left == 103
+
+
+def test_two_decks_removing_a_copy_does_not_hand_it_to_a_carried_card():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, label_window=10, round_end_frames=100,
+                     hidden_frames=2, decks=2)
+    run(tr, [det("KH", 50, 50)], 3)
+    tr.new_round()                                       # the KH stays on the table
+    run(tr, [det("KH", 50, 50), det("KH", 400, 200)], 3)
+    run(tr, [det("KH", 50, 50)], 10)                     # the second KH is picked up
+    assert [(c.order, c.counted) for c in tr.round] == [(1, False)]
+    assert tr.shoe_seen == ["KH", "KH"]                  # a removed card stays counted
+
+
+def test_two_decks_a_name_can_be_locked_and_pending_at_once():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=2)
+    deal_rounds(tr, [det("KH", 50, 200)])
+    run(tr, [det("KH", 400, 200)], 3)
+    assert (tr.shoe_pending, tr.shoe_locked) == ({"KH"}, {"KH"})
+
+
+def test_two_decks_rename_to_a_name_with_a_copy_left_is_counted_not_a_duplicate():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10, decks=2)
+    deal_rounds(tr, [det("KH", 50, 200)])
+    run(tr, [det("BACK", 50, 200)], 3)
+    ev = run(tr, [det("KH", 50, 200)], 10)
+    assert [(e.kind, e.card.label) for e in ev] == [("renamed", "KH")]
+    assert tr.shoe_seen == ["KH", "KH"] and tr.shoe_unrevealed == 0
+
+
+def test_two_decks_renaming_a_second_copy_away_keeps_the_first_counted_in_order():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10, decks=2)
+    deal_rounds(tr, [det("KH", 50, 200), det("5C", 300, 200)])
+    run(tr, [det("KH", 50, 200)], 3)                     # a second KH, really a misread 4D
+    assert tr.shoe_seen == ["KH", "5C", "KH"]
+    run(tr, [det("4D", 50, 200)], 6)
+    assert tr.shoe_seen == ["KH", "5C", "4D"]
+
+
+def test_two_decks_rescan_takes_back_only_this_rounds_copies():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=2)
+    deal_rounds(tr, [det("KH", 50, 200), det("4C", 300, 200)])
+    run(tr, [det("KH", 50, 200), det("KH", 400, 200)], 3)  # the second copy, then a third: a duplicate
+    assert tr.shoe_seen == ["KH", "4C", "KH"] and tr.shoe_duplicates == {"KH"}
+    tr.rescan()
+    assert tr.shoe_seen == ["KH", "4C"] and tr.shoe_duplicates == set()
+    assert (tr.shoe_pending, tr.shoe_locked) == (set(), {"KH", "4C"})
+
+
+def test_two_decks_new_shoe_clears_every_copy():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=2)
+    deal_rounds(tr, [det("KH", 50, 200)], [det("KH", 50, 200)])
+    assert tr.shoe_seen == ["KH", "KH"]
+    tr.new_shoe()
+    assert tr.shoe_seen == [] and tr.shoe_locked == set() and tr.shoe_pending == set()
+    ev = deal_rounds(tr, [det("KH", 50, 200)], [det("KH", 50, 200)])
+    assert "duplicate" not in [e.kind for e in ev] and tr.shoe_seen == ["KH", "KH"]
+
+
 def test_config_object_and_keyword_overrides_agree():
     from cardReader.tracker import TrackerConfig
     a = CardTracker(TrackerConfig(confirm_frames=3, match_dist=10), drop_frames=7)

@@ -72,6 +72,7 @@ PLAYERS = 5                # player seats when nothing is saved yet; change live
 SEATS_FILE = "data/seats.json"  # zones edited with the mouse (key E in read.py), one layout per player count
 COUNT_SYSTEM = "hi_lo"     # card count read.py starts with: "hi_lo", "hi_opt_ii", or "uston_apc" (Uston APC).
                            # The browser page's dropdown switches it live.
+DECKS = 1                  # decks in the shoe, 1 to 3. Each card may be seen once per deck before a duplicate.
 
 
 def _is_whole(value) -> bool:
@@ -86,7 +87,7 @@ def validate(config) -> None:
     """Check the values in a settings module: this one, or any object with the same names.
 
     Raises ValueError listing every invalid value with its allowed range."""
-    from cardReader.blackjack import COUNT_SYSTEMS  # imported here so settings.py stays cheap to import
+    from cardReader.blackjack import COUNT_SYSTEMS, MAX_DECKS  # imported here so settings.py stays cheap to import
     from cardReader.dataset import ROTATIONS
     from cardReader.preprocess import MODES
     from cardReader.seats import MAX_PLAYERS
@@ -110,6 +111,7 @@ def validate(config) -> None:
         (("CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
+        (("DECKS",), lambda v: _is_whole(v) and 1 <= v <= MAX_DECKS, f"a whole number from 1 to {MAX_DECKS}"),
         (("WEB_PORT",), lambda v: _is_whole(v) and 1 <= v <= 65535, "a whole number from 1 to 65535"),
         (("CAMERA_ROTATION",),lambda v: _is_whole(v) and v in (0, 90, 180, 270), "one of 0, 90, 180, 270"),
         (("PREPROCESS",), lambda v: v in MODES, "one of " + ", ".join(repr(mode) for mode in MODES)),

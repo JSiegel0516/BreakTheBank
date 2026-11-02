@@ -13,6 +13,7 @@ Reader.split_seat and Reader.join_seat; they stand in for keys Shift+1-5, which
 have no button in the keys list. Choosing a model posts "switch_model" with its
 weights path, which read.LiveDetector loads. Choosing a counting system posts
 "switch_count" with its COUNT_SYSTEMS id, which read.py passes to Reader.set_count_system.
+The decks button posts "cycle_decks", for Reader.cycle_decks; there is no key for it.
 
 Each entry of the keys list names its group (KEY_GROUPS): table, overlay, image,
 camera, or window. The page shows each group's keys side by side on one row.
@@ -67,8 +68,10 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
     """The dashboard's view of reader (its tracker, layout, count, and modes) this frame.
 
     count: the true count as "headline" with its "cue" (hud.count_cue), the running count,
-    cards left of "deck_size", and the unseen tens and aces ("high_left" of "high_total")
-    and aces ("aces_left" of "aces_total"), which match the grid's "left" column.
+    cards left of "deck_size" (52 per deck), and the unseen tens and aces ("high_left" of
+    "high_total") and aces ("aces_left" of "aces_total"), counted in copies, which match
+    the grid's "left" column. decks: the decks in the shoe, shown on the decks button.
+    Each grid card gives "seen" of its "copies" (one per deck).
     count_system: the counting-system dropdown, {"current": the COUNT_SYSTEMS id reader counts
     in, "choices": [{"id", "name"}]}. Each grid row's "value" is its rank's value in that system.
 
@@ -89,12 +92,13 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
             "cue": count_cue(count.true)[0],
             "running": f"{count.running:+d}",
             "cards_left": count.cards_left,
-            "deck_size": CARDS_PER_DECK,
+            "deck_size": count.decks * CARDS_PER_DECK,
             "high_left": dealt.left(HIGH_RANKS),
-            "high_total": len(HIGH_RANKS) * len(SUITS),
+            "high_total": len(HIGH_RANKS) * len(SUITS) * dealt.decks,
             "aces_left": dealt.left(["A"]),
-            "aces_total": len(SUITS),
+            "aces_total": len(SUITS) * dealt.decks,
         },
+        "decks": reader.decks,
         "count_system": {
             "current": count.system,
             "choices": [{"id": system_id, "name": system.name} for system_id, system in COUNT_SYSTEMS.items()],
@@ -126,14 +130,14 @@ def _key(key: str, label: str) -> dict:
 
 
 def _grid_row(rank: str, dealt: DealtCards, counting: CountSystem) -> dict:
-    """One rank's row of the Cards Left grid: its value in the counting system, each suit's state,
-    and how many are left."""
+    """One rank's row of the Cards Left grid: its value in the counting system, each suit's state
+    and copies seen, and how many copies are left."""
     cards = []
     for suit in SUITS:
         name = rank + suit
         cards.append({"name": name, "rank": rank, "suit": suit, "state": dealt.state(name),
-                      "duplicate": name in dealt.duplicates})
-    left = sum(card["state"] == "unseen" for card in cards)
+                      "duplicate": name in dealt.duplicates, "seen": dealt.seen(name), "copies": dealt.decks})
+    left = sum(dealt.copies_left(card["name"]) for card in cards)
     return {"rank": rank, "value": counting.values[rank], "cards": cards, "left": left}
 
 

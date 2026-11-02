@@ -33,6 +33,11 @@ The tracker smooths that out and remembers the order cards arrived in:
     round already has one. That collapses a card's corner indices, and a stray
     misread elsewhere cannot add a second King of Hearts. Face-down cards
     (BACK) are all different cards.
+  * Two or three decks (TrackerConfig.decks): a second King of Hearts is a
+    real card, so a new face track joins a card of its name only when it lies
+    within SAME_CARD_MATCH_DISTS match distances of that card or one of its
+    tracks, about a card's diagonal: the card's other corner. Farther away it
+    starts a new card of the same name, a second copy.
   * A hole card turned face up keeps its number. A BACK box is centred on the
     card, but face boxes are corner indices about half the card's diagonal
     away, so they start new tracks. A new face track with no card of its name
@@ -54,33 +59,41 @@ Memory, so a card is never counted twice:
   * The round ends when no card has been visible for round_end_frames (the
     dealer has swept the table, or every card was removed), or when
     new_round() is called. Numbers restart at 1 for the next round.
-  * shoe_seen lists every face card seen since the last shuffle, each once,
-    in the order first seen. The Hi-Lo count is computed from it, so a card
-    that leaves and comes back, even in a later round, is never counted again.
-    A name stays in it while any card of the round holds it, so renaming one of
-    two cards that share a name does not uncount the other.
+  * shoe_seen lists every face card seen since the last shuffle, in the order
+    first seen: each name once per copy, so at most `decks` times. The count
+    is computed from it, so a card that leaves and comes back, even in a later
+    round, is never counted again. A copy stays in it while a card of the round
+    holds it, so renaming one of two cards that share a name does not uncount
+    the other. A card still on the table as a new round begins is not counted
+    again under the name it had.
   * shoe_unrevealed counts the face-down cards placed this shoe that were never
     renamed to a face (a hole card swept face down, say). They have left the
     deck, so shoe_count subtracts them from cards_left, but they add nothing to
     the running count. A face-down card still on the table across new_round()
     gets a new number but is not added again.
-  * shoe_pending and shoe_locked split shoe_seen in two. A name first counted
-    this round is pending: a rename can still take it back. A name counted
-    before this round began is locked: it stays counted until the next shoe.
-  * A card placed or renamed with a face name already in shoe_seen before
-    this round is a DUPLICATE: one deck holds one of each card, so it is a
-    misread or a reshuffle nobody marked with new_shoe(). It is reported, not
-    counted again, and its name is added to shoe_duplicates. A card still on
-    the table when the round began, and two corners of one card joining by
-    name, are not duplicates.
+  * shoe_pending and shoe_locked split shoe_seen in two, copy by copy. A copy
+    counted this round is pending: a rename can still take it back. A copy
+    counted before this round began is locked: it stays counted until the
+    next shoe. With more than one deck a name can be both.
+  * A card is counted only while its name has fewer than `decks` copies in
+    shoe_seen. A card placed with a face name whose every copy is already
+    dealt, counted before this round or held by another card of this round,
+    is a DUPLICATE: a misread or a reshuffle nobody marked with new_shoe().
+    A card renamed to a name with every copy counted before this round is one
+    too; a rename may share a name with another card of this round while the
+    vote settles which one is misread. A duplicate is reported, not counted
+    again, and its name is added to shoe_duplicates. A card still on the
+    table when the round began, and two corners of one card joining by name,
+    are not duplicates.
   * rescan() takes back a misread while the round is still open. It forgets
     every card and track of this round and puts shoe_seen, shoe_unrevealed,
     and shoe_duplicates back as they were when the round began, so only the
     pending names leave the count. The cards on the table are then confirmed
     again from scratch and numbered from 1. A round that already ended is
     locked: rescan cannot reach back into it. A card still on the table from
-    an earlier round is placed again after a rescan, so it is reported as a
-    duplicate (face up) or added to shoe_unrevealed again (face down).
+    an earlier round is placed again after a rescan, so it is counted again
+    as another copy while the deck count allows, then reported as a duplicate
+    (face up), or added to shoe_unrevealed again (face down).
   * new_shoe() clears shoe_seen, shoe_unrevealed, and shoe_duplicates after a
     reshuffle.
 
@@ -100,10 +113,12 @@ from dataclasses import dataclass, field, replace
 from .cards import Card, Detection, Event
 from .deck import BACK, rank_of
 
+SAME_CARD_MATCH_DISTS = 4  # with decks > 1: match distances within which a face track of a card's name is that card
 
 @dataclass
 class TrackerConfig:
-    """Every tracker threshold, in frames and pixels. The defaults are permissive, for tests."""
+    """Every tracker threshold, in frames and pixels, and the decks in the shoe.
+    The defaults are permissive, for tests."""
     confirm_frames: int = 8            # sightings needed ...
     confirm_window: int | None = None  # ... within this many frames (None: ever)
     confirm_agreement: float = 0.0     # share of recent reads that must agree on the rank
@@ -114,10 +129,12 @@ class TrackerConfig:
     round_end_frames: int = 90         # frames with no card visible before the round is over
     label_window: int | None = None    # frames the name vote looks back (None: every read ever)
     hidden_frames: int | None = None   # frames a card may stay hidden before it is removed (None: never)
+    decks: int = 1                     # decks in the shoe: copies of each card that may be counted
 
     @classmethod
     def from_settings(cls, s, frame_width: int) -> TrackerConfig:
         """From settings.py: distances are fractions of the frame width, times are seconds at s.FPS.
+        decks keeps its default; pass settings.DECKS to CardTracker as a keyword.
 
         Each time becomes at least one frame, except HIDDEN_SECONDS, where 0 frames
         removes a card on the frame it is hidden."""
@@ -163,12 +180,14 @@ class CardTracker:
         the card already dealt: it is not reported as a duplicate, and a
         face-down one is not added to shoe_unrevealed twice."""
         self._dealt_backs |= {track_id for track_id, card in self._card_of.items() if card.label == BACK}
-        self._carried_tracks = set(self._card_of)  # tracks of cards still on the table as the round began
-        self._seen_before_round = set(self.shoe_seen)
+        # track id -> name its card was counted under, for cards still on the table as the round began
+        self._carried_tracks = {track_id: card.label for track_id, card in self._card_of.items()}
+        self._seen_before_round = list(self.shoe_seen)  # the locked copies: shoe_seen always starts with them
         self._unrevealed_before_round = self.shoe_unrevealed
         self._duplicates_before_round = set(self.shoe_duplicates)
         self.round: list[Card] = []
         self._card_of = {}
+        self._carried_cards: dict[int, str] = {}  # order -> name counted under, for cards placed from _carried_tracks
         self._next_order = 1  # placement numbers are never reused within a round, even after a removal
         self._empty_frames = 0
 
@@ -178,6 +197,7 @@ class CardTracker:
         self.shoe_unrevealed = 0  # face-down cards placed this shoe and never renamed to a face
         self.shoe_duplicates: set[str] = set()  # face names reported as a duplicate this shoe
         self.new_round()
+        self._carried_tracks = dict.fromkeys(self._carried_tracks)  # still not duplicates, but counted afresh
         self._dealt_backs = set()
 
     def rescan(self) -> bool:
@@ -189,13 +209,14 @@ class CardTracker:
         Returns True when this round had placed a card, even one since removed: only then
         was there anything to take back."""
         placed_this_round = self._next_order > 1
-        self.shoe_seen = [name for name in self.shoe_seen if name in self._seen_before_round]
+        self.shoe_seen = list(self._seen_before_round)
         self.shoe_unrevealed = self._unrevealed_before_round
         self.shoe_duplicates = set(self._duplicates_before_round)
         self.tracks = {}
         self._card_of = {}
         self._dealt_backs = set()
-        self._carried_tracks = set()
+        self._carried_tracks = {}
+        self._carried_cards = {}
         self.bound = []
         self.round = []
         self._next_order = 1
@@ -204,13 +225,23 @@ class CardTracker:
 
     @property
     def shoe_pending(self) -> set[str]:
-        """Face names first counted this round. A rename can still take them back."""
-        return {name for name in self.shoe_seen if name not in self._seen_before_round}
+        """Face names with a copy first counted this round. A rename can still take it back."""
+        return set(self.pending_copies)
 
     @property
     def shoe_locked(self) -> set[str]:
-        """Face names counted before this round began. They stay counted until new_shoe()."""
-        return {name for name in self.shoe_seen if name in self._seen_before_round}
+        """Face names with a copy counted before this round began. It stays counted until new_shoe()."""
+        return set(self._seen_before_round)
+
+    @property
+    def pending_copies(self) -> Counter:
+        """Copies of each face name first counted this round."""
+        return Counter(self.shoe_seen) - Counter(self._seen_before_round)
+
+    @property
+    def locked_copies(self) -> Counter:
+        """Copies of each face name counted before this round began."""
+        return Counter(self._seen_before_round)
 
     def update(self, detections: list[Detection]) -> list[Event]:
         """Advance one frame with that frame's detections.
@@ -218,8 +249,8 @@ class CardTracker:
         Returns the events this frame caused: placed cards first, then renamed,
         hidden, and returned cards in placement order, then removed cards, and
         round_over last. A placed or renamed event is followed by duplicate when
-        the card's name was already counted before this round. A removed card
-        has left the round; round_over also starts a new round.
+        every copy of the card's name was already dealt (see the module docstring).
+        A removed card has left the round; round_over also starts a new round.
 
         Also sets bound: one entry per detection, in the same order, giving the
         confirmed card its track belongs to, or None while that track is not
@@ -235,7 +266,7 @@ class CardTracker:
         confirmed = [track for track in by_age if track.confirmed]
 
         # A track already bound to a card stays with it. Any other joins the card
-        # with its name (one deck), a face-down card near it, or starts a new one.
+        # with its name (only nearby with more decks), a face-down card near it, or starts a new one.
         tracks_of: dict[int, list[Track]] = {}  # card order -> its tracks this frame
         for track in confirmed:
             card = self._card_of.get(track.id)
@@ -245,11 +276,17 @@ class CardTracker:
                     card = Card(self._next_order, track.label, track.cx, track.cy, self.frame)
                     self._next_order += 1
                     self.round.append(card)
-                    self._count(card)
+                    carried_label = self._carried_tracks.get(track.id)
+                    if carried_label is not None:
+                        self._carried_cards[card.order] = carried_label
+                    if not self._holds_locked_copy(card):
+                        self._count(card)
                     if card.label == BACK and track.id not in self._dealt_backs:
                         self.shoe_unrevealed += 1
                     events.append(Event("placed", card, self.frame))
-                    if track.id not in self._carried_tracks and self._is_duplicate(card.label):
+                    same_name = sum(1 for other in self.round if other is not card and other.label == card.label
+                                    and not self._holds_locked_copy(other))
+                    if track.id not in self._carried_tracks and self._is_duplicate(card.label, same_name):
                         self.shoe_duplicates.add(card.label)
                         events.append(Event("duplicate", card, self.frame))
                 self._card_of[track.id] = card
@@ -319,18 +356,28 @@ class CardTracker:
         """The card of this round an unbound track belongs to, if any.
 
         A face track joins the card with its name, or a face-down card being
-        revealed whose other corner already reads that name. Otherwise it joins a
-        nearby face-down card that is out of sight this frame: the hole card it
-        was before it was turned over. A BACK track only joins a hidden face-down
+        revealed whose other corner already reads that name. With one deck that
+        card may be anywhere; with more, it is the nearest such card within
+        SAME_CARD_MATCH_DISTS match distances. Otherwise it joins a nearby
+        face-down card that is out of sight this frame: the hole card it was
+        before it was turned over. A BACK track only joins a hidden face-down
         card near it."""
         if track.label == BACK:
             return self._back_card_near(track.cx, track.cy, include_unseen=False)
-        for card in self.round:
-            if card.label == track.label:
-                return card
-            if card.label == BACK and any(t.label == track.label for t in self._tracks_of_card(card)):
-                return card
+        named = [card for card in self.round if card.label == track.label
+                 or (card.label == BACK and any(t.label == track.label for t in self._tracks_of_card(card)))]
+        if self.cfg.decks > 1:
+            limit = SAME_CARD_MATCH_DISTS * self.cfg.match_dist
+            by_distance = sorted((self._distance_to(card, track), card.order, card) for card in named)
+            named = [card for dist, _, card in by_distance if dist <= limit]
+        if named:
+            return named[0]
         return self._back_card_near(track.cx, track.cy, include_unseen=True)
+
+    def _distance_to(self, card: Card, track: Track) -> float:
+        """Pixels from the track to the nearest of the card's last position and its tracks."""
+        points = [(card.x, card.y)] + [(t.cx, t.cy) for t in self._tracks_of_card(card)]
+        return min(((x - track.cx) ** 2 + (y - track.cy) ** 2) ** 0.5 for x, y in points)
 
     def _tracks_of_card(self, card: Card) -> list[Track]:
         return [self.tracks[track_id] for track_id, bound in self._card_of.items() if bound is card]
@@ -363,45 +410,59 @@ class CardTracker:
     def _remove(self, card: Card):
         """Take a card off the table. Its name stays in the shoe count.
 
-        A counted card hands the count to another card of the round with its
-        name, if there is one, so a later rename of that card still corrects it."""
+        A counted card hands the count to a card of the round with its name that
+        holds no copy yet, if there is one, so a later rename of that card still corrects it."""
         self.round.remove(card)
         if card.counted:
             card.counted = False
-            holder = next((c for c in self.round if c.label == card.label), None)
+            holder = next((c for c in self.round if c.label == card.label and self._can_take_copy(c)), None)
             if holder is not None:
                 holder.counted = True
 
-    def _is_duplicate(self, label: str) -> bool:
-        """A face name already counted before this round: one deck has only one such card."""
-        return label != BACK and label in self._seen_before_round
+    def _holds_locked_copy(self, card: Card) -> bool:
+        """A card still on the table as the round began, under the name it was counted by then."""
+        return self._carried_cards.get(card.order) == card.label
+
+    def _can_take_copy(self, card: Card) -> bool:
+        """Whether a card can take over a copy from another card of its name: it holds none yet."""
+        return not card.counted and not self._holds_locked_copy(card)
+
+    def _is_duplicate(self, label: str, in_round: int = 0) -> bool:
+        """A face name with every copy already dealt: `decks` copies counted before this
+        round, together with in_round other cards of this round placed under that name.
+        in_round leaves out cards carried in from the last round: their copies are locked."""
+        return label != BACK and self._seen_before_round.count(label) + in_round >= self.cfg.decks
 
     def _count(self, card: Card, at: int | None = None):
-        """Add the card's name to the shoe count, once per shoe. at: position to keep the order."""
-        if card.label != BACK and card.label not in self.shoe_seen:
+        """Add the card's name to the shoe count, at most once per deck. at: position to keep the order."""
+        if card.label != BACK and self.shoe_seen.count(card.label) < self.cfg.decks:
             self.shoe_seen.insert(len(self.shoe_seen) if at is None else at, card.label)
             card.counted = True
 
     def _rename(self, card: Card, label: str):
         """The vote changed its mind: same card, new name, and the count follows.
 
-        The old name leaves the count only if no other card of the round still
-        holds it; otherwise that card keeps it counted."""
+        The old name's copy leaves the count unless another card of the round with that
+        name holds no copy yet; that card then keeps the copy counted. A card carried in
+        from the last round already holds a locked copy, so it takes none, and renamed
+        back to the name it was carried under it is not counted again."""
         at = None
         if card.counted:
             card.counted = False
-            holder = next((c for c in self.round if c is not card and c.label == card.label), None)
+            holder = next((c for c in self.round if c is not card and c.label == card.label and self._can_take_copy(c)),
+                          None)
             if holder is not None:
                 holder.counted = True
-            else:  # the old name was never on the table
-                at = self.shoe_seen.index(card.label)
+            else:  # the old name was never on the table: drop its latest copy, the one counted this round
+                at = len(self.shoe_seen) - 1 - self.shoe_seen[::-1].index(card.label)
                 self.shoe_seen.pop(at)
         if card.label == BACK and label != BACK:
             self.shoe_unrevealed -= 1
         elif card.label != BACK and label == BACK:
             self.shoe_unrevealed += 1
         card.label = label
-        self._count(card, at)
+        if not self._holds_locked_copy(card):
+            self._count(card, at)
 
     def _match(self, detections: list[Detection]) -> list[int]:
         """Hit each detection's track, starting new tracks for the unmatched, and age the rest.

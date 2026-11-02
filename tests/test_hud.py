@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 
 import cv2
 import numpy as np
@@ -8,10 +9,12 @@ from cardReader.blackjack import COUNT_SYSTEMS, shoe_count
 from cardReader.cards import Card, Detection
 from cardReader.hud import (
     BADGE,
+    DIM,
     GREEN,
     GREY,
     KEY_LIST,
     KEYS,
+    PENDING_FILL,
     RED,
     SHADE_ALPHA,
     SIDEBAR,
@@ -243,6 +246,51 @@ def test_dealt_cards_count_the_unseen_cards_of_given_ranks():
     assert dealt.left(["A"]) == 3
     assert dealt.left(["10", "J", "Q", "K", "A"]) == 17
     assert DealtCards().left(["A"]) == 4
+
+
+def test_dealt_cards_count_copies_with_more_decks():
+    dealt = DealtCards(locked=Counter({"AS": 2, "KH": 1}), pending=Counter({"AH": 1}), decks=3)
+    assert (dealt.seen("AS"), dealt.copies_left("AS"), dealt.state("AS")) == (2, 1, "locked")
+    assert (dealt.seen("AH"), dealt.state("AH"), dealt.seen("AD")) == (1, "pending", 0)
+    assert dealt.left(["A"]) == 12 - 3 and dealt.left(["K"]) == 11
+    unseen = dealt.unseen()
+    assert len(unseen) == 156 - 4 and unseen.count("AS") == 1 and unseen.count("2S") == 3
+    assert DealtCards(locked=Counter({"AS": 2}), decks=1).copies_left("AS") == 0  # fewer decks chosen mid-shoe
+
+
+def test_dealt_cards_show_a_pending_copy_over_a_locked_one():
+    assert DealtCards(locked={"KH"}, pending={"KH"}, decks=2).state("KH") == "pending"
+
+
+def test_the_window_counts_cards_left_out_of_the_whole_shoe(monkeypatch):
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    Hud().draw(np.zeros((720, 1280, 3), np.uint8), [], [], 30.0, SeatLayout(3, 1280, 720),
+               shoe_count(["KH"], decks=2), dealt=DealtCards(pending={"KH"}, decks=2))
+    assert "103/104" in texts
+    assert "7" in texts and "8" in texts                    # the K row's copies left, and every other row's
+
+
+def test_a_mini_card_with_copies_left_is_filled_by_the_share_seen():
+    hud = Hud()
+    hud.draw(np.zeros((2160, 3840, 3), np.uint8), [], [], 30.0, SeatLayout(3, 3840, 2160), shoe_count([]))
+    h = round(26 * hud.s)        # 4K: a cell big enough that the fill shows around the markings
+    w = round(h * 2.5 / 3.5)
+
+    def cell(state, seen):
+        img = np.full((h, w, 3), 25, np.uint8)
+        hud._cell_mark(img, "KS", state, False, 0, 0, w, h, seen=seen)
+        return img
+
+    half = cell("locked", 0.5)
+    mid = h // 2
+    filled = (half[mid] == DIM).all(axis=1).nonzero()[0]
+    white = (half[mid] == WHITE).all(axis=1).nonzero()[0]
+    assert filled.size and white.size and filled.max() < white.min()  # dim on the left, white on the right
+    assert (cell("locked", 1 / 3) != half).any() and (half != cell("locked", 1.0)).any()
+    assert (cell("pending", 0.5) == PENDING_FILL).all(axis=2).any()
+    assert (cell("unseen", 0.0) == cell("unseen", 1.0)).all()
 
 
 @pytest.mark.parametrize(("seen", "lines"), [(["2S"], {"high cards left", "favours player"}),
