@@ -332,11 +332,15 @@ def test_the_dealer_with_a_hole_card_gets_its_blackjack_chance_and_loose_cards_n
     assert hands["P1"]["odds"] == {"blackjack": 4}                 # 2 * 3/50 aces * 16/49 tens = 3.9%
 
 
-def test_the_page_renders_each_hands_odds_as_a_row_across_it():
+def test_the_page_renders_each_hands_odds_as_a_row_of_stat_tiles():
     page = server_module.PAGE.read_text()
     assert "${renderOdds(hand.odds)}" in page
     assert 'const NEXT_CARD = ["21", "20", "19", "18", "bust"];' in page
-    assert ".hand .odds { grid-column: 1 / -1;" in page
+    assert 'statTile("BLACKJACK", odds.blackjack)' in page
+    assert '<span class="stat"><span class="label">${esc(label)}</span><span class="value">' in page
+    assert ".hand .odds { grid-column: 1 / -1; display: flex; flex-wrap: wrap;" in page
+    assert "font-size: 1.4rem; font-weight: 700;" in page
+    assert "next card:" not in page and "blackjack chance" not in page
 
 
 def test_the_page_has_a_counting_system_dropdown_and_scales_the_row_shading():

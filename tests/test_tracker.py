@@ -620,6 +620,38 @@ def test_two_decks_a_hole_card_reveal_joins_its_own_card_not_a_far_card_of_that_
     assert tr.shoe_seen == ["QH", "QH"] and tr.shoe_unrevealed == 0
 
 
+@pytest.mark.parametrize("decks", [2, 3])
+def test_more_decks_two_cards_of_one_name_fanned_in_one_hand_are_two_cards(decks):
+    tr = real_tracker()
+    tr.cfg.decks = decks
+    run(tr, corners("KH", 900, 500), 30)
+    run(tr, [*corners("KH", 900, 500), *corners("KH", 950, 500)], 30)  # the second KH fanned 50 px over
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH"), (2, "KH")]
+    assert tr.shoe_seen == ["KH", "KH"] and tr.shoe_duplicates == set()
+
+
+def test_three_decks_a_fourth_copy_fanned_in_one_hand_is_a_duplicate():
+    tr = real_tracker()
+    tr.cfg.decks = 3
+    hand = []
+    for i in range(3):
+        hand += corners("KH", 900 + 50 * i, 500)
+        run(tr, hand, 30)
+    assert [c.order for c in tr.round] == [1, 2, 3] and tr.shoe_seen == ["KH"] * 3
+    ev = run(tr, [*hand, *corners("KH", 1050, 500)], 30)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 4), ("duplicate", 4)]
+    assert tr.shoe_seen == ["KH"] * 3 and tr.shoe_duplicates == {"KH"}
+
+
+def test_two_decks_a_hole_card_reveal_beside_a_card_of_that_name_joins_its_own_card():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, [det("BACK", 900, 300), *corners("QH", 1030, 300)], 30)
+    run(tr, [*corners("QH", 900, 300), *corners("QH", 1030, 300)], 120)  # the hole card is a QH too
+    assert [(c.order, c.label) for c in tr.round] == [(1, "QH"), (2, "QH")]
+    assert tr.shoe_seen == ["QH", "QH"] and tr.shoe_unrevealed == 0
+
+
 def test_two_decks_a_card_still_down_through_a_new_round_is_not_counted_again():
     tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
     run(tr, [det("QS", 50, 50)], 3)
