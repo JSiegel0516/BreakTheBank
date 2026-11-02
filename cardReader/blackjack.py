@@ -24,14 +24,19 @@ true count means the cards left are rich in high cards (tens and aces), which
 favours the player; a negative one means low cards are left, which favours the
 dealer.
 
-Odds: player_odds and dealer_odds give a hand's chances as whole percentages,
-exact against the unseen cards: the shoe minus the faces seen, one entry per
-copy left. A face-down card never revealed is one of those unseen cards, so it
-counts as a random draw from them.
+Odds: player_odds, dealer_odds, dealer_final_odds, and stand_odds give a hand's
+chances as whole percentages, exact against the unseen cards: the shoe minus the
+faces seen, one entry per copy left. A face-down card never revealed is one of
+those unseen cards, so it counts as a random draw from them. dealer_final_odds
+plays the dealer out, drawing without replacement until DEALER_STANDS_AT or bust;
+stand_odds compares a standing player hand with those finals. insurance says
+whether the 2-to-1 insurance bet pays on average against the unseen cards.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
+from functools import cache, lru_cache
 
 from .deck import BACK, rank_of
 
@@ -246,3 +251,137 @@ def dealer_odds(labels: list[str], unseen: list[str]) -> dict[str, int] | None:
     if not unseen or len(labels) != 2 or len(faces) != 1:
         return None
     return {"blackjack": _completes_blackjack(faces[0], unseen)}
+
+
+DEALER_FINALS = ("21", "20", "19", "18", "17", "bust")  # the dealer's possible finals, in the page's order
+
+
+def _draw_counts(unseen: list[str]) -> tuple[int, ...]:
+    """Unseen copies by the value a draw adds with aces as 1: index 0 is aces, 1 to 8 are 2-9, 9 is ten-value."""
+    counts = [0] * 10
+    for card in unseen:
+        value = card_value(card)
+        counts[0 if value == 11 else value - 1] += 1
+    return tuple(counts)
+
+
+def _best_total(hard: int, has_ace: bool) -> int:
+    """hand_value's total for a hand worth hard with every ace as 1: one ace counts 11 when that does not bust."""
+    return hard + 10 if has_ace and hard + 10 <= 21 else hard
+
+
+@lru_cache(maxsize=8)
+def _dealer_finals(faces: tuple[str, ...], hidden: int, counts: tuple[int, ...]) -> dict[str, Fraction] | None:
+    """Exact chances of each DEALER_FINALS entry for a dealer with faces up and hidden cards face down,
+    drawing from counts (_draw_counts). With exactly one card up and one down, "blackjack" comes first
+    and "21" leaves it out. None when the cards can run out before the dealer finishes, on any path,
+    since the finals would then be incomplete.
+
+    Cached, so the dealer's row and every player's stand odds in one snapshot share one computation."""
+
+    @cache
+    def play_out(hard: int, has_ace: bool, left: tuple[int, ...], draws_due: int) -> dict[str, Fraction] | None:
+        """The finals' chances from a hand worth hard (aces as 1) that must still draw draws_due cards,
+        or None when the cards in left can run out first."""
+        if hard > 21:
+            return {"bust": Fraction(1)}
+        total = _best_total(hard, has_ace)
+        if not draws_due and total >= DEALER_STANDS_AT:
+            return {str(total): Fraction(1)}
+        cards_left = sum(left)
+        if not cards_left:
+            return None
+        finals: dict[str, Fraction] = {}
+        for index, copies in enumerate(left):
+            if not copies:
+                continue
+            value = index + 1
+            after = left[:index] + (copies - 1,) + left[index + 1:]
+            drawn = play_out(hard + value, has_ace or value == 1, after, max(draws_due - 1, 0))
+            if drawn is None:
+                return None
+            for final, share in drawn.items():
+                finals[final] = finals.get(final, Fraction(0)) + Fraction(copies, cards_left) * share
+        return finals
+
+    hard = sum(1 if rank_of(label) == "A" else card_value(label) for label in faces)
+    has_ace = any(rank_of(label) == "A" for label in faces)
+    played = play_out(hard, has_ace, counts, hidden)
+    if played is None:
+        return None
+    chances = dict.fromkeys(DEALER_FINALS, Fraction(0)) | played
+    if len(faces) != 1 or hidden != 1:
+        return chances
+    # the hole card completes a blackjack: a ten-value card under an ace, an ace under a ten-value card
+    completing = {11: counts[9], 10: counts[0]}.get(card_value(faces[0]), 0)
+    blackjack = Fraction(completing, sum(counts))
+    chances["21"] -= blackjack
+    return {"blackjack": blackjack} | chances
+
+
+def _dealer_chances(labels: list[str], unseen: list[str]) -> dict[str, Fraction] | None:
+    """_dealer_finals for a dealer hand, or None when nothing is unseen, no card is up, the dealer is finished,
+    or the unseen cards can run out before the dealer finishes."""
+    faces = tuple(label for label in labels if label != BACK)
+    if not unseen or not faces or dealer_finished(labels):
+        return None
+    return _dealer_finals(faces, labels.count(BACK), _draw_counts(unseen))
+
+
+def dealer_final_odds(labels: list[str], unseen: list[str]) -> dict[str, int] | None:
+    """The chance, as whole percentages, that the dealer ends on each of 21, 20, 19, 18, 17, or bust,
+    e.g. {"21": 12, "20": 18, "19": 13, "18": 13, "17": 13, "bust": 31}.
+
+    The dealer plays out from its face-up cards, drawing from the unseen card labels without replacement
+    until DEALER_STANDS_AT (soft 17 included) or bust; each face-down card is one more random draw.
+    With exactly one card up and one face down, "blackjack" comes first, the dealer_odds value, and
+    "21" leaves blackjacks out, so the entries are separate outcomes. Each entry is rounded on its own,
+    so they may sum to 99 or 101.
+    None when nothing is unseen, no card is face up, the dealer is finished (dealer_finished), or some
+    order of draws runs out of unseen cards before the dealer finishes, so the finals would be incomplete."""
+    chances = _dealer_chances(labels, unseen)
+    if chances is None:
+        return None
+    return {final: _percent(chance, 1) for final, chance in chances.items()}
+
+
+def stand_odds(player_labels: list[str], dealer_labels: list[str], unseen: list[str]) -> dict[str, int] | None:
+    """A live player hand's chances, as whole percentages, to win, push, or lose if it stands now,
+    e.g. {"win": 42, "push": 6, "lose": 52}.
+
+    The player's total meets each of the dealer's finals (dealer_final_odds): a dealer bust or a lower
+    total wins, the same total pushes, and a higher total or a dealer blackjack loses.
+    None for a hand with fewer than two cards and whenever player_odds is None (nothing unseen,
+    a card face down, or the hand finished), and whenever dealer_final_odds is None for a dealer
+    still to play, such as one with no face-up card or one the unseen cards could run out on."""
+    if len(player_labels) < 2 or player_odds(player_labels, dealer_labels, unseen) is None:
+        return None
+    chances = _dealer_chances(dealer_labels, unseen)
+    if chances is None:
+        return None
+    player_total = hand_value(player_labels)[0]
+    win = chances["bust"]
+    push = Fraction(0)
+    lose = chances.get("blackjack", Fraction(0))
+    for final in DEALER_FINALS[:-1]:
+        dealer_total = int(final)
+        if dealer_total < player_total:
+            win += chances[final]
+        elif dealer_total == player_total:
+            push += chances[final]
+        else:
+            lose += chances[final]
+    return {"win": _percent(win, 1), "push": _percent(push, 1), "lose": _percent(lose, 1)}
+
+
+def insurance(dealer_labels: list[str], unseen: list[str]) -> str | None:
+    """"take" or "skip" for the insurance bet while the dealer shows an ace with one card face down.
+
+    Insurance pays 2 to 1 when the hole card is ten-value, so it pays on average only when more than
+    one third of the unseen cards are ten-value: "take" then, "skip" at a third or less.
+    None for any other dealer hand, or when nothing is unseen."""
+    faces = [label for label in dealer_labels if label != BACK]
+    if not unseen or len(dealer_labels) != 2 or len(faces) != 1 or rank_of(faces[0]) != "A":
+        return None
+    tens = sum(rank_of(card) in TEN_RANKS for card in unseen)
+    return "take" if 3 * tens > len(unseen) else "skip"

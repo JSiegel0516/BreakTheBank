@@ -149,6 +149,11 @@
   }
   .hand .odds .label { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
   .hand .odds .value { font-size: 1.4rem; font-weight: 700; line-height: 1.1; color: var(--text); font-variant-numeric: tabular-nums; }
+  /* a small label naming a row of tiles, such as STAND, set before its first tile */
+  .hand .odds .group {
+    align-self: center; min-width: 3.5rem;
+    font-size: .75rem; font-weight: 700; letter-spacing: .06em; color: var(--grey);
+  }
   .seat { font-weight: 700; color: var(--seat); overflow-wrap: anywhere; }
   .seat[data-seat] { cursor: text; }
   .seat[data-seat]:hover { text-decoration: underline dotted; }
@@ -415,25 +420,51 @@
         <div class="cards">${hand.cards.map(renderChip).join("")}</div>
         <div class="total${empty ? " empty" : ""}">${esc(hand.total)}${outcomeTag(hand)}</div>
         <div class="play">${splitButton(hand)}<div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div></div>
-        ${renderOdds(hand.odds)}
+        ${renderOdds(hand)}
       </div>`;
     }
     return html;
   }
 
-  // A hand's odds as a row of tiles across it: the next card's totals for a live hand (21, 20,
-  // 19, 18, BUST), else one BLACKJACK tile. The totals are listed by hand, since an object
-  // lists "18" before "21".
+  // A hand's odds as rows of tiles across it. A player: the next card's totals for a live hand
+  // (21, 20, 19, 18, BUST), else one BLACKJACK tile, then a STAND row (WIN, PUSH, LOSE) for a
+  // live hand. The dealer: its final totals, BLACKJACK first while the hole card is down, then
+  // INSURANCE (TAKE or SKIP) while an ace shows. Keys are listed by hand, since an object lists
+  // "18" before "21".
   const NEXT_CARD = ["21", "20", "19", "18", "bust"];
-  function renderOdds(odds) {
-    if (!odds) return "";
-    const tiles = "blackjack" in odds ? statTile("BLACKJACK", odds.blackjack)
-      : NEXT_CARD.map((key) => statTile(key.toUpperCase(), odds[key])).join("");
-    return `<div class="odds">${tiles}</div>`;
+  const DEALER_FINALS = ["blackjack", "21", "20", "19", "18", "17", "bust"];
+  const STAND = ["win", "push", "lose"];
+  function renderOdds(hand) {
+    if (hand.kind === "dealer") return renderDealerOdds(hand);
+    let html = "";
+    if (hand.odds) {
+      const tiles = "blackjack" in hand.odds ? statTile("BLACKJACK", hand.odds.blackjack)
+        : percentTiles(hand.odds, NEXT_CARD);
+      html += `<div class="odds">${tiles}</div>`;
+    }
+    if (hand.stand) {
+      html += `<div class="odds"><span class="group">STAND</span>${percentTiles(hand.stand, STAND)}</div>`;
+    }
+    return html;
+  }
+
+  function renderDealerOdds(hand) {
+    let tiles = hand.odds ? percentTiles(hand.odds, DEALER_FINALS) : "";
+    if (hand.insurance) tiles += textTile("INSURANCE", hand.insurance.toUpperCase());
+    return tiles ? `<div class="odds">${tiles}</div>` : "";
+  }
+
+  // One tile per key of odds that is present, in the order of keys.
+  function percentTiles(odds, keys) {
+    return keys.filter((key) => key in odds).map((key) => statTile(key.toUpperCase(), odds[key])).join("");
   }
 
   function statTile(label, percent) {
-    return `<span class="stat"><span class="label">${esc(label)}</span><span class="value">${esc(percent)}%</span></span>`;
+    return textTile(label, `${percent}%`);
+  }
+
+  function textTile(label, text) {
+    return `<span class="stat"><span class="label">${esc(label)}</span><span class="value">${esc(text)}</span></span>`;
   }
 
   // A row's classes: its kind, its outcome, and for the dealer a pulse when it has blackjack

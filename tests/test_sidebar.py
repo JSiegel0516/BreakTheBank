@@ -7,6 +7,7 @@ import urllib.request
 import numpy as np
 import pytest
 
+from cardReader.blackjack import _dealer_finals
 from cardReader.cards import Detection
 from cardReader.hud import CUE_SEPARATOR, EDIT_HELP, KEY_LIST, Hud, count_cue
 from cardReader.reader import Reader
@@ -81,11 +82,15 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert hands["P2"]["hint"] is None                                       # one card: no hint
     assert hands["P3"] == {"seat": "P3", "name": "P3", "part": None, "kind": "player", "cards": [], "total": "-",
                            "hint": None, "can_split": False, "outcome": None,
-                           "odds": {"blackjack": 5}}               # 2 * 4/48 aces * 15/47 tens
+                           "odds": {"blackjack": 5}, "stand": None, "insurance": None}  # 2 * 4/48 aces * 15/47 tens
     # 48 unseen: 16 needs a 5, 4, 3, or 2 (three 2s left) for 21 to 18; a 6 (two left), 7, 8, 9, or ten busts
     assert hands["P1"]["odds"] == {"21": 8, "20": 8, "19": 8, "18": 6, "bust": 60}
     assert hands["P2"]["odds"] == {"blackjack": 0}                           # a 2 cannot make a blackjack
-    assert hands["dealer"]["odds"] is None                                   # no hole card
+    # a 6 up and no hole card yet: the dealer draws on, with no blackjack entry
+    assert hands["dealer"]["odds"] == {"21": 10, "20": 10, "19": 11, "18": 10, "17": 17, "bust": 42}
+    assert hands["dealer"]["insurance"] is None and hands["dealer"]["stand"] is None
+    assert hands["P1"]["stand"] == {"win": 42, "push": 0, "lose": 58}       # 16 wins only on a dealer bust
+    assert hands["P2"]["stand"] is None and hands["P3"]["stand"] is None and hands["P1"]["insurance"] is None
     assert hands["dealer"]["outcome"] is None and hands["P1"]["outcome"] is None and hands["P2"]["outcome"] is None
 
     assert snapshot["players"] == 3 and snapshot["edit_help"] == []
@@ -327,20 +332,54 @@ def test_the_dealer_with_a_hole_card_gets_its_blackjack_chance_and_loose_cards_n
     reader.process(frame, loose)
     reader.process(frame, loose)
     hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
-    assert hands["dealer"]["odds"] == {"blackjack": 32}            # 16 tens among 50 unseen (AS, 7C seen)
-    assert hands["OTHER"]["odds"] is None
+    # 16 tens among 50 unseen (AS, 7C seen); "21" leaves blackjack out
+    assert hands["dealer"]["odds"] == {"blackjack": 32, "21": 5, "20": 13, "19": 13, "18": 11, "17": 13, "bust": 12}
+    assert hands["dealer"]["insurance"] == "skip"                  # 16 of 50 is under a third
+    assert hands["OTHER"]["odds"] is None and hands["OTHER"]["insurance"] is None and hands["OTHER"]["stand"] is None
     assert hands["P1"]["odds"] == {"blackjack": 4}                 # 2 * 3/50 aces * 16/49 tens = 3.9%
 
 
 def test_the_page_renders_each_hands_odds_as_a_row_of_stat_tiles():
     page = server_module.PAGE.read_text()
-    assert "${renderOdds(hand.odds)}" in page
+    assert "${renderOdds(hand)}" in page
     assert 'const NEXT_CARD = ["21", "20", "19", "18", "bust"];' in page
-    assert 'statTile("BLACKJACK", odds.blackjack)' in page
+    assert 'statTile("BLACKJACK", hand.odds.blackjack)' in page
     assert '<span class="stat"><span class="label">${esc(label)}</span><span class="value">' in page
     assert ".hand .odds { grid-column: 1 / -1; display: flex; flex-wrap: wrap;" in page
     assert "font-size: 1.4rem; font-weight: 700;" in page
     assert "next card:" not in page and "blackjack chance" not in page
+
+
+def test_the_page_renders_the_dealers_finals_insurance_and_each_players_stand_row():
+    page = server_module.PAGE.read_text()
+    assert 'const DEALER_FINALS = ["blackjack", "21", "20", "19", "18", "17", "bust"];' in page
+    assert 'if (hand.kind === "dealer") return renderDealerOdds(hand);' in page
+    assert 'textTile("INSURANCE", hand.insurance.toUpperCase())' in page
+    assert 'const STAND = ["win", "push", "lose"];' in page
+    assert '<div class="odds"><span class="group">STAND</span>${percentTiles(hand.stand, STAND)}</div>' in page
+    assert ".hand .odds .group {" in page
+
+
+def test_a_snapshot_plays_the_dealer_out_once_for_every_hand(tmp_path):
+    reader = new_reader(tmp_path, 3)
+    place(reader, ("9C", 0, 0), ("KS", 1, -30), ("6H", 1, 30), ("10D", 2, -30), ("2H", 2, 30),
+          ("5S", 3, -30), ("7C", 3, 30))
+    _dealer_finals.cache_clear()
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    assert _dealer_finals.cache_info().misses == 1
+    for seat in ("P1", "P2", "P3"):
+        stand = hands[seat]["stand"]
+        assert set(stand) == {"win", "push", "lose"} and 99 <= sum(stand.values()) <= 101
+    assert "blackjack" not in hands["dealer"]["odds"] and hands["dealer"]["insurance"] is None
+    assert 99 <= sum(hands["dealer"]["odds"].values()) <= 101
+
+
+def test_a_finished_dealer_has_no_finals_and_its_players_no_stand_row(tmp_path):
+    reader = new_reader(tmp_path, 1)
+    place(reader, ("KC", 0, -30), ("7D", 0, 30), ("9S", 1, -30), ("8H", 1, 30))
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    assert hands["dealer"]["odds"] is None and hands["dealer"]["insurance"] is None
+    assert hands["P1"]["outcome"] == "push" and hands["P1"]["stand"] is None
 
 
 def test_the_page_has_a_counting_system_dropdown_and_scales_the_row_shading():

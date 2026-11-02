@@ -4,6 +4,8 @@ and the buttons the page offers in place of keys.
 build_snapshot depends only on its arguments, so it can be tested without a camera,
 a window, or a server. Every value is a JSON type. "timing" changes on almost every
 frame, so the server leaves it out when deciding whether anything changed.
+Each hand carries the figures for its odds tiles (see _hand): the next card's odds and the
+stand odds for a player hand, and the dealer's final totals and an insurance call for the dealer.
 
 A page button posts its action name; read.py presses ACTION_KEYS[name] for it, so a
 button does exactly what its key does. Renaming a seat posts "rename_seat" with the
@@ -24,11 +26,13 @@ from ..blackjack import (
     CARDS_PER_DECK,
     COUNT_SYSTEMS,
     CountSystem,
-    dealer_odds,
+    dealer_final_odds,
+    insurance,
     is_pair,
     milestone,
     outcome,
     player_odds,
+    stand_odds,
 )
 from ..deck import SUITS
 from ..hud import EDIT_HELP, GRID_RANKS, HIGH_RANKS, KEY_LIST, DealtCards, count_cue, seat_title
@@ -149,9 +153,14 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: l
     Only player seats get a strategy hint, which never says split for a hand of a split seat.
     outcome: blackjack.outcome against the dealer for a player hand; the dealer's own
     blackjack.milestone ('blackjack', 'twenty-one', 'bust', or None); None for OTHER.
-    odds: the hand's chances from the unseen card labels, blackjack.player_odds for a player
-    hand and blackjack.dealer_odds for the dealer, such as {"blackjack": 7}; None for OTHER
-    and for a hand with no odds row."""
+    odds: the hand's chances from the unseen card labels: blackjack.player_odds for a player
+    hand, such as {"blackjack": 7}, and blackjack.dealer_final_odds for the dealer, such as
+    {"blackjack": 31, "21": 5, "20": 13, "19": 13, "18": 13, "17": 13, "bust": 12};
+    None for OTHER and for a hand with no odds row.
+    stand: blackjack.stand_odds for a player hand, {"win", "push", "lose"} if it stands now, else None.
+    insurance: blackjack.insurance for the dealer, "take" or "skip" while an ace shows over a
+    face-down card, else None. The dealer's finals are cached in blackjack, so the dealer's
+    odds and every player's stand share one computation per frame."""
     kind = {DEALER: "dealer", OTHER: "other"}.get(hand.seat, "player")
     cards = [{"order": card.order, "label": card.label, "hidden": card.hidden} for card in hand.cards]
     unsplit = hand.part is None
@@ -166,6 +175,8 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: l
         "can_split": kind == "player" and unsplit and is_pair(hand.labels),
         "outcome": _outcome(kind, hand.labels, dealer_labels),
         "odds": _odds(kind, hand.labels, dealer_labels, unseen),
+        "stand": stand_odds(hand.labels, dealer_labels, unseen) if kind == "player" else None,
+        "insurance": insurance(hand.labels, unseen) if kind == "dealer" else None,
     }
 
 
@@ -181,5 +192,5 @@ def _odds(kind: str, labels: list[str], dealer_labels: list[str], unseen: list[s
     if kind == "player":
         return player_odds(labels, dealer_labels, unseen)
     if kind == "dealer":
-        return dealer_odds(labels, unseen)
+        return dealer_final_odds(labels, unseen)
     return None

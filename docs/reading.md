@@ -246,19 +246,27 @@ percentages. Each tile has a short bold label over a large percentage, so the
 row reads from across the table; it wraps onto more lines when the page is
 narrow. The percentages are exact against the unseen cards: the shoe minus every face
 seen this shoe, with each copy of a card counted, so two decks hold eight aces. A face-down card never turned up is one of those unseen cards,
-so it counts as a random draw from them.
+so it counts as a random draw from them. The dealer's tiles play the dealer
+out card by card from those unseen cards, standing on 17 (soft 17 included),
+so they are exact too.
 
 | Hand | Odds row |
 |---|---|
-| Player with two or more cards, still playing | five tiles, `21 8%`, `20 8%`, `19 8%`, `18 6%`, and `BUST 60%`: the chance the next card brings the total to each of 21, 20, 19, and 18, or busts. A soft hand counts its ace as 1 when 11 would bust |
+| Player with two or more cards, still playing | five tiles, `21 8%`, `20 8%`, `19 8%`, `18 6%`, and `BUST 60%`: the chance the next card brings the total to each of 21, 20, 19, and 18, or busts. A soft hand counts its ace as 1 when 11 would bust. Under it, a second row headed `STAND` with three tiles, `WIN 42%`, `PUSH 0%`, and `LOSE 58%`: the chance the hand wins, pushes, or loses if it stands now. A dealer bust or a lower dealer total wins; a dealer blackjack loses |
 | Empty player seat | one tile, `BLACKJACK 5%`: the chance of a two-card blackjack, 2 × aces/N × tens/(N − 1) for N unseen cards |
 | Player with one card | one tile, `BLACKJACK 31%`: the chance the second card makes a blackjack; 0% unless the card is an ace or a ten-value card |
-| Dealer with one card up and one face down | one tile, `BLACKJACK 31%`: the chance the hole card makes a blackjack; 0% unless the up card is an ace or a ten-value card |
+| Dealer with one card up and one face down | `BLACKJACK 31%`, the chance the hole card makes a blackjack (0% unless the up card is an ace or a ten-value card), then the dealer's final totals `21 5%`, `20 13%`, `19 13%`, `18 13%`, `17 13%`, and `BUST 12%`. Here `21` leaves blackjack out, so every tile is a separate outcome. With an ace up, an `INSURANCE` tile follows: `TAKE` when more than a third of the unseen cards are ten-value, else `SKIP`. Insurance pays 2 to 1, so a third is the break-even point |
+| Dealer still drawing with no face-down card | the six final-total tiles, `21` to `BUST`, without `BLACKJACK` or `INSURANCE` |
 
-There is no odds row for loose cards (OTHER), for a finished hand (blackjack,
-21, bust, or a win, push, or loss), for a hand with a face-down card, or for a
-dealer with no face-down card. Ten-value cards are 10, J, Q, and K. The odds
-are on the page only.
+Each tile is rounded to a whole percent on its own, so a row may sum to 99% or
+101%. There is no odds row for loose cards (OTHER), for a finished hand
+(blackjack, 21, bust, or a win, push, or loss), for a hand with a face-down
+card, or for a dealer with no card face up or that has finished drawing. The
+dealer's tiles and every `STAND` row are also left out when so few cards are
+unseen that the dealer could run out before finishing, since the chances would
+then be incomplete. There is no `STAND` row for an empty seat or a one-card
+hand. Ten-value cards are 10,
+J, Q, and K. The odds are on the page only.
 
 **Folding the keys.** Click `KEYS` or its arrow, or press `K` on the page, to
 fold the Keys section to its title and give Hands the room. Do the same to
