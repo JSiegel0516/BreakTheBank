@@ -37,7 +37,13 @@ The tracker smooths that out and remembers the order cards arrived in:
     real card, so a new face track joins a card of its name only when it lies
     within SAME_CARD_MATCH_DISTS match distances of that card or one of its
     tracks, about a card's diagonal: the card's other corner. Farther away it
-    starts a new card of the same name, a second copy.
+    starts a new card of the same name, a second copy. A card has two corner
+    indices, so it takes at most two face tracks: a third track of its name,
+    even close by, starts a second copy. That keeps two copies fanned in one
+    hand apart. A face-down card being revealed, or a hidden card returning,
+    holds fewer than two live face tracks and still joins. The cost: beside a
+    card already showing both corners, a stray misread of its name can place a
+    phantom copy, once it passes the confirmation checks.
   * A hole card turned face up keeps its number. A BACK box is centred on the
     card, but face boxes are corner indices about half the card's diagonal
     away, so they start new tracks. A new face track with no card of its name
@@ -358,10 +364,11 @@ class CardTracker:
         A face track joins the card with its name, or a face-down card being
         revealed whose other corner already reads that name. With one deck that
         card may be anywhere; with more, it is the nearest such card within
-        SAME_CARD_MATCH_DISTS match distances. Otherwise it joins a nearby
-        face-down card that is out of sight this frame: the hole card it was
-        before it was turned over. A BACK track only joins a hidden face-down
-        card near it."""
+        SAME_CARD_MATCH_DISTS match distances that has fewer than two face
+        tracks bound to it, since a card has only two corner indices.
+        Otherwise it joins a nearby face-down card that is out of sight this
+        frame: the hole card it was before it was turned over. A BACK track
+        only joins a hidden face-down card near it."""
         if track.label == BACK:
             return self._back_card_near(track.cx, track.cy, include_unseen=False)
         named = [card for card in self.round if card.label == track.label
@@ -369,7 +376,8 @@ class CardTracker:
         if self.cfg.decks > 1:
             limit = SAME_CARD_MATCH_DISTS * self.cfg.match_dist
             by_distance = sorted((self._distance_to(card, track), card.order, card) for card in named)
-            named = [card for dist, _, card in by_distance if dist <= limit]
+            named = [card for dist, _, card in by_distance
+                     if dist <= limit and self._face_track_count(card) < 2]
         if named:
             return named[0]
         return self._back_card_near(track.cx, track.cy, include_unseen=True)
@@ -381,6 +389,10 @@ class CardTracker:
 
     def _tracks_of_card(self, card: Card) -> list[Track]:
         return [self.tracks[track_id] for track_id, bound in self._card_of.items() if bound is card]
+
+    def _face_track_count(self, card: Card) -> int:
+        """Tracks bound to the card that read a face name, until drop_frames forgets them."""
+        return sum(1 for track in self._tracks_of_card(card) if track.label != BACK)
 
     def _back_card_near(self, x: float, y: float, include_unseen: bool) -> Card | None:
         """The nearest face-down card within 3 match distances of (x, y) that is hidden or,

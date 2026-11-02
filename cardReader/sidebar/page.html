@@ -141,7 +141,14 @@
   .hand .cards { grid-area: cards; }
   .hand .total { grid-area: total; }
   .hand .play { grid-area: hint; display: flex; align-items: center; gap: .4rem; }
-  .hand .odds { grid-column: 1 / -1; margin-top: -.3rem; font-size: .8rem; color: var(--grey); }
+  /* odds tiles: a small bold label over a large figure, readable from across the table */
+  .hand .odds { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .4rem; }
+  .hand .odds .stat {
+    flex: 1 1 4.5rem; max-width: 8rem; display: flex; flex-direction: column; align-items: center;
+    padding: .25rem .5rem; background: var(--well); border: 1px solid var(--line); border-radius: .4rem;
+  }
+  .hand .odds .label { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
+  .hand .odds .value { font-size: 1.4rem; font-weight: 700; line-height: 1.1; color: var(--text); font-variant-numeric: tabular-nums; }
   .seat { font-weight: 700; color: var(--seat); overflow-wrap: anywhere; }
   .seat[data-seat] { cursor: text; }
   .seat[data-seat]:hover { text-decoration: underline dotted; }
@@ -414,14 +421,19 @@
     return html;
   }
 
-  // A hand's odds as a muted line across it: the next card's totals for a live hand, else a
-  // blackjack chance. The totals are listed by hand, since an object lists "18" before "21".
+  // A hand's odds as a row of tiles across it: the next card's totals for a live hand (21, 20,
+  // 19, 18, BUST), else one BLACKJACK tile. The totals are listed by hand, since an object
+  // lists "18" before "21".
   const NEXT_CARD = ["21", "20", "19", "18", "bust"];
   function renderOdds(odds) {
     if (!odds) return "";
-    const text = "blackjack" in odds ? `blackjack chance ${odds.blackjack}%`
-      : "next card: " + NEXT_CARD.map((key) => `${key} ${odds[key]}%`).join(" \u00b7 ");
-    return `<div class="odds">${esc(text)}</div>`;
+    const tiles = "blackjack" in odds ? statTile("BLACKJACK", odds.blackjack)
+      : NEXT_CARD.map((key) => statTile(key.toUpperCase(), odds[key])).join("");
+    return `<div class="odds">${tiles}</div>`;
+  }
+
+  function statTile(label, percent) {
+    return `<span class="stat"><span class="label">${esc(label)}</span><span class="value">${esc(percent)}%</span></span>`;
   }
 
   // A row's classes: its kind, its outcome, and for the dealer a pulse when it has blackjack

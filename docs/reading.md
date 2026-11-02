@@ -207,7 +207,7 @@ grey-green at 0, and brown below, deeper for bigger values:
 |---|---|
 | True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`high cards left · favours player`, `low cards left · favours dealer`, or `even deck`), then the running count, cards left (`39/52`, or `90/104` with two decks), tens and aces left (`tens & aces 17/20`, out of 40 with two decks), and aces left (`aces 3/4`, out of 8 with two decks). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
 | Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. With two or three decks a card with copies left is dimmed from the left by the share seen, and its hover text says so (`KH: 1 of 2 seen, locked`); the column on the right counts copies. Below it: the face-down cards never revealed |
-| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A grey line under a hand gives its odds from the unseen cards (see Odds row below) |
+| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A row of tiles under a hand gives its odds from the unseen cards (see Odds row below) |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
 | Keys | first a `model` dropdown and a `count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
@@ -241,17 +241,19 @@ asks for reduced motion, the page skips the confetti and holds the dealer's
 amber outline still; the glows and tags stay. The cues are on the page only:
 the window, the terminal, and the `--log` CSV are unchanged.
 
-**Odds row.** A small grey line under a hand gives its chances as whole
-percentages. They are exact against the unseen cards: the shoe minus every face
+**Odds row.** A row of tiles under a hand gives its chances as whole
+percentages. Each tile has a short bold label over a large percentage, so the
+row reads from across the table; it wraps onto more lines when the page is
+narrow. The percentages are exact against the unseen cards: the shoe minus every face
 seen this shoe, with each copy of a card counted, so two decks hold eight aces. A face-down card never turned up is one of those unseen cards,
 so it counts as a random draw from them.
 
 | Hand | Odds row |
 |---|---|
-| Player with two or more cards, still playing | `next card: 21 8% · 20 8% · 19 8% · 18 6% · bust 60%`: the chance the next card brings the total to each of 21, 20, 19, and 18, or busts. A soft hand counts its ace as 1 when 11 would bust |
-| Empty player seat | `blackjack chance 5%`: the chance of a two-card blackjack, 2 × aces/N × tens/(N − 1) for N unseen cards |
-| Player with one card | `blackjack chance 31%`: the chance the second card makes a blackjack; 0% unless the card is an ace or a ten-value card |
-| Dealer with one card up and one face down | `blackjack chance 31%`: the chance the hole card makes a blackjack; 0% unless the up card is an ace or a ten-value card |
+| Player with two or more cards, still playing | five tiles, `21 8%`, `20 8%`, `19 8%`, `18 6%`, and `BUST 60%`: the chance the next card brings the total to each of 21, 20, 19, and 18, or busts. A soft hand counts its ace as 1 when 11 would bust |
+| Empty player seat | one tile, `BLACKJACK 5%`: the chance of a two-card blackjack, 2 × aces/N × tens/(N − 1) for N unseen cards |
+| Player with one card | one tile, `BLACKJACK 31%`: the chance the second card makes a blackjack; 0% unless the card is an ace or a ten-value card |
+| Dealer with one card up and one face down | one tile, `BLACKJACK 31%`: the chance the hole card makes a blackjack; 0% unless the up card is an ace or a ten-value card |
 
 There is no odds row for loose cards (OTHER), for a finished hand (blackjack,
 21, bust, or a win, push, or loss), for a hand with a face-down card, or for a
@@ -663,6 +665,11 @@ doubles in single deck.
   under a name counted in an earlier round prints as `duplicate`.
 - **Two or three decks.** Two sightings of the same face are the same card only
   within four `MATCH_DISTANCE`s of each other; farther apart they are two copies.
+  A card has two corner indices, so it joins at most two such sightings: a third
+  one close by is a second copy, and two of a card fanned in one hand stay two
+  cards. A hole card turned over, or a covered card coming back, still joins its
+  own card. The cost: beside a card already showing both corners, a stray misread
+  of its name can place a phantom copy, once it passes the confirmation checks.
   Each card is counted once per deck, and one more copy prints as `duplicate`
   (see [Decks in the shoe](#decks-in-the-shoe)).
 - **Covered is not removed, at first.** A card that disappears for
