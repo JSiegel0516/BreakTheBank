@@ -38,12 +38,34 @@ The tracker smooths that out and remembers the order cards arrived in:
     within SAME_CARD_MATCH_DISTS match distances of that card or one of its
     tracks, about a card's diagonal: the card's other corner. Farther away it
     starts a new card of the same name, a second copy. A card has two corner
-    indices, so it takes at most two face tracks: a third track of its name,
-    even close by, starts a second copy. That keeps two copies fanned in one
-    hand apart. A face-down card being revealed, or a hidden card returning,
-    holds fewer than two live face tracks and still joins. The cost: beside a
-    card already showing both corners, a stray misread of its name can place a
-    phantom copy, once it passes the confirmation checks.
+    indices, so it takes at most two face tracks seen this frame: a third
+    track of its name, even close by, starts a second copy. That keeps two
+    copies fanned in one hand apart. A face-down card being revealed holds
+    fewer than two live face tracks and still joins. Three rules keep one
+    physical card from becoming two:
+      - same corner: a new face track within SAME_CORNER_MATCH_DISTS match
+        distances (half of one) of a face track bound to a card joins that
+        card, whatever name it reads. A second box on a corner, or a misread
+        one, is not a copy; copies fanned a corner's width apart stay apart.
+      - stale tracks: a bound track that missed this frame does not count
+        toward the two, so a corner whose track was lost takes a new one.
+      - out of sight: a card of its name whose every track missed this frame,
+        or that is hidden, takes the new track at any distance: the card was
+        moved. A real second copy arrives while the first is in view.
+    The costs: beside a card already showing both corners, a stray misread of
+    its name can place a phantom copy once it passes the confirmation checks;
+    and a second copy confirmed while the first is covered joins the first.
+  * A held copy (with decks > 1 and copy_hold_frames above 0): a face card
+    placed within SAME_CARD_MATCH_DISTS match distances of another card of its
+    name, holding no locked copy, while a copy of that name is left to count,
+    may be that card read twice. It is placed and numbered but HELD: not
+    counted. Once it and that card have both been seen on copy_hold_frames
+    frames, it is COUNTED, and reported as a duplicate if every copy was dealt
+    meanwhile. If that card is removed or renamed away, the held copy takes
+    over its count and is counted at once. No other card hands a held copy its
+    count, so it is never counted before its hold ends. A held copy
+    renamed is placed again under its new name: held, or counted. A held copy
+    still on the table across new_round() is placed afresh, as it holds no copy.
   * A hole card turned face up keeps its number. A BACK box is centred on the
     card, but face boxes are corner indices about half the card's diagonal
     away, so they start new tracks. A new face track with no card of its name
@@ -127,6 +149,7 @@ from .cards import Card, Detection, Event
 from .deck import BACK, rank_of
 
 SAME_CARD_MATCH_DISTS = 4  # with decks > 1: match distances within which a face track of a card's name is that card
+SAME_CORNER_MATCH_DISTS = 0.5  # with decks > 1: match distances within which a face track is a bound track's corner
 
 @dataclass
 class TrackerConfig:
@@ -143,6 +166,7 @@ class TrackerConfig:
     label_window: int | None = None    # frames the name vote looks back (None: every read ever)
     hidden_frames: int | None = None   # frames a card may stay hidden before it is removed (None: never)
     decks: int = 1                     # decks in the shoe: copies of each card that may be counted
+    copy_hold_frames: int = 0          # with decks > 1: frames a copy beside a card of its name waits (0: none)
 
     @classmethod
     def from_settings(cls, s, frame_width: int) -> TrackerConfig:
@@ -150,7 +174,8 @@ class TrackerConfig:
         decks keeps its default; pass settings.DECKS to CardTracker as a keyword.
 
         Each time becomes at least one frame, except HIDDEN_SECONDS, where 0 frames
-        removes a card on the frame it is hidden."""
+        removes a card on the frame it is hidden, and COPY_HOLD_SECONDS, where 0
+        frames counts a copy at once."""
         def frames(seconds: float) -> int:
             return max(1, round(seconds * s.FPS))
 
@@ -158,7 +183,8 @@ class TrackerConfig:
                    confirm_agreement=s.CONFIRM_AGREEMENT, confirm_confidence=s.CONFIRM_CONFIDENCE,
                    still_distance=s.STILL_DISTANCE * frame_width, drop_frames=frames(s.DROP_SECONDS),
                    match_dist=s.MATCH_DISTANCE * frame_width, round_end_frames=frames(s.ROUND_END_SECONDS),
-                   label_window=frames(s.LABEL_WINDOW_SECONDS), hidden_frames=round(s.HIDDEN_SECONDS * s.FPS))
+                   label_window=frames(s.LABEL_WINDOW_SECONDS), hidden_frames=round(s.HIDDEN_SECONDS * s.FPS),
+                   copy_hold_frames=round(s.COPY_HOLD_SECONDS * s.FPS))
 
 
 @dataclass
@@ -198,8 +224,10 @@ class CardTracker:
         self._carried_back_spots = [(card.x, card.y) for card in carried_backs.values()]
         self._dealt_back_spots: list[tuple[float, float]] = []  # face-down cards in shoe_unrevealed, off the table
         self._back_spot_holders: dict[int, tuple[float, float]] = {}  # spot index -> where the card put back lies
-        # track id -> name its card was counted under, for cards still on the table as the round began
-        self._carried_tracks = {track_id: card.label for track_id, card in self._card_of.items()}
+        # track id -> name its card was counted under, for cards still on the table as the round began.
+        # A held copy was never counted, so it is placed afresh.
+        self._carried_tracks = {track_id: card.label for track_id, card in self._card_of.items() if not card.held}
+        self._held_against: dict[int, Card] = {}  # order of a held copy -> the card of its name it is held against
         self._seen_before_round = list(self.shoe_seen)  # the locked copies: shoe_seen always starts with them
         self._unrevealed_before_round = self.shoe_unrevealed
         self._duplicates_before_round = set(self.shoe_duplicates)
@@ -240,6 +268,7 @@ class CardTracker:
         self._back_spot_holders = {}
         self._carried_tracks = {}
         self._carried_cards = {}
+        self._held_against = {}
         self.bound = []
         self.round = []
         self._next_order = 1
@@ -270,10 +299,12 @@ class CardTracker:
         """Advance one frame with that frame's detections.
 
         Returns the events this frame caused: placed cards first, then renamed,
-        hidden, and returned cards in placement order, then removed cards, and
-        round_over last. A placed or renamed event is followed by duplicate when
-        every copy of the card's name was already dealt (see the module docstring).
-        A removed card has left the round; round_over also starts a new round.
+        hidden, and returned cards in placement order, then removed cards, then
+        held copies counted, and round_over last. A placed or renamed event is
+        followed by held when the card is held as a possible second read of a card
+        beside it, or by duplicate when every copy of the card's name was already
+        dealt; a counted event may be followed by duplicate too (see the module
+        docstring). A removed card has left the round; round_over also starts a new round.
 
         Also sets bound: one entry per detection, in the same order, giving the
         confirmed card its track belongs to, or None while that track is not
@@ -289,7 +320,7 @@ class CardTracker:
         confirmed = [track for track in by_age if track.confirmed]
 
         # A track already bound to a card stays with it. Any other joins the card
-        # with its name (only nearby with more decks), a face-down card near it, or starts a new one.
+        # with its name (with more decks: nearby, or out of sight), a face-down card near it, or starts a new one.
         tracks_of: dict[int, list[Track]] = {}  # card order -> its tracks this frame
         for track in confirmed:
             card = self._card_of.get(track.id)
@@ -299,19 +330,20 @@ class CardTracker:
                     card = Card(self._next_order, track.label, track.cx, track.cy, self.frame)
                     self._next_order += 1
                     self.round.append(card)
+                    carried = track.id in self._carried_tracks
                     carried_label = self._carried_tracks.get(track.id)
                     if carried_label is not None:
                         self._carried_cards[card.order] = carried_label
-                    if not self._holds_locked_copy(card):
-                        self._count(card)
                     if card.label == BACK and not self._already_dealt_back(track):
                         self.shoe_unrevealed += 1
                     events.append(Event("placed", card, self.frame))
-                    same_name = sum(1 for other in self.round if other is not card and other.label == card.label
-                                    and not self._holds_locked_copy(other))
-                    if track.id not in self._carried_tracks and self._is_duplicate(card.label, same_name):
-                        self.shoe_duplicates.add(card.label)
-                        events.append(Event("duplicate", card, self.frame))
+                    if not carried and self._hold_if_copy(card):
+                        events.append(Event("held", card, self.frame))
+                    else:
+                        if not self._holds_locked_copy(card):
+                            self._count(card)
+                        if not carried:
+                            events += self._duplicate_events(card)
                 self._card_of[track.id] = card
             tracks_of.setdefault(card.order, []).append(track)
 
@@ -326,10 +358,14 @@ class CardTracker:
             votes = sum((track.votes for track in card_tracks), Counter())
             label = votes.most_common(1)[0][0]
             if label != card.label:
-                was = card.label
+                was, was_held = card.label, card.held
                 self._rename(card, label)
                 events.append(Event("renamed", card, self.frame, was=was))
-                if self._is_duplicate(label):
+                if card.held:
+                    events.append(Event("held", card, self.frame))
+                elif was_held:
+                    events += self._duplicate_events(card)
+                elif self._is_duplicate(label):
                     self.shoe_duplicates.add(label)
                     events.append(Event("duplicate", card, self.frame))
             if card.hidden:
@@ -339,6 +375,9 @@ class CardTracker:
         for card in self._expired_cards():
             self._remove(card)
             events.append(Event("removed", card, self.frame))
+        for card in self.round:
+            if card.held:
+                events += self._advance_hold(card)
         self.bound = [self._card_of.get(track_id) for track_id in det_tracks]
 
         # Counts on after every card was removed, so a collected table still ends the round.
@@ -384,9 +423,14 @@ class CardTracker:
 
         A face track joins the card with its name, or a face-down card being
         revealed whose other corner already reads that name. With one deck that
-        card may be anywhere; with more, it is the nearest such card within
-        SAME_CARD_MATCH_DISTS match distances that has fewer than two face
-        tracks bound to it, since a card has only two corner indices.
+        card may be anywhere. With more, in this order:
+          1. a card with a face track within SAME_CORNER_MATCH_DISTS match
+             distances, whatever its name: the same corner index;
+          2. the nearest such card out of sight this frame, at any distance:
+             the card moved;
+          3. the nearest such card within SAME_CARD_MATCH_DISTS match distances
+             with fewer than two face tracks seen this frame, since a card has
+             only two corner indices.
         Otherwise it joins a nearby face-down card that is out of sight this
         frame: the hole card it was before it was turned over. A BACK track
         only joins a hidden face-down card near it."""
@@ -395,25 +439,49 @@ class CardTracker:
         named = [card for card in self.round if card.label == track.label
                  or (card.label == BACK and any(t.label == track.label for t in self._tracks_of_card(card)))]
         if self.cfg.decks > 1:
+            same_corner = self._card_at_corner(track)
+            if same_corner is not None:
+                return same_corner
+            by_distance = sorted((self._distance_to(card, track.cx, track.cy), card.order, card) for card in named)
+            unseen = [card for _, _, card in by_distance if self._out_of_sight(card)]
+            if unseen:
+                return unseen[0]
             limit = SAME_CARD_MATCH_DISTS * self.cfg.match_dist
-            by_distance = sorted((self._distance_to(card, track), card.order, card) for card in named)
             named = [card for dist, _, card in by_distance
                      if dist <= limit and self._face_track_count(card) < 2]
         if named:
             return named[0]
         return self._back_card_near(track.cx, track.cy, include_unseen=True)
 
-    def _distance_to(self, card: Card, track: Track) -> float:
-        """Pixels from the track to the nearest of the card's last position and its tracks."""
+    def _distance_to(self, card: Card, x: float, y: float) -> float:
+        """Pixels from (x, y) to the nearest of the card's last position and its tracks."""
         points = [(card.x, card.y)] + [(t.cx, t.cy) for t in self._tracks_of_card(card)]
-        return min(((x - track.cx) ** 2 + (y - track.cy) ** 2) ** 0.5 for x, y in points)
+        return min(((px - x) ** 2 + (py - y) ** 2) ** 0.5 for px, py in points)
 
     def _tracks_of_card(self, card: Card) -> list[Track]:
         return [self.tracks[track_id] for track_id, bound in self._card_of.items() if bound is card]
 
     def _face_track_count(self, card: Card) -> int:
-        """Tracks bound to the card that read a face name, until drop_frames forgets them."""
-        return sum(1 for track in self._tracks_of_card(card) if track.label != BACK)
+        """Tracks bound to the card that read a face name and were seen this frame.
+        A track that missed this frame is left out, so a corner it lost can be taken by a new track."""
+        return sum(1 for track in self._tracks_of_card(card) if track.label != BACK and track.missed == 0)
+
+    def _out_of_sight(self, card: Card) -> bool:
+        """Whether every track of the card missed this frame. A hidden card, whose tracks were dropped, is too."""
+        return all(track.missed > 0 for track in self._tracks_of_card(card))
+
+    def _card_at_corner(self, track: Track) -> Card | None:
+        """The card of this round with a bound face track within SAME_CORNER_MATCH_DISTS match
+        distances of the track, nearest first: the same corner index, whatever name it reads."""
+        best, best_dist = None, SAME_CORNER_MATCH_DISTS * self.cfg.match_dist
+        for track_id, card in self._card_of.items():
+            other = self.tracks[track_id]
+            if other.label == BACK or card not in self.round:
+                continue
+            dist = ((other.cx - track.cx) ** 2 + (other.cy - track.cy) ** 2) ** 0.5
+            if dist <= best_dist:
+                best, best_dist = card, dist
+        return best
 
     def _back_card_near(self, x: float, y: float, include_unseen: bool) -> Card | None:
         """The nearest face-down card within 3 match distances of (x, y) that is hidden or,
@@ -469,14 +537,16 @@ class CardTracker:
         """Take a card off the table. Its name stays in the shoe count.
 
         A counted card hands the count to a card of the round with its name that
-        holds no copy yet, if there is one, so a later rename of that card still corrects it.
+        holds no copy yet, if there is one (see _copy_taker), so a later rename of that
+        card still corrects it.
         A face-down card stays in shoe_unrevealed, and its spot is kept for _already_dealt_back."""
         self.round.remove(card)
+        self._held_against.pop(card.order, None)
         if card.label == BACK:
             self._dealt_back_spots.append((card.x, card.y))
         if card.counted:
             card.counted = False
-            holder = next((c for c in self.round if c.label == card.label and self._can_take_copy(c)), None)
+            holder = self._copy_taker(card)
             if holder is not None:
                 holder.counted = True
 
@@ -484,9 +554,18 @@ class CardTracker:
         """A card still on the table as the round began, under the name it was counted by then."""
         return self._carried_cards.get(card.order) == card.label
 
-    def _can_take_copy(self, card: Card) -> bool:
-        """Whether a card can take over a copy from another card of its name: it holds none yet."""
-        return not card.counted and not self._holds_locked_copy(card)
+    def _copy_taker(self, card: Card) -> Card | None:
+        """The card of the round to take over the copy of card's name that card gives up, if any.
+
+        It holds no copy yet. A copy held against card comes first: it was most likely card,
+        moved or misread. A copy held against another card takes none, so it is not counted
+        before its hold ends."""
+        takers = [c for c in self.round if c is not card and c.label == card.label
+                  and not c.counted and not self._holds_locked_copy(c)]
+        held_copy = next((c for c in takers if self._held_against.get(c.order) is card), None)
+        if held_copy is not None:
+            return held_copy
+        return next((c for c in takers if not c.held), None)
 
     def _is_duplicate(self, label: str, in_round: int = 0) -> bool:
         """A face name with every copy already dealt: `decks` copies counted before this
@@ -504,14 +583,19 @@ class CardTracker:
         """The vote changed its mind: same card, new name, and the count follows.
 
         The old name's copy leaves the count unless another card of the round with that
-        name holds no copy yet; that card then keeps the copy counted. A card carried in
+        name holds no copy yet (see _copy_taker); that card then keeps the copy counted. A card carried in
         from the last round already holds a locked copy, so it takes none, and renamed
-        back to the name it was carried under it is not counted again."""
+        back to the name it was carried under it is not counted again. A held copy is
+        no longer held: it is held again against a card of its new name beside it (see
+        _hold_if_copy), or counted at once."""
+        was_held = card.held
+        if was_held:
+            card.held, card.held_frames = False, 0
+            del self._held_against[card.order]
         at = None
         if card.counted:
             card.counted = False
-            holder = next((c for c in self.round if c is not card and c.label == card.label and self._can_take_copy(c)),
-                          None)
+            holder = self._copy_taker(card)
             if holder is not None:
                 holder.counted = True
             else:  # the old name was never on the table: drop its latest copy, the one counted this round
@@ -522,8 +606,65 @@ class CardTracker:
         elif card.label != BACK and label == BACK:
             self.shoe_unrevealed += 1
         card.label = label
+        if was_held and self._hold_if_copy(card):
+            return
         if not self._holds_locked_copy(card):
             self._count(card, at)
+
+    def _hold_if_copy(self, card: Card) -> bool:
+        """Hold a face card, just placed or renamed while held, that may be a card of its name read a
+        second time. That needs decks > 1, copy_hold_frames above 0, a copy of its name still left to
+        count, and another card of its name holding no locked copy within SAME_CARD_MATCH_DISTS match
+        distances. The card is held against the nearest such card and not counted. Returns whether it was held."""
+        cfg = self.cfg
+        if cfg.decks == 1 or cfg.copy_hold_frames == 0 or card.label == BACK:
+            return False
+        if self.shoe_seen.count(card.label) >= cfg.decks:
+            return False  # nothing left to count: the duplicate check reports it at once
+        limit = SAME_CARD_MATCH_DISTS * cfg.match_dist
+        near = []
+        for other in self.round:
+            if other is card or other.label != card.label or self._holds_locked_copy(other):
+                continue
+            dist = self._distance_to(other, card.x, card.y)
+            if dist <= limit:
+                near.append((dist, other.order, other))
+        if not near:
+            return False
+        card.held, card.held_frames = True, 0
+        self._held_against[card.order] = min(near)[2]
+        return True
+
+    def _advance_hold(self, card: Card) -> list[Event]:
+        """One frame of a held copy's wait. A frame on which it and the card it is held against both
+        have a track seen counts; after copy_hold_frames of them it is counted. It is counted at once
+        when that card has left the round, handing its copy over (see _remove), or changed its name.
+        Returns a counted event, followed by duplicate when every copy of its name was already dealt."""
+        against = self._held_against[card.order]
+        if against in self.round and against.label == card.label:
+            if not self._out_of_sight(card) and not self._out_of_sight(against):
+                card.held_frames += 1
+            if card.held_frames < self.cfg.copy_hold_frames:
+                return []
+        card.held, card.held_frames = False, 0
+        del self._held_against[card.order]
+        events = [Event("counted", card, self.frame)]
+        if not card.counted:
+            self._count(card)
+            events += self._duplicate_events(card)
+        return events
+
+    def _duplicate_events(self, card: Card) -> list[Event]:
+        """For a card just placed or counted after a hold: a duplicate event when every copy of its
+        name was already dealt, counted before this round or placed by another card of this round
+        that is not held. The name joins shoe_duplicates. Cards carried in from the last round are
+        left out of the cards of this round: their copies are locked."""
+        same_name = sum(1 for other in self.round if other is not card and other.label == card.label
+                        and not self._holds_locked_copy(other) and not other.held)
+        if not self._is_duplicate(card.label, same_name):
+            return []
+        self.shoe_duplicates.add(card.label)
+        return [Event("duplicate", card, self.frame)]
 
     def _match(self, detections: list[Detection]) -> list[int]:
         """Hit each detection's track, starting new tracks for the unmatched, and age the rest.

@@ -85,6 +85,13 @@ def test_removed_card_is_still_scored_and_its_number_is_not_reused(tmp_path):
     assert (result.cards_read, result.correct, result.problems) == (3, 3, [])
 
 
+def test_held_and_counted_rows_leave_the_placements_alone(tmp_path):
+    expected = "round,order,card\n1,1,KH\n1,2,KH\n"
+    result = evaluate(tmp_path, expected, ("placed", 1, "KH", "P1", -1), ("placed", 2, "KH", "P1", -1),
+                      ("held", 2, "KH", "P1", -1), ("counted", 2, "KH", "P1", -2))
+    assert (result.cards_read, result.correct, result.problems, result.count_read) == (2, 2, [], -2)
+
+
 def test_multiple_rounds_split_at_round_over(tmp_path):
     expected = "round,order,card\n1,1,10H\n1,2,6C\n2,1,4D\n2,2,AS\n"
     result = evaluate(tmp_path, expected, ("placed", 1, "10H", "P1", -1), ("placed", 2, "6C", "P2", 0),

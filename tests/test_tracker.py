@@ -715,6 +715,176 @@ def test_three_decks_a_fourth_copy_fanned_in_one_hand_is_a_duplicate():
     assert tr.shoe_seen == ["KH"] * 3 and tr.shoe_duplicates == {"KH"}
 
 
+@pytest.mark.parametrize("extra_label", ["KH", "KD"])
+def test_two_decks_a_second_box_on_a_bound_corner_joins_its_card(extra_label):
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("KH", 900, 500), 30)
+    extra = det(extra_label, 870, 420)                   # 15 px from the top corner: a third track, same or misread
+    run(tr, [*corners("KH", 900, 500), extra], 30)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH")]
+    assert tr.shoe_seen == ["KH"] and tr.bound[-1] is tr.round[0]
+
+
+def test_two_decks_a_corner_track_that_went_stale_is_replaced_not_copied():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("KH", 900, 500), 30)
+    top, bottom = corners("KH", 900, 500)
+    run(tr, [det("KH", top.cx + 65, top.cy), bottom], 10)  # card straightened: the top corner's track goes stale
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH")]
+    assert tr.shoe_seen == ["KH"]
+
+
+def test_two_decks_a_card_slid_far_while_its_old_tracks_live_is_the_same_card():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("KH", 900, 500), 30)
+    ev = run(tr, corners("KH", 1400, 500), 10)           # 500 px away, before the old tracks drop
+    assert "placed" not in [e.kind for e in ev]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH")] and tr.shoe_seen == ["KH"]
+
+
+def test_two_decks_a_hidden_card_returning_far_away_is_the_same_card():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("KH", 900, 500), 30)
+    run(tr, [], 20)                                      # covered: its tracks drop and the card is hidden
+    assert tr.round[0].hidden
+    ev = run(tr, corners("KH", 1400, 500), 10)
+    assert [(e.kind, e.card.order) for e in ev] == [("returned", 1)]
+    assert tr.shoe_seen == ["KH"]
+
+
+def held_copy_tracker(hold_frames):
+    """Two decks, a KH placed at (900, 500), and a second KH fanned 50 px over held against it
+    on the frame it is confirmed. Returns the tracker, the hand's detections, and that frame's events."""
+    tr = real_tracker()
+    tr.cfg.decks, tr.cfg.copy_hold_frames = 2, hold_frames
+    run(tr, corners("KH", 900, 500), 30)
+    hand = [*corners("KH", 900, 500), *corners("KH", 950, 500)]
+    return tr, hand, run(tr, hand, 6)
+
+
+def test_two_decks_a_copy_beside_a_card_of_its_name_is_held_until_both_are_seen_together():
+    tr, hand, ev = held_copy_tracker(5)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 2), ("held", 2)]
+    assert [c.held for c in tr.round] == [False, True] and tr.shoe_seen == ["KH"]
+    assert run(tr, hand, 3) == []                        # 4 frames seen together, counting the first
+    ev = run(tr, hand, 1)
+    assert [(e.kind, e.card.order) for e in ev] == [("counted", 2)]
+    assert [c.held for c in tr.round] == [False, False] and tr.shoe_seen == ["KH", "KH"]
+
+
+def test_two_decks_a_hold_of_zero_frames_counts_a_copy_at_once():
+    tr, _, ev = held_copy_tracker(0)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 2)]
+    assert tr.shoe_seen == ["KH", "KH"]
+
+
+def test_two_decks_a_held_copy_seen_without_its_first_copy_stays_held():
+    tr, hand, _ = held_copy_tracker(5)
+    run(tr, corners("KH", 950, 500), 10)                 # the first KH is covered
+    assert tr.round[1].held and tr.shoe_seen == ["KH"]
+    ev = run(tr, hand, 4)
+    assert [(e.kind, e.card.order) for e in ev] == [("counted", 2)]
+
+
+def test_two_decks_a_held_copy_takes_the_count_of_the_first_copy_when_it_is_removed():
+    tr, _, _ = held_copy_tracker(50)
+    tr.cfg.hidden_frames = 2
+    ev = run(tr, corners("KH", 950, 500), 20)            # the first KH was this one, picked up and put down
+    assert [(e.kind, e.card.order) for e in ev] == [("hidden", 1), ("removed", 1), ("counted", 2)]
+    assert [(c.order, c.held, c.counted) for c in tr.round] == [(2, False, True)]
+    assert tr.shoe_seen == ["KH"]
+
+
+def test_two_decks_a_held_copy_takes_the_count_of_the_first_copy_when_it_is_renamed_away():
+    tr, hand, _ = held_copy_tracker(50)
+    hand[:2] = corners("KD", 900, 500)                   # the first KH is really a KD
+    ev = run(tr, hand, 19)
+    assert [(e.kind, e.card.order) for e in ev] == [("renamed", 1), ("counted", 2)]
+    assert [(c.label, c.held, c.counted) for c in tr.round] == [("KD", False, True), ("KH", False, True)]
+    assert tr.shoe_seen == ["KH", "KD"]
+
+
+def test_two_decks_a_held_copy_does_not_take_the_count_of_another_card_renamed_away():
+    tr, hand, _ = held_copy_tracker(100)
+    far = corners("KH", 1500, 500)                       # a second KH far away: counted at once
+    run(tr, [*hand, *far], 6)
+    assert tr.shoe_seen == ["KH", "KH"]
+    ev = run(tr, [*hand, *corners("KD", 1500, 500)], 19)  # it is really a KD
+    assert [(e.kind, e.card.order) for e in ev] == [("renamed", 3)]
+    assert [(c.held, c.counted) for c in tr.round] == [(False, True), (True, False), (False, True)]
+    assert tr.shoe_seen == ["KH", "KD"]
+
+
+def test_two_decks_a_held_copy_does_not_take_the_count_of_another_card_removed():
+    tr, hand, _ = held_copy_tracker(100)
+    run(tr, [*hand, *corners("KH", 1500, 500)], 6)       # a second KH far away: counted at once
+    tr.cfg.hidden_frames = 2
+    ev = run(tr, hand, 20)                               # it is picked up
+    assert [(e.kind, e.card.order) for e in ev] == [("hidden", 3), ("removed", 3)]
+    assert [(c.order, c.held, c.counted) for c in tr.round] == [(1, False, True), (2, True, False)]
+    assert tr.shoe_seen == ["KH", "KH"]                  # a removed card stays counted
+
+
+def test_two_decks_a_held_copy_counted_after_the_last_copy_was_dealt_is_a_duplicate():
+    tr, hand, _ = held_copy_tracker(20)
+    hand += corners("KH", 1500, 500)                     # a second KH far away: counted at once
+    ev = run(tr, hand, 6)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 3)] and tr.shoe_seen == ["KH", "KH"]
+    ev = run(tr, hand, 20)
+    assert [(e.kind, e.card.order) for e in ev] == [("counted", 2), ("duplicate", 2)]
+    assert tr.shoe_seen == ["KH", "KH"] and tr.shoe_duplicates == {"KH"}
+
+
+def test_two_decks_a_copy_is_not_held_once_every_copy_was_dealt():
+    tr = real_tracker()
+    tr.cfg.decks, tr.cfg.copy_hold_frames = 2, 5
+    run(tr, [*corners("KH", 900, 500), *corners("KH", 1500, 500)], 30)
+    ev = run(tr, [*corners("KH", 900, 500), *corners("KH", 1500, 500), *corners("KH", 950, 500)], 6)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 3), ("duplicate", 3)]
+
+
+def test_two_decks_a_held_copy_is_forgotten_by_a_rescan_and_by_the_round_end():
+    tr, hand, _ = held_copy_tracker(50)
+    tr.rescan()
+    assert tr.round == [] and tr.shoe_seen == []
+    ev = run(tr, hand, 6)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 1), ("placed", 2), ("held", 2)]
+    ev = run(tr, [], 50)
+    assert [e.kind for e in ev] == ["hidden", "hidden", "round_over"]
+    assert tr.round == [] and tr.shoe_seen == ["KH"]
+
+
+def test_two_decks_a_held_copy_renamed_away_is_counted_at_once():
+    tr, hand, _ = held_copy_tracker(50)
+    hand[2:] = corners("KD", 950, 500)                   # the second KH is really a KD
+    ev = run(tr, hand, 19)
+    assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("renamed", 2, "KD")]
+    assert [c.held for c in tr.round] == [False, False] and tr.shoe_seen == ["KH", "KD"]
+
+
+def test_two_decks_a_held_copy_renamed_beside_another_card_of_its_new_name_is_held_again():
+    tr = real_tracker()
+    tr.cfg.decks, tr.cfg.copy_hold_frames = 2, 50
+    table = [*corners("KH", 900, 500), *corners("QH", 1000, 500)]
+    run(tr, table, 30)
+    run(tr, [*table, *corners("KH", 950, 500)], 6)       # held against the KH
+    ev = run(tr, [*table, *corners("QH", 950, 500)], 19)  # it is really a second QH
+    assert [(e.kind, e.card.order) for e in ev] == [("renamed", 3), ("held", 3)]
+    assert tr.round[2].held and tr.shoe_seen == ["KH", "QH"]
+
+
+def test_two_decks_a_held_copy_still_down_through_a_new_round_is_placed_afresh():
+    tr, hand, _ = held_copy_tracker(50)
+    tr.new_round()                                       # key r with both KHs still on the table
+    ev = run(tr, hand, 1)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 1), ("placed", 2)]
+    assert tr.shoe_seen == ["KH", "KH"]                  # the first is locked, the second counted now
+
+
 def test_two_decks_a_hole_card_reveal_beside_a_card_of_that_name_joins_its_own_card():
     tr = real_tracker()
     tr.cfg.decks = 2
@@ -830,12 +1000,13 @@ def test_config_object_and_keyword_overrides_agree():
     class S:  # the fields settings.py provides
         FPS, CONFIRM_SECONDS, CONFIRM_WINDOW_SECONDS, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 10, 0.01, 1.0, 0.8, 0.7
         STILL_DISTANCE, DROP_SECONDS, MATCH_DISTANCE, ROUND_END_SECONDS = 0.01, 3.0, 0.05, 9.0
-        LABEL_WINDOW_SECONDS, HIDDEN_SECONDS = 4.5, 0
+        LABEL_WINDOW_SECONDS, HIDDEN_SECONDS, COPY_HOLD_SECONDS = 4.5, 0, 0
     cfg = TrackerConfig.from_settings(S, 2000)
     assert (cfg.still_distance, cfg.match_dist, cfg.label_window) == (20.0, 100.0, 45)
     # CONFIRM_SECONDS rounds to 0 frames and is raised to 1
     assert (cfg.confirm_frames, cfg.confirm_window, cfg.drop_frames, cfg.round_end_frames) == (1, 10, 30, 90)
     assert cfg.hidden_frames == 0                        # 0 s: removed as soon as hidden, not raised to 1 frame
+    assert cfg.copy_hold_frames == 0                     # 0 s: a copy is counted at once
 
 
 def test_shipped_settings_convert_to_frames_at_the_shipped_fps():
@@ -844,6 +1015,7 @@ def test_shipped_settings_convert_to_frames_at_the_shipped_fps():
     cfg = TrackerConfig.from_settings(settings, 1920)
     assert (cfg.confirm_frames, cfg.confirm_window) == (6, 9)
     assert (cfg.drop_frames, cfg.label_window, cfg.round_end_frames, cfg.hidden_frames) == (12, 19, 37, 62)
+    assert cfg.copy_hold_frames == 19
 
 
 def test_bound_gives_each_detection_its_confirmed_card_even_when_misread():

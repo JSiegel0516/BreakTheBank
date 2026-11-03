@@ -10,8 +10,10 @@ from cardReader.cards import Card, Detection
 from cardReader.hud import (
     BADGE,
     DIM,
+    DUPLICATE,
     GREEN,
     GREY,
+    HELD_MARK,
     KEY_LIST,
     KEYS,
     PENDING_FILL,
@@ -421,6 +423,32 @@ def test_video_tags_show_the_placement_badge_only_when_show_order_is_on():
     assert not (plain[video] == BADGE).all(axis=2).any()
     assert (badged[video] == BADGE).all(axis=2).any()
     assert ("N", "placement numbers") in KEY_LIST
+
+
+@pytest.mark.parametrize("show_order", [False, True])
+def test_a_held_copy_has_a_magenta_question_mark_after_its_name_on_the_video(show_order):
+    W, H = 1280, 720
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    hud = Hud()
+    hud.show_order = show_order
+    counted = Card(2, "KH", 300, 300, 1)
+    held = Card(2, "KH", 300, 300, 1, held=True)
+    video = slice(0, H // 2)                                     # above the bottom bar
+    for card, marked in [(counted, False), (held, True)]:
+        img = hud.draw(frame, [], [card], 30.0, layout, shoe_count(["KH"], decks=2), sidebar=False)
+        assert (img[video] == DUPLICATE).all(axis=2).any() is np.bool_(marked)
+
+
+def test_game_legend_lists_a_held_copy(monkeypatch):
+    W, H = 1280, 720
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    hud = Hud()
+    hud.view = "game"
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H), shoe_count([]))
+    assert "copy held, not counted" in texts and HELD_MARK in texts
 
 
 @pytest.mark.parametrize("show_order", [False, True])

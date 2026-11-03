@@ -56,6 +56,9 @@ MATCH_DISTANCE = 0.03      # fraction of frame width; detections closer than thi
 LABEL_WINDOW_SECONDS = 1.5  # a card's name is the vote over its reads in the last this long, so a card
                             # turned face up (a hole card) changes from BACK to its name in about half that
 ROUND_END_SECONDS = 3.0    # no card visible for this long ends the round
+COPY_HOLD_SECONDS = 1.5    # with DECKS above 1: a second copy placed beside a card of its name is counted only
+                           # once both were seen together this long, so one card read twice is not counted twice.
+                           # 0 counts it at once.
 WEB_PORT = 8765            # port of the browser dashboard (read.py --web); change it if another program uses it
 
 # Preprocessing: contrast help for dim or washed-out tables (key P in read.py cycles the mode).
@@ -102,7 +105,7 @@ def validate(config) -> None:
         (("FPS", "CONFIRM_SECONDS", "CONFIRM_WINDOW_SECONDS", "DROP_SECONDS", "LABEL_WINDOW_SECONDS",
           "ROUND_END_SECONDS"),
          lambda v: _is_number(v) and v > 0, "a number above 0"),
-        (("HIDDEN_SECONDS",), lambda v: _is_number(v) and v >= 0, "a number of 0 or more"),
+        (("HIDDEN_SECONDS", "COPY_HOLD_SECONDS"), lambda v: _is_number(v) and v >= 0, "a number of 0 or more"),
         (("SYNTHETIC_IMAGES", "FOCUS_EXTRA_COPIES"), lambda v: _is_whole(v) and v >= 0, "a whole number of 0 or more"),
         (("FOCUS_CLASSES",),
          lambda v: isinstance(v, tuple) and all(name in CLASSES for name in v) and len(set(v)) == len(v),

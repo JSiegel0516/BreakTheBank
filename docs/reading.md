@@ -15,6 +15,7 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | Sidebar, below | the Cards Left view or the Game view (see below) |
 | Name on a card | that card's name: the rank followed by the suit's shape (`BACK` for a face-down card). `N` adds its placement number in a yellow badge before the name |
 | Grey name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
+| Magenta `?` after a name | two or three decks: a held copy, placed beside a card of its name but not counted until both have been seen together for `COPY_HOLD_SECONDS` (see [Decks in the shoe](#decks-in-the-shoe)) |
 | Coloured boxes | corner indices the tracker has matched to a confirmed card, in that card's colour: red for hearts and diamonds, white for spades and clubs, amber for face-down. A frame that misreads the corner (a 6H read as 9H) keeps the card's colour |
 | Thin grey boxes | detections not matched to a confirmed card: a card not confirmed yet, or a stray box away from every card. `G` hides them |
 | Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
@@ -78,6 +79,7 @@ view. The Cards Left view's colours are in the table above.
 | Thin grey box | corner index | a detection not matched to a confirmed card: it has not passed the [confirmation checks](#rules-the-tracker-assumes) yet, or it is away from every card (`G` hides these) |
 | Yellow badge | sidebar, and tags after `N` | the card's placement number; the Game legend lists it only while `N` shows it on the tags |
 | Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand until it is removed, and in the count (the tag's badge only after `N`) |
+| Magenta `?` | tags | a held copy: on the table with its number, not in the count yet (the Game legend's `copy held, not counted`) |
 | Amber outline | zones | the dealer's zone |
 | Light blue outline | zones | a player's zone |
 | Yellow tint | zones, edit mode | the zone you last clicked |
@@ -158,6 +160,12 @@ A `duplicate` line means a face card was placed (or renamed) under a name whose
 every copy was already counted this shoe. One deck holds one of each card, so a
 second King of Hearts is a misread or a reshuffle nobody marked with `Shift+R`.
 With two decks the third one is. The count is not changed.
+
+A `held` line, with two or three decks, follows the `placed` line of a second
+copy placed beside a card of its name. It may be that card read twice, so it is
+on the table but not in the count yet. A `counted` line, with the running count,
+follows once both were seen together for `COPY_HOLD_SECONDS` (1.5 s), or as soon
+as the first copy is removed or renamed. A copy that leaves the table first is never counted.
 
 To fix a misread while the round is still open, press `X` to rescan the round.
 The reader forgets every card of this round and takes this round's names back
@@ -389,9 +397,19 @@ With more than one deck a card can really appear twice. Each card may be
 counted once per deck; one more read of it is a `duplicate`. Two corners of
 one card still join into one card when they are close: up to four times
 `MATCH_DISTANCE` apart, about a card's diagonal. A card of the same name
-farther away is a second copy. A card that is picked up and comes back
-elsewhere looks like a new copy too, so it is counted again while copies are
-left.
+farther away is a second copy. A card that is covered or moved comes back as
+the same card, wherever it lands. Once it has been removed (`HIDDEN_SECONDS`),
+it is placed again as a new copy and counted while copies are left.
+
+A second copy placed within four `MATCH_DISTANCE`s of a card of its name is
+held: it gets its number but stays out of the count, and its tag shows a
+magenta `?` after its name. It is counted once both cards have been seen
+together for `COPY_HOLD_SECONDS` (1.5 s), so one card whose corner is read twice
+for a moment is not counted twice. If the first copy is removed or renamed
+meanwhile, the held copy takes over its count, and the running count does not
+change. No other card's count passes to a held copy. A copy
+placed after every copy of its name was counted is not held: it is a
+`duplicate` at once. `COPY_HOLD_SECONDS = 0` counts every copy at once.
 
 ### Setting up the camera
 
@@ -752,11 +770,28 @@ doubles in single deck.
   under a name counted in an earlier round prints as `duplicate`.
 - **Two or three decks.** Two sightings of the same face are the same card only
   within four `MATCH_DISTANCE`s of each other; farther apart they are two copies.
-  A card has two corner indices, so it joins at most two such sightings: a third
-  one close by is a second copy, and two of a card fanned in one hand stay two
-  cards. A hole card turned over, or a covered card coming back, still joins its
-  own card. The cost: beside a card already showing both corners, a stray misread
-  of its name can place a phantom copy, once it passes the confirmation checks.
+  A card has two corner indices, so it joins at most two such sightings in view:
+  a third one close by is a second copy, and two of a card fanned in one hand stay
+  two cards. A hole card turned over still joins its own card. Three rules keep
+  one physical card from being counted twice:
+
+  | Rule | A new sighting joins | Stops |
+  |---|---|---|
+  | Same corner | the card with a sighting within half a `MATCH_DISTANCE` (about 29 px at 1920 wide), whatever name it reads | a second box, or a misread box, on one corner becoming a copy |
+  | Stale tracks | a card whose corner was lost: a sighting that missed this frame no longer counts toward the two | a corner picked up again after a nudge becoming a copy |
+  | Out of sight | a card of its name that is covered, or missed on every corner this frame, at any distance | a card slid or moved across the table becoming a copy |
+
+  Copies fanned 50 px apart stay apart. The costs: beside a card already showing
+  both corners, a stray misread of its name can place a phantom copy, once it
+  passes the confirmation checks; and a second copy confirmed while the first
+  is covered joins the first, so it is missed.
+  A second copy within four `MATCH_DISTANCE`s of a card of its name is held:
+  numbered, printed as `held`, tagged with a magenta `?`, and left out of the
+  count until both are seen together for `COPY_HOLD_SECONDS` (1.5 s, 19 frames),
+  when it prints as `counted`. If the first copy is removed or renamed first, the
+  held copy takes over its count. A rescan or the end of the round drops a held copy like
+  any other card of the round; a rename holds it again only beside a card of its
+  new name.
   Each card is counted once per deck, and one more copy prints as `duplicate`
   (see [Decks in the shoe](#decks-in-the-shoe)).
 - **Covered is not removed, at first.** A card that disappears for
@@ -836,6 +871,48 @@ round 1 #3: expected KS, read KH (wrong suit)
 - The expected running count is Hi-Lo. The log records the running count in
   the system the reader counts in, so record a run to score with Hi-Lo.
 - The exit code is 1 only when a file is missing or has a bad row, not when cards disagree.
+- `held` and `counted` rows are left out of the score. A held copy was placed,
+  so it is scored like any other card.
+
+### Measuring double counting with two decks
+
+With two or three decks, one physical card counted twice shows as an `extra`
+card. Score a recorded two-deck clip before and after a tracker change to see
+whether the change helps.
+
+1. Set `DECKS = 2` in `settings.py`.
+2. Record a clip of a few rounds. Include what tends to split one card into
+   two: two copies of one card fanned in a hand, a card nudged or slid across
+   the table, and a hand passing over the cards.
+3. Read it with a log:
+
+   ```bash
+   python read.py --source twoDecks.mp4 --log twoDecks.csv --no-display
+   ```
+
+4. Write `twoDecksExpected.csv` with one row per card really dealt, in the
+   order placed, as above. Both copies of a card dealt twice get a row.
+5. Score it:
+
+   ```bash
+   python evaluate.py --log twoDecks.csv --expected twoDecksExpected.csv
+   ```
+
+6. Read the `extra` line first: how many more cards the reader placed in a
+   round than were dealt, most often one card read twice. Cards are matched by
+   number, so a card read twice also shifts the numbers after it: the rest of
+   that round shows as wrong names, and the last number as the extra. Look in
+   the log for the first card of that round placed twice under one name. The
+   running count line shows how much the extras moved the count. A `held` row
+   for that card, with no `counted` row after it, means the hold kept it out of
+   the count.
+7. To see where the spare tracks come from, play the clip again without
+   `--no-display` and press `G`. Thin grey boxes are detections not yet matched
+   to a card. A grey box that stays on a corner next to a confirmed card is a
+   second track forming there.
+
+Use the same clip and expected file for every comparison. A change that lowers
+`extra` without raising `missed` is a gain.
 
 ## Tuning the reader
 
@@ -859,6 +936,8 @@ A value out of range (a fraction above 1, `CONFIRM_SECONDS` larger than
 | The next round starts too slowly after a sweep | lower `ROUND_END_SECONDS` | the empty table is noticed sooner |
 | Cards land in the wrong seat | press `1` to `5` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
+| Two or three decks: one card is still counted twice | raise `COPY_HOLD_SECONDS` (e.g. 1.5 s to 3 s, 19 to 37 frames) | a second read of a card must last longer beside it before it counts |
+| Two or three decks: a real second copy counts too late | lower `COPY_HOLD_SECONDS` (e.g. 1.5 s to 0.5 s, 19 to 6 frames); 0 counts at once | a copy beside a card of its name is counted sooner |
 | A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW_SECONDS` (1.5 s to 1 s, 19 to 12 frames) | the name vote forgets old reads sooner |
 | A card's name flips back and forth | raise `LABEL_WINDOW_SECONDS` (1.5 s to 3 s, 19 to 37 frames) | one bad second of reads cannot outvote the rest |
 | Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
@@ -868,7 +947,7 @@ A value out of range (a fraction above 1, `CONFIRM_SECONDS` larger than
 
 The `*_SECONDS` settings are turned into frames once, at start-up:
 `max(1, round(seconds * FPS))`, so every one is at least a frame, except
-`HIDDEN_SECONDS = 0`. The frames in brackets above are at `FPS = 12.4`, the
+`HIDDEN_SECONDS = 0` and `COPY_HOLD_SECONDS = 0`. The frames in brackets above are at `FPS = 12.4`, the
 speed the reader runs at on the development Mac. If your reader runs at another
 speed, set `FPS` to it and every time keeps its meaning; the quit summary prints
 the measured fps when it is more than a fifth away from `FPS`.
@@ -900,8 +979,11 @@ the measured fps when it is more than a fifth away from `FPS`.
 
 - **At most three decks.** `DECKS` and the page's decks button allow 1 to 3.
   With more than one deck the reader tells a second copy from the same card by
-  distance only, so a card picked up and put down far away counts as another copy
-  while copies are left, and two copies dealt touching may merge into one.
+  distance and by whether the first is in view. A card moved while it was covered
+  or missed is the same card. A card picked up and put down far away after it was
+  removed (`HIDDEN_SECONDS`) counts as another copy while copies are left. A
+  second copy confirmed while the first is covered joins it and is not counted.
+  Two copies dealt within half a `MATCH_DISTANCE` of each other may merge into one.
 - **Splits** must be marked by hand (`Shift+1` to `Shift+5` or the page), at most
   two hands per seat. The `--log` CSV records the seat, not the hand, so
   `evaluate.py` scores a split seat as one hand.
