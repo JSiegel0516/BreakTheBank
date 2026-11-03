@@ -14,7 +14,10 @@ import read
 from cardReader.cards import Detection
 from cardReader.hud import SIDEBAR, Hud
 from cardReader.sidebar.server import SidebarServer
-from read import STAGES, StageTimer, fps_note, reconnect
+from cardReader.tracker import TrackerConfig
+from read import STAGES, StageTimer, capture_time, reconnect
+
+FRAME = 1 / TrackerConfig.nominal_fps  # one frame at the tracker's nominal rate
 
 
 class FakeCamera:
@@ -43,8 +46,10 @@ class FakeCamera:
 def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args, make_detector=None):
     """Run read.main() on a fake camera and detector with no real window, pressing one of `keys` per frame.
     args: extra command-line arguments. Saved frames go to tmp_path / "frames". Every model load
-    returns detect, unless make_detector is given: then each load calls make_detector(weights)."""
+    returns detect, unless make_detector is given: then each load calls make_detector(weights).
+    The camera runs at the tracker's nominal rate: read n is captured at n * FRAME seconds."""
     monkeypatch.setattr(read, "Camera", lambda *a: cam)
+    monkeypatch.setattr(read, "capture_time", lambda camera: camera.reads * FRAME)
     detect.device_used = "mps"
     detector = ModuleType("cardReader.detector")
     detector.Detector = (lambda weights, *a: make_detector(weights)) if make_detector else (lambda *a: detect)
@@ -89,18 +94,27 @@ def test_stale_camera_shows_no_signal_feeds_nothing_to_the_tracker_and_c_reconne
     assert "average time per frame: read" in out and "detect" in out
 
 
-def test_quit_summary_prints_the_measured_fps_when_far_from_the_setting(monkeypatch, capsys, tmp_path):
-    run_reader(monkeypatch, tmp_path, FakeCamera(), [255, 255, ord("q")], lambda frame: [])
-    out = capsys.readouterr().out                           # a fake camera runs far faster than 12.4 fps
-    assert "fps, but FPS in settings.py is 12.4" in out
+def test_each_frame_reaches_the_tracker_with_its_capture_time_less_the_time_without_signal(monkeypatch, tmp_path):
+    cam = FakeCamera(stale_from=5)
+    fed = []
+    update = read.CardTracker.update
+
+    def watched_update(self, detections, now=None):
+        fed.append(now)
+        return update(self, detections, now)
+
+    monkeypatch.setattr(read.CardTracker, "update", watched_update)
+    keys = [255] * 6 + [ord("c")] + [255] * 3 + [ord("q")]
+    run_reader(monkeypatch, tmp_path, cam, keys, lambda frame: [])
+    # reads 5 to 7 had no signal; reads 8 on are fed 3 frames earlier, so the tracker's clock waited
+    assert fed == pytest.approx([n * FRAME for n in range(1, 9)])
 
 
-def test_fps_note_is_empty_within_a_fifth_of_the_setting():
-    assert fps_note(12.4, 12.4) == ""
-    assert fps_note(14.8, 12.4) == "" and fps_note(10.0, 12.4) == ""
-    assert fps_note(30.0, 12.4) == ("measured 30.0 fps, but FPS in settings.py is 12.4: "
-                                    "set FPS to about 30.0 so the *_SECONDS settings take the time they say")
-    assert fps_note(9.0, 12.4).startswith("measured 9.0 fps")
+def test_capture_time_is_a_video_files_position_or_the_monotonic_clock(monkeypatch):
+    video = SimpleNamespace(is_file=True, cap=SimpleNamespace(get=lambda prop: {cv2.CAP_PROP_POS_MSEC: 2500.0}[prop]))
+    assert capture_time(video) == 2.5                        # a replay is timed as the recording was
+    monkeypatch.setattr(read.time, "monotonic", lambda: 42.0)
+    assert capture_time(FakeCamera()) == 42.0
 
 
 def test_detector_gets_the_preprocessed_frame_shift_v_shows_the_raw_one_and_s_saves_raw(monkeypatch, tmp_path):
@@ -155,9 +169,9 @@ def test_a_turn_while_editing_detects_on_the_next_frame_so_cards_keep_their_numb
         x, y = (100, 50) if upright else (359 - 50, 100)  # the same card, turned with the frame
         return [Detection("KH", 0.9, x, y)]
 
-    def watched_process(self, frame, dets):
+    def watched_process(self, frame, dets, now=None):
         fed.append((frame.shape[:2], [(det.cx, det.cy) for det in dets]))
-        found = process(self, frame, dets)
+        found = process(self, frame, dets, now)
         events.extend((cam.reads, event.kind, event.card.order) for event in found if event.card)
         return found
 
@@ -183,9 +197,9 @@ def test_editing_detects_every_third_frame_reuses_the_cards_and_drains_the_mouse
         detected.append(cam.reads)
         return [Detection("5H", 0.9, 100, 100)]
 
-    def watched_process(self, frame, dets):
+    def watched_process(self, frame, dets, now=None):
         fed.append(len(dets))
-        return process(self, frame, dets)
+        return process(self, frame, dets, now)
 
     def watched_drain(budget_ms):
         drained.append(cam.reads)
@@ -544,8 +558,8 @@ def test_choosing_a_model_on_the_page_starts_detection_and_keeps_the_cards(monke
     rounds = []
     record = read.Reader.process
 
-    def watched_process(self, frame, dets):
-        events = record(self, frame, dets)
+    def watched_process(self, frame, dets, now=None):
+        events = record(self, frame, dets, now)
         rounds.append([(card.order, card.label) for card in self.tracker.round])
         return events
 
@@ -591,10 +605,10 @@ def test_the_start_up_model_is_freed_after_switching_away(monkeypatch, tmp_path)
 
     process = read.Reader.process
 
-    def watched_process(self, frame, dets):
+    def watched_process(self, frame, dets, now=None):
         gc.collect()
         alive.append([ref() is not None for ref in refs])
-        return process(self, frame, dets)
+        return process(self, frame, dets, now)
 
     monkeypatch.setattr(read.Reader, "process", watched_process)
     posts = {3: [{"action": "switch_model", "path": "models/model_1/weights/best.pt"}], 6: ["quit"]}

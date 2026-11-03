@@ -7,8 +7,10 @@ The tracker smooths that out and remembers the order cards arrived in:
   * Each box is matched to the nearest existing track (one physical corner
     index followed across frames), or starts a new track.
   * A track must pass every confirmation check before it counts as a card:
-      - seen steadily: in at least confirm_frames of the last confirm_window
-        frames, so a detection that flickers on and off never builds up enough
+      - seen steadily: for confirm_seconds in total within the last
+        confirm_window_seconds, so a detection that flickers on and off never
+        builds up enough. Each sighting stands for the time since the frame
+        before it, so a slow camera confirms a card after as long as a fast one
       - rank agreement: the rank of its most common name has at least
         confirm_agreement of its recent reads (BACK counts as a rank of its
         own), so a card read half as 6H and half as 9H waits. A card read as
@@ -19,9 +21,9 @@ The tracker smooths that out and remembers the order cards arrived in:
       - held still: the corner has moved less than still_distance over those
         frames, so a card being slid across the table is counted where it lands
     A track that passes once stays confirmed.
-  * A track is only dropped after drop_frames consecutive misses, so a hand
-    passing over the table does not erase a card straight away.
-  * A track's label is a vote over its reads in the last label_window frames,
+  * A track is only dropped once it has gone unseen for drop_seconds, so a
+    hand passing over the table does not erase a card straight away.
+  * A track's label is a vote over its reads in the last label_window_seconds,
     so one misread frame does not flip it, but a card turned face up in place
     (a dealer's hole card) does change from BACK to its name after about half
     the window.
@@ -55,13 +57,13 @@ The tracker smooths that out and remembers the order cards arrived in:
     The costs: beside a card already showing both corners, a stray misread of
     its name can place a phantom copy once it passes the confirmation checks;
     and a second copy confirmed while the first is covered joins the first.
-  * A held copy (with decks > 1 and copy_hold_frames above 0): a face card
+  * A held copy (with decks > 1 and copy_hold_seconds above 0): a face card
     placed within SAME_CARD_MATCH_DISTS match distances of another card of its
     name, holding no locked copy, while a copy of that name is left to count,
     may be that card read twice. It is placed and numbered but HELD: not
-    counted. Once it and that card have both been seen on copy_hold_frames
-    frames, it is COUNTED, and reported as a duplicate if every copy was dealt
-    meanwhile. If that card is removed or renamed away, the held copy takes
+    counted. Once it and that card have both been seen together for
+    copy_hold_seconds, it is COUNTED, and reported as a duplicate if every
+    copy was dealt meanwhile. If that card is removed or renamed away, the held copy takes
     over its count and is counted at once. No other card hands a held copy its
     count, so it is never counted before its hold ends. A held copy
     renamed is placed again under its new name: held, or counted. A held copy
@@ -80,11 +82,11 @@ Memory, so a card is never counted twice:
     number and stays in the round. When it is seen again it is RETURNED, with
     the same number. A face card is recognised by its name anywhere on the
     table; a face-down card by reappearing near where it was.
-  * A card hidden for hidden_frames is REMOVED: it was picked up (a hand the
+  * A card hidden for hidden_seconds is REMOVED: it was picked up (a hand the
     dealer collected mid-round). It leaves the round but stays in the shoe
     count. Its number is not reused; if it comes back it is placed again
     under a new number, and its name is not counted again.
-  * The round ends when no card has been visible for round_end_frames (the
+  * The round ends when no card has been visible for round_end_seconds (the
     dealer has swept the table, or every card was removed), or when
     new_round() is called. Numbers restart at 1 for the next round.
   * shoe_seen lists every face card seen since the last shuffle, in the order
@@ -132,9 +134,23 @@ Memory, so a card is never counted twice:
   * new_shoe() clears shoe_seen, shoe_unrevealed, and shoe_duplicates after a
     reshuffle.
 
-All thresholds live in TrackerConfig, in frames and pixels.
-TrackerConfig.from_settings turns the seconds in settings.py into frames at
-settings.FPS, and the fractions of the frame width into pixels.
+All thresholds live in TrackerConfig, in seconds and pixels.
+TrackerConfig.from_settings keeps the seconds in settings.py as they are and
+turns the fractions of the frame width into pixels.
+
+Times run on the clock update() is given: read.py passes each frame's capture
+time, so every setting holds in real time whatever the frame rate. An update()
+given no time moves the clock one frame at nominal_fps, as in the tests.
+With times given, a setting is reached once that many seconds have passed,
+allowing only for float rounding (TIME_TOLERANCE). Without them, each update
+is a whole frame, and half a frame short of a setting counts as reaching it:
+each setting takes the whole number of frames nearest to it, as it did when
+settings were turned into frames. Either way every time takes at least one
+frame, except hidden_seconds or copy_hold_seconds of 0.
+
+A track keeps its sightings for as long as its windows look back, however
+many frames that is: the label window, and the confirm window until it is
+confirmed. With no confirm window it keeps every sighting until then.
 
 When the camera view is turned a quarter turn (keys < and > in read.py),
 rotate() turns every track and card with the frame and rescales the pixel
@@ -144,47 +160,56 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 
 from .cards import Card, Detection, Event
 from .deck import BACK, rank_of
 
 SAME_CARD_MATCH_DISTS = 4  # with decks > 1: match distances within which a face track of a card's name is that card
 SAME_CORNER_MATCH_DISTS = 0.5  # with decks > 1: match distances within which a face track is a bound track's corner
+TIME_TOLERANCE = 1e-9  # seconds a time may fall short of a setting from float rounding in summed frame intervals
 
 @dataclass
 class TrackerConfig:
-    """Every tracker threshold, in frames and pixels, and the decks in the shoe.
+    """Every tracker threshold, in seconds and pixels, and the decks in the shoe.
     The defaults are permissive, for tests."""
-    confirm_frames: int = 8            # sightings needed ...
-    confirm_window: int | None = None  # ... within this many frames (None: ever)
+    confirm_seconds: float = 0.65      # time seen needed ...
+    confirm_window_seconds: float | None = None  # ... within this long (None: ever, keeping every sighting)
     confirm_agreement: float = 0.0     # share of recent reads that must agree on the rank
     confirm_confidence: float = 0.0    # minimum average confidence over those sightings
     still_distance: float | None = None  # pixels the corner may move over them (None: any)
-    drop_frames: int = 30              # misses in a row before a track is forgotten
+    drop_seconds: float = 2.4          # time unseen before a track is forgotten
     match_dist: float = 40.0           # pixels: a detection closer than this to a track is that track
-    round_end_frames: int = 90         # frames with no card visible before the round is over
-    label_window: int | None = None    # frames the name vote looks back (None: every read ever)
-    hidden_frames: int | None = None   # frames a card may stay hidden before it is removed (None: never)
+    round_end_seconds: float = 7.25    # time with no card visible before the round is over
+    label_window_seconds: float | None = None  # time the name vote looks back (None: every read ever)
+    hidden_seconds: float | None = None  # time a card may stay hidden before it is removed (None: never)
     decks: int = 1                     # decks in the shoe: copies of each card that may be counted
-    copy_hold_frames: int = 0          # with decks > 1: frames a copy beside a card of its name waits (0: none)
+    copy_hold_seconds: float = 0.0     # with decks > 1: time a copy beside a card of its name waits (0: none)
+    nominal_fps: float = 12.4          # the reader's usual frame rate: an update() given no time is one frame
+                                       # at it, and its times are compared to the nearest such frame
 
     @classmethod
     def from_settings(cls, s, frame_width: int) -> TrackerConfig:
-        """From settings.py: distances are fractions of the frame width, times are seconds at s.FPS.
+        """From settings.py: distances are fractions of the frame width, times are seconds.
         decks keeps its default; pass settings.DECKS to CardTracker as a keyword.
-
-        Each time becomes at least one frame, except HIDDEN_SECONDS, where 0 frames
-        removes a card on the frame it is hidden, and COPY_HOLD_SECONDS, where 0
-        frames counts a copy at once."""
-        def frames(seconds: float) -> int:
-            return max(1, round(seconds * s.FPS))
-
-        return cls(confirm_frames=frames(s.CONFIRM_SECONDS), confirm_window=frames(s.CONFIRM_WINDOW_SECONDS),
+        HIDDEN_SECONDS = 0 removes a card on the frame it is hidden; COPY_HOLD_SECONDS = 0
+        counts a copy at once."""
+        return cls(confirm_seconds=s.CONFIRM_SECONDS, confirm_window_seconds=s.CONFIRM_WINDOW_SECONDS,
                    confirm_agreement=s.CONFIRM_AGREEMENT, confirm_confidence=s.CONFIRM_CONFIDENCE,
-                   still_distance=s.STILL_DISTANCE * frame_width, drop_frames=frames(s.DROP_SECONDS),
-                   match_dist=s.MATCH_DISTANCE * frame_width, round_end_frames=frames(s.ROUND_END_SECONDS),
-                   label_window=frames(s.LABEL_WINDOW_SECONDS), hidden_frames=round(s.HIDDEN_SECONDS * s.FPS),
-                   copy_hold_frames=round(s.COPY_HOLD_SECONDS * s.FPS))
+                   still_distance=s.STILL_DISTANCE * frame_width, drop_seconds=s.DROP_SECONDS,
+                   match_dist=s.MATCH_DISTANCE * frame_width, round_end_seconds=s.ROUND_END_SECONDS,
+                   label_window_seconds=s.LABEL_WINDOW_SECONDS, hidden_seconds=s.HIDDEN_SECONDS,
+                   copy_hold_seconds=s.COPY_HOLD_SECONDS)
+
+
+class Hit(NamedTuple):
+    """One sighting of a track."""
+    time: float      # the tracker's clock on the frame it was seen
+    interval: float  # seconds since the frame before: how long this sighting stands for
+    conf: float
+    x: float
+    y: float
+    label: str
 
 
 @dataclass
@@ -192,7 +217,7 @@ class Track:
     id: int
     cx: float
     cy: float
-    hits: deque = field(default_factory=lambda: deque(maxlen=200))  # (frame, conf, x, y, label) of recent sightings
+    hits: deque = field(default_factory=deque)  # Hit of each sighting its windows still need, oldest first
     votes: Counter = field(default_factory=Counter)  # reads per label, within the label window
     label: str = ""                                   # the winning vote
     seen: int = 0
@@ -206,7 +231,10 @@ class CardTracker:
         self.cfg = replace(config or TrackerConfig(), **overrides)
         self.tracks: dict[int, Track] = {}
         self._next_id = 1
-        self.frame = 0
+        self.frame = 0       # updates so far: numbers each frame for events and the log
+        self.now = 0.0       # the clock on the last update, in seconds
+        self._interval = 0.0  # seconds from the update before to the last one
+        self._slack = 0.0     # seconds a time may fall short of a setting on the last update (see _reached)
         self._card_of: dict[int, Card] = {}  # track id -> the card it belongs to
         self._dealt_backs: set[int] = set()  # ids of tracks of face-down cards already in shoe_unrevealed
         self.bound: list[Card | None] = []   # per detection of the last update: the confirmed card it matched
@@ -235,7 +263,7 @@ class CardTracker:
         self._card_of = {}
         self._carried_cards: dict[int, str] = {}  # order -> name counted under, for cards placed from _carried_tracks
         self._next_order = 1  # placement numbers are never reused within a round, even after a removal
-        self._empty_frames = 0
+        self._last_busy = self.now  # the last time a card was visible, or nothing was placed yet
 
     def new_shoe(self):
         """After a reshuffle: a new round, and every card can be counted again."""
@@ -272,7 +300,7 @@ class CardTracker:
         self.bound = []
         self.round = []
         self._next_order = 1
-        self._empty_frames = 0
+        self._last_busy = self.now
         return placed_this_round
 
     @property
@@ -295,8 +323,15 @@ class CardTracker:
         """Copies of each face name counted before this round began."""
         return Counter(self._seen_before_round)
 
-    def update(self, detections: list[Detection]) -> list[Event]:
+    def update(self, detections: list[Detection], now: float | None = None) -> list[Event]:
         """Advance one frame with that frame's detections.
+
+        now: the frame's capture time in seconds, on a clock that only moves forward
+        (time.monotonic(), or a video file's position); each setting then takes at least
+        its seconds, and the first frame, with no frame before it, stands for no time.
+        None moves the clock one frame at nominal_fps, so a run of updates without times
+        is a camera at that rate whose settings round to whole frames.
+        Give a time with every frame or with none.
 
         Returns the events this frame caused: placed cards first, then renamed,
         hidden, and returned cards in placement order, then removed cards, then
@@ -310,6 +345,17 @@ class CardTracker:
         confirmed card its track belongs to, or None while that track is not
         confirmed. A detection misread as another name is still bound to its card."""
         self.frame += 1
+        nominal_interval = 1 / self.cfg.nominal_fps
+        if now is None:
+            now = self.frame * nominal_interval
+            self._slack = nominal_interval / 2
+            self._interval = nominal_interval  # every untimed update, the first too, is one nominal frame
+        else:
+            self._slack = TIME_TOLERANCE
+            # The first timed frame has no frame before it, so it stands for no time: a sighting on it
+            # never counts for time that was not measured.
+            self._interval = max(now - self.now, 0.0) if self.frame > 1 else 0.0
+        self.now = now
         det_tracks = self._match(detections)
         for track in self.tracks.values():
             if not track.confirmed and self._passes_checks(track):
@@ -352,7 +398,7 @@ class CardTracker:
             if not card_tracks:
                 if not card.hidden:
                     card.hidden = True
-                    card.hidden_since = self.frame
+                    card.hidden_since = self.now
                     events.append(Event("hidden", card, self.frame))
                 continue
             votes = sum((track.votes for track in card_tracks), Counter())
@@ -382,14 +428,22 @@ class CardTracker:
 
         # Counts on after every card was removed, so a collected table still ends the round.
         placed_this_round = self._next_order > 1
-        if placed_this_round and not tracks_of:
-            self._empty_frames += 1
-        else:
-            self._empty_frames = 0
-        if self._empty_frames >= self.cfg.round_end_frames:
+        if not placed_this_round or tracks_of:
+            self._last_busy = self.now
+        elif self._reached(self.now - self._last_busy, self.cfg.round_end_seconds):
             events.append(Event("round_over", None, self.frame))
             self.new_round()
         return events
+
+    def _reached(self, elapsed: float, seconds: float) -> bool:
+        """Whether elapsed seconds reach `seconds`. With times given, only float rounding may fall
+        short; without, half a nominal frame may, so a time rounds to whole frames (see the module docstring)."""
+        return elapsed >= seconds - self._slack
+
+    def _within(self, then: float, seconds: float | None) -> bool:
+        """Whether the time `then` lies within the last `seconds` (None: ever), rounded as _reached
+        rounds. This frame always does."""
+        return seconds is None or then >= self.now or not self._reached(self.now - then, seconds)
 
     def rotate(self, quarter_turns: int, width: int, height: int):
         """Follow the frame turned clockwise by quarter_turns (negative: anticlockwise), as camera.rotate turns it.
@@ -400,9 +454,11 @@ class CardTracker:
         for _ in range(quarter_turns % 4):
             for track in self.tracks.values():
                 track.cx, track.cy = _quarter_turn(track.cx, track.cy, height)
-                turned_hits = [(frame, conf, *_quarter_turn(x, y, height), label)
-                               for frame, conf, x, y, label in track.hits]
-                track.hits = deque(turned_hits, maxlen=track.hits.maxlen)
+                turned_hits = []
+                for hit in track.hits:
+                    x, y = _quarter_turn(hit.x, hit.y, height)
+                    turned_hits.append(hit._replace(x=x, y=y))
+                track.hits = deque(turned_hits)
             for card in self.round:
                 card.x, card.y = _quarter_turn(card.x, card.y, height)
             self._dealt_back_spots = [_quarter_turn(x, y, height) for x, y in self._dealt_back_spots]
@@ -527,11 +583,11 @@ class CardTracker:
         return False
 
     def _expired_cards(self) -> list[Card]:
-        """Cards of the round hidden for at least hidden_frames, in placement order."""
-        limit = self.cfg.hidden_frames
+        """Cards of the round hidden for at least hidden_seconds, in placement order."""
+        limit = self.cfg.hidden_seconds
         if limit is None:
             return []
-        return [card for card in self.round if card.hidden and self.frame - card.hidden_since >= limit]
+        return [card for card in self.round if card.hidden and self._reached(self.now - card.hidden_since, limit)]
 
     def _remove(self, card: Card):
         """Take a card off the table. Its name stays in the shoe count.
@@ -590,7 +646,7 @@ class CardTracker:
         _hold_if_copy), or counted at once."""
         was_held = card.held
         if was_held:
-            card.held, card.held_frames = False, 0
+            card.held, card.held_seconds = False, 0.0
             del self._held_against[card.order]
         at = None
         if card.counted:
@@ -613,11 +669,11 @@ class CardTracker:
 
     def _hold_if_copy(self, card: Card) -> bool:
         """Hold a face card, just placed or renamed while held, that may be a card of its name read a
-        second time. That needs decks > 1, copy_hold_frames above 0, a copy of its name still left to
+        second time. That needs decks > 1, copy_hold_seconds above 0, a copy of its name still left to
         count, and another card of its name holding no locked copy within SAME_CARD_MATCH_DISTS match
         distances. The card is held against the nearest such card and not counted. Returns whether it was held."""
         cfg = self.cfg
-        if cfg.decks == 1 or cfg.copy_hold_frames == 0 or card.label == BACK:
+        if cfg.decks == 1 or cfg.copy_hold_seconds == 0 or card.label == BACK:
             return False
         if self.shoe_seen.count(card.label) >= cfg.decks:
             return False  # nothing left to count: the duplicate check reports it at once
@@ -631,22 +687,22 @@ class CardTracker:
                 near.append((dist, other.order, other))
         if not near:
             return False
-        card.held, card.held_frames = True, 0
+        card.held, card.held_seconds = True, 0.0
         self._held_against[card.order] = min(near)[2]
         return True
 
     def _advance_hold(self, card: Card) -> list[Event]:
         """One frame of a held copy's wait. A frame on which it and the card it is held against both
-        have a track seen counts; after copy_hold_frames of them it is counted. It is counted at once
-        when that card has left the round, handing its copy over (see _remove), or changed its name.
-        Returns a counted event, followed by duplicate when every copy of its name was already dealt."""
+        have a track seen adds its interval; once those add up to copy_hold_seconds it is counted. It is counted
+        at once when that card has left the round, handing its copy over (see _remove), or changed its
+        name. Returns a counted event, followed by duplicate when every copy of its name was already dealt."""
         against = self._held_against[card.order]
         if against in self.round and against.label == card.label:
             if not self._out_of_sight(card) and not self._out_of_sight(against):
-                card.held_frames += 1
-            if card.held_frames < self.cfg.copy_hold_frames:
+                card.held_seconds += self._interval
+            if not self._reached(card.held_seconds, self.cfg.copy_hold_seconds):
                 return []
-        card.held, card.held_frames = False, 0
+        card.held, card.held_seconds = False, 0.0
         del self._held_against[card.order]
         events = [Event("counted", card, self.frame)]
         if not card.counted:
@@ -698,13 +754,13 @@ class CardTracker:
             hit_tracks.add(track.id)
             det_tracks[det_i] = track.id
 
-        # Unmatched tracks accumulate misses and are dropped after drop_frames.
+        # Unmatched tracks accumulate misses and are dropped once unseen for drop_seconds.
         for track_id in list(self.tracks):
             if track_id in hit_tracks:
                 continue
             track = self.tracks[track_id]
             track.missed += 1
-            if track.missed >= self.cfg.drop_frames:
+            if self._reached(self.now - track.hits[-1].time, self.cfg.drop_seconds):
                 del self.tracks[track_id]
                 self._card_of.pop(track_id, None)
                 self._dealt_backs.discard(track_id)
@@ -714,32 +770,49 @@ class CardTracker:
         if track.seen:
             track.cx = 0.7 * track.cx + 0.3 * det.cx  # light smoothing against jitter
             track.cy = 0.7 * track.cy + 0.3 * det.cy
-        track.hits.append((self.frame, det.conf, det.cx, det.cy, det.label))
+        track.hits.append(Hit(self.now, self._interval, det.conf, det.cx, det.cy, det.label))
+        keep = self._history_seconds(track)
+        while len(track.hits) > 1 and not self._within(track.hits[0].time, keep):
+            track.hits.popleft()
         track.seen += 1
         track.missed = 0
-        window = self.cfg.label_window
+        window = self.cfg.label_window_seconds
         if window is None:
             track.votes[det.label] += 1
         else:
-            track.votes = Counter(hit[4] for hit in track.hits if hit[0] > self.frame - window)
+            track.votes = Counter(hit.label for hit in track.hits if self._within(hit.time, window))
         track.label = track.votes.most_common(1)[0][0]
+
+    def _history_seconds(self, track: Track) -> float | None:
+        """How far back the track's sightings are still needed (None: all of them). The label window
+        needs them, and so does the confirm window until the track is confirmed; with no confirm
+        window that is every sighting. 0: only the latest, which the drop check reads."""
+        cfg = self.cfg
+        if not track.confirmed and cfg.confirm_window_seconds is None:
+            return None
+        windows = []
+        if cfg.label_window_seconds is not None:
+            windows.append(cfg.label_window_seconds)
+        if not track.confirmed:
+            windows.append(cfg.confirm_window_seconds)
+        return max(windows, default=0.0)
 
     def _passes_checks(self, track: Track) -> bool:
         """Has this track earned confirmation? See the module docstring for the checks."""
         cfg = self.cfg
-        window = cfg.confirm_window
-        recent = [hit for hit in track.hits if window is None or hit[0] > self.frame - window]
-        if len(recent) < cfg.confirm_frames:
-            return False  # not seen enough, or not steadily enough
+        recent = [hit for hit in track.hits if self._within(hit.time, cfg.confirm_window_seconds)]
+        seen_seconds = sum(hit.interval for hit in recent)
+        if not recent or not self._reached(seen_seconds, cfg.confirm_seconds):
+            return False  # not seen long enough, or not steadily enough
         rank_votes: Counter = Counter()
         for label, reads in track.votes.items():
             rank_votes[_rank_group(label)] += reads
         if rank_votes[_rank_group(track.label)] < cfg.confirm_agreement * track.votes.total():
             return False  # the reads disagree on the card's rank
-        if sum(hit[1] for hit in recent) / len(recent) < cfg.confirm_confidence:
+        if sum(hit.conf for hit in recent) / len(recent) < cfg.confirm_confidence:
             return False  # the model is not sure enough
         if cfg.still_distance is not None:
-            xs, ys = [hit[2] for hit in recent], [hit[3] for hit in recent]
+            xs, ys = [hit.x for hit in recent], [hit.y for hit in recent]
             mean_x, mean_y = sum(xs) / len(xs), sum(ys) / len(ys)
             offsets = [((x - mean_x) ** 2 + (y - mean_y) ** 2) ** 0.5 for x, y in zip(xs, ys, strict=True)]
             if max(offsets) > cfg.still_distance:

@@ -33,10 +33,10 @@ class Card:
     y: float
     placed_frame: int
     hidden: bool = False            # not visible right now, but still on the table
-    hidden_since: int = 0           # the frame it went hidden, while hidden
+    hidden_since: float = 0.0       # the tracker's clock when it went hidden, while hidden
     counted: bool = False           # this card added its label to the shoe count
     held: bool = False              # a copy beside a card of its name: not counted until both are seen together
-    held_frames: int = 0            # while held: frames this card and that card were both seen
+    held_seconds: float = 0.0       # while held: seconds this card and that card were both seen
 
 
 @dataclass

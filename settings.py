@@ -42,8 +42,7 @@ CAMERA_ROTATION = 0        # degrees the frame is turned clockwise before anythi
                            # For a camera mounted sideways or upside down; keys < and > in read.py turn it live.
 INPUT_SIZE = 1280          # frame is resized to this width before detection. Bigger = reads smaller indices, slower.
 CONFIDENCE = 0.6           # detections below this score are ignored
-FPS = 12.4                 # frames per second the reader runs at; turns every *_SECONDS below into frames.
-                           # read.py prints the measured fps on quit when it is far from this.
+# Every *_SECONDS below is real time: the tracker times each frame by when it was captured, at any frame rate.
 CONFIRM_SECONDS = 0.5      # a card must be seen for this long in total ...
 CONFIRM_WINDOW_SECONDS = 0.7  # ... within the last this long, so flicker never adds up
 CONFIRM_AGREEMENT = 0.8    # share of reads that must agree on the card's rank (0.8 = 80%); suits may differ
@@ -102,7 +101,7 @@ def validate(config) -> None:
     rules = [
         (("INPUT_SIZE", "TRAIN_INPUT_SIZE", "BATCH_SIZE", "EPOCHS", "PATIENCE", "PREPROCESS_CLAHE_TILES"),
          lambda v: _is_whole(v) and v >= 1, "a whole number of 1 or more"),
-        (("FPS", "CONFIRM_SECONDS", "CONFIRM_WINDOW_SECONDS", "DROP_SECONDS", "LABEL_WINDOW_SECONDS",
+        (("CONFIRM_SECONDS", "CONFIRM_WINDOW_SECONDS", "DROP_SECONDS", "LABEL_WINDOW_SECONDS",
           "ROUND_END_SECONDS"),
          lambda v: _is_number(v) and v > 0, "a number above 0"),
         (("HIDDEN_SECONDS", "COPY_HOLD_SECONDS"), lambda v: _is_number(v) and v >= 0, "a number of 0 or more"),

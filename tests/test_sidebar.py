@@ -16,7 +16,9 @@ from cardReader.seats import SeatLayout
 from cardReader.sidebar import server as server_module
 from cardReader.sidebar.server import SidebarServer
 from cardReader.sidebar.snapshot import ACTION_KEYS, BUTTONS, KEY_GROUPS, build_snapshot
-from cardReader.tracker import CardTracker
+from cardReader.tracker import CardTracker, TrackerConfig
+
+FRAME = 1 / TrackerConfig.nominal_fps  # one update() given no time
 
 W, H = 1280, 720
 
@@ -35,7 +37,7 @@ def place(reader, *cards):
 @pytest.fixture
 def reader(tmp_path):
     """Round 1 dealt a 2S, which is locked. Round 2: dealer 6C, P1 KS 6H, and a 2S again in P2 (a duplicate)."""
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
     empty = np.zeros((H, W, 3), np.uint8)
     place(reader, ("2S", 1, 0))
@@ -129,7 +131,7 @@ def test_snapshot_hands_carry_the_seat_id_and_its_display_name(reader):
 
 
 def new_reader(tmp_path, players):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     return Reader(tracker, SeatLayout(players, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
 
 
@@ -173,7 +175,7 @@ def hand_rows(snapshot):
 
 
 def test_player_hands_get_a_firm_a_close_and_a_normal_tip_from_the_unseen_cards(tmp_path):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
     reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
     place(reader, ("10D", 0, -30), ("BACK", 0, 30), ("10S", 1, -30), ("QH", 1, 30), ("10C", 2, -30), ("6H", 2, 30),
           ("AS", 3, -30), ("7H", 3, 30))
@@ -214,7 +216,7 @@ def test_empty_player_seats_get_a_bet_tip_from_the_true_count(tmp_path, seen, hi
 
 
 def test_snapshot_offers_a_split_only_on_a_players_pair_and_shows_split_hands_by_part(tmp_path):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
     reader.rename_seat("P1", "Ann")
     table = [("6C", 0, -30), ("6D", 0, 30), ("8S", 1, -30), ("8H", 1, 30), ("9S", 2, -30), ("9H", 2, 30)]
@@ -358,7 +360,7 @@ def test_the_count_facts_match_the_grid_after_a_shoe_of_high_cards(tmp_path):
 
 
 def test_with_two_decks_the_count_grid_and_odds_use_every_copy(tmp_path):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
     reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
     place(reader, ("AS", 1, -30), ("KH", 1, 30), ("10D", 2, 0))
     snapshot = snapshot_of(reader)
@@ -376,7 +378,7 @@ def test_with_two_decks_the_count_grid_and_odds_use_every_copy(tmp_path):
 
 
 def test_cards_left_is_one_figure_with_face_down_cards_a_duplicate_and_fewer_decks(tmp_path):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=3)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=3)
     reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
     empty = np.zeros((H, W, 3), np.uint8)
     place(reader, ("KH", 1, 0), ("KH", 2, 0), ("KH", 3, 0))     # three copies with three decks

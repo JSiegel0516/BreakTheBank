@@ -8,13 +8,15 @@ from cardReader.cards import Detection
 from cardReader.hud import GRID_RANKS, DealtCards, Hud
 from cardReader.reader import LOG_HEADER, Reader
 from cardReader.seats import SeatLayout
-from cardReader.tracker import CardTracker
+from cardReader.tracker import CardTracker, TrackerConfig
+
+FRAME = 1 / TrackerConfig.nominal_fps  # one update() given no time
 
 W, H = 640, 360
 
 
 def make_reader(tmp_path, players=3, log=None):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     layout = SeatLayout(players, W, H)
     return Reader(tracker, layout, Hud(), tmp_path / "seats.json", tmp_path / "frames", log=log)
 
@@ -39,7 +41,7 @@ def test_process_places_cards_logs_them_with_their_seat_and_counts(tmp_path):
 
 @pytest.mark.parametrize("decks, cards_left", [(1, 51), (2, 103), (3, 155)])
 def test_reader_counts_cards_left_from_the_trackers_decks(tmp_path, decks, cards_left):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=decks)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=decks)
     r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
     assert r.decks == decks and r.count.cards_left == 52 * decks
     seat = r.layout.seats[1].polygon.mean(axis=0)
@@ -116,7 +118,7 @@ def test_duplicate_is_logged_with_its_seat_and_leaves_the_count(tmp_path):
 
 def test_removed_card_is_printed_and_logged_and_leaves_the_count(tmp_path, capsys):
     buf = io.StringIO()
-    tracker = CardTracker(confirm_frames=2, drop_frames=2, match_dist=20, hidden_frames=3)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=2 * FRAME, match_dist=20, hidden_seconds=3 * FRAME)
     r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
                log=csv.writer(buf))
     seat = r.layout.seats[1].polygon.mean(axis=0)  # inside P1
@@ -133,7 +135,8 @@ def test_removed_card_is_printed_and_logged_and_leaves_the_count(tmp_path, capsy
 
 def test_a_held_copy_is_printed_and_logged_and_its_count_follows_when_counted(tmp_path, capsys):
     buf = io.StringIO()
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2, copy_hold_frames=2)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2,
+                          copy_hold_seconds=2 * FRAME)
     r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
                log=csv.writer(buf))
     x, y = map(float, r.layout.seats[1].polygon.mean(axis=0))  # inside P1
@@ -189,7 +192,7 @@ def test_cycling_the_decks_recounts_the_cards_seen_and_keeps_the_shoe(tmp_path, 
 
 
 def test_fewer_decks_mid_shoe_count_extra_copies_once_and_more_decks_bring_them_back(tmp_path):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=3)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=3)
     r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
     p1, p2 = r.layout.seats[1].polygon.mean(axis=0), r.layout.seats[2].polygon.mean(axis=0)
     two_kings = [Detection("KH", 0.9, float(p1[0]), float(p1[1])), Detection("KH", 0.9, float(p2[0]), float(p2[1]))]
@@ -221,7 +224,7 @@ def test_an_unknown_counting_system_changes_nothing(tmp_path):
 
 
 def test_the_reader_starts_in_the_counting_system_it_is_given(tmp_path):
-    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
                count_system="hi_opt_ii")
     assert (r.count_system, r.count.system) == ("hi_opt_ii", "hi_opt_ii")
