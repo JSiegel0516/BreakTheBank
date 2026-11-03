@@ -131,6 +131,16 @@ Memory, so a card is never counted twice:
     again as another copy while the deck count allows, then reported as a
     duplicate. Face down, within 3 * match_dist of where it lay as the round
     began, it is not added to shoe_unrevealed again: the restored total holds it.
+  * undo_last() and merge() fix one wrong placement and keep every other card.
+    undo_last() takes back the card placed last, as if it was never placed: its
+    copy leaves the count, or goes to a card of its name holding none, as on a
+    rename. Its face-down share of shoe_unrevealed and a duplicate only it
+    reported go too. Its tracks are forgotten, so a box still there is confirmed
+    again and placed under a new number. A face-down card dealt before it was
+    placed (carried into the round) stays dealt, and its spot is remembered as a
+    removed card's is, so it is not added again when placed there anew. merge(4, 2) folds card 4 into card 2,
+    one card placed twice: card 4 is taken back the same way, but its tracks
+    join card 2. Number 4 is not used again this round.
   * new_shoe() clears shoe_seen, shoe_unrevealed, and shoe_duplicates after a
     reshuffle.
 
@@ -259,6 +269,8 @@ class CardTracker:
         self._seen_before_round = list(self.shoe_seen)  # the locked copies: shoe_seen always starts with them
         self._unrevealed_before_round = self.shoe_unrevealed
         self._duplicates_before_round = set(self.shoe_duplicates)
+        self._unrevealed_by: dict[int, int] = {}  # order -> what that card added to shoe_unrevealed this round
+        self._duplicate_reporters: dict[str, set[int]] = {}  # name -> orders of the cards reporting it this round
         self.round: list[Card] = []
         self._card_of = {}
         self._carried_cards: dict[int, str] = {}  # order -> name counted under, for cards placed from _carried_tracks
@@ -297,11 +309,75 @@ class CardTracker:
         self._carried_tracks = {}
         self._carried_cards = {}
         self._held_against = {}
+        self._unrevealed_by = {}
+        self._duplicate_reporters = {}
         self.bound = []
         self.round = []
         self._next_order = 1
         self._last_busy = self.now
         return placed_this_round
+
+    def undo_last(self) -> Card | None:
+        """Take back the card placed last of those still in the round, hidden or not, as if it was never placed.
+
+        The copy it counted leaves the count, or goes to another card of its name holding none, as
+        a rename hands it over. What it added to shoe_unrevealed comes off, and a duplicate only it
+        reported is no longer one. Every other card keeps its number and its count. Its tracks are
+        forgotten, so a box still on its spot must pass the confirmation checks again and is then
+        placed anew, under a new number. A face-down card that added nothing, being one dealt
+        already (carried into the round, or put back on a removed card's spot), leaves its spot in
+        _dealt_back_spots as a removed card does, so placed again there it is not added again.
+        Returns the card taken back, or None when the round has none."""
+        if not self.round:
+            return None
+        card = self.round[-1]
+        track_ids = [track_id for track_id, bound in self._card_of.items() if bound is card]
+        dealt_before = card.label == BACK and not self._unrevealed_by.get(card.order, 0)
+        self._take_back(card)
+        if dealt_before:
+            self._dealt_back_spots.append((card.x, card.y))
+        for track_id in track_ids:
+            del self.tracks[track_id]
+            del self._card_of[track_id]
+            self._dealt_backs.discard(track_id)
+            self._carried_tracks.pop(track_id, None)
+        self.bound = [None if bound is card else bound for bound in self.bound]
+        return card
+
+    def merge(self, order_from: int, order_to: int) -> Card | None:
+        """Fold card order_from into card order_to: one physical card that was placed twice.
+
+        Card order_from leaves the round as undo_last takes a card back, but its tracks are bound
+        to card order_to, whose name is then the vote over all of them. So the copy it counted
+        goes to card order_to when that card has its name and holds none. order_from's number is
+        not used again this round. Returns the card folded in, or None, with nothing changed, unless both numbers
+        are different cards of the round."""
+        cards = {card.order: card for card in self.round}
+        merged, survivor = cards.get(order_from), cards.get(order_to)
+        if merged is None or survivor is None or merged is survivor:
+            return None
+        self._take_back(merged)
+        for track_id, bound in self._card_of.items():
+            if bound is merged:
+                self._card_of[track_id] = survivor
+        self.bound = [survivor if bound is merged else bound for bound in self.bound]
+        return merged
+
+    def _take_back(self, card: Card):
+        """Take a card out of the round and undo what it did to the shoe (see undo_last). Its tracks
+        stay bound to it: the caller forgets or rebinds them. A card held against it is counted on
+        the next update, as when a card is removed."""
+        self._release_copy(card)
+        if card.held:
+            card.held, card.held_seconds = False, 0.0
+            del self._held_against[card.order]
+        self.shoe_unrevealed -= self._unrevealed_by.pop(card.order, 0)
+        for label, reporters in self._duplicate_reporters.items():
+            reporters.discard(card.order)
+            if not reporters and label not in self._duplicates_before_round:
+                self.shoe_duplicates.discard(label)
+        self._carried_cards.pop(card.order, None)
+        self.round.remove(card)
 
     @property
     def shoe_pending(self) -> set[str]:
@@ -381,7 +457,7 @@ class CardTracker:
                     if carried_label is not None:
                         self._carried_cards[card.order] = carried_label
                     if card.label == BACK and not self._already_dealt_back(track):
-                        self.shoe_unrevealed += 1
+                        self._add_unrevealed(card, 1)
                     events.append(Event("placed", card, self.frame))
                     if not carried and self._hold_if_copy(card):
                         events.append(Event("held", card, self.frame))
@@ -412,8 +488,7 @@ class CardTracker:
                 elif was_held:
                     events += self._duplicate_events(card)
                 elif self._is_duplicate(label):
-                    self.shoe_duplicates.add(label)
-                    events.append(Event("duplicate", card, self.frame))
+                    events.append(self._report_duplicate(card))
             if card.hidden:
                 card.hidden = False
                 events.append(Event("returned", card, self.frame))
@@ -648,24 +723,42 @@ class CardTracker:
         if was_held:
             card.held, card.held_seconds = False, 0.0
             del self._held_against[card.order]
-        at = None
-        if card.counted:
-            card.counted = False
-            holder = self._copy_taker(card)
-            if holder is not None:
-                holder.counted = True
-            else:  # the old name was never on the table: drop its latest copy, the one counted this round
-                at = len(self.shoe_seen) - 1 - self.shoe_seen[::-1].index(card.label)
-                self.shoe_seen.pop(at)
+        at = self._release_copy(card)
         if card.label == BACK and label != BACK:
-            self.shoe_unrevealed -= 1
+            self._add_unrevealed(card, -1)
         elif card.label != BACK and label == BACK:
-            self.shoe_unrevealed += 1
+            self._add_unrevealed(card, 1)
         card.label = label
         if was_held and self._hold_if_copy(card):
             return
         if not self._holds_locked_copy(card):
             self._count(card, at)
+
+    def _release_copy(self, card: Card) -> int | None:
+        """The card gives up the copy of its name it counted, if it counted one. Another card of the
+        round with that name holding no copy takes it over (see _copy_taker); else the name's latest
+        copy, the one counted this round, leaves shoe_seen. Returns the index it left, else None."""
+        if not card.counted:
+            return None
+        card.counted = False
+        holder = self._copy_taker(card)
+        if holder is not None:
+            holder.counted = True
+            return None
+        at = len(self.shoe_seen) - 1 - self.shoe_seen[::-1].index(card.label)
+        self.shoe_seen.pop(at)
+        return at
+
+    def _add_unrevealed(self, card: Card, change: int):
+        """Change shoe_unrevealed for this card, remembering the change so undo_last can take it back."""
+        self.shoe_unrevealed += change
+        self._unrevealed_by[card.order] = self._unrevealed_by.get(card.order, 0) + change
+
+    def _report_duplicate(self, card: Card) -> Event:
+        """Add the card's name to shoe_duplicates, remembering which card reported it, and return the event."""
+        self.shoe_duplicates.add(card.label)
+        self._duplicate_reporters.setdefault(card.label, set()).add(card.order)
+        return Event("duplicate", card, self.frame)
 
     def _hold_if_copy(self, card: Card) -> bool:
         """Hold a face card, just placed or renamed while held, that may be a card of its name read a
@@ -719,8 +812,7 @@ class CardTracker:
                         and not self._holds_locked_copy(other) and not other.held)
         if not self._is_duplicate(card.label, same_name):
             return []
-        self.shoe_duplicates.add(card.label)
-        return [Event("duplicate", card, self.frame)]
+        return [self._report_duplicate(card)]
 
     def _match(self, detections: list[Detection]) -> list[int]:
         """Hit each detection's track, starting new tracks for the unmatched, and age the rest.

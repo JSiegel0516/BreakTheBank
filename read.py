@@ -65,6 +65,7 @@ Keys: 1-5 number of players | Shift+1-5 split or join the pair of P1-P5 (! @ # $
       v Cards Left or Game view | l legend and key list | g show or hide the grey boxes
       n show or hide the placement numbers on the video tags
       r new round | x rescan this round (fix a misread) | Shift+R new shoe (count back to 0)
+      u undo the card placed last | m merge one card into another: m 4 Enter 2 Enter folds #4 into #2
       s save frame to data/raw/frames
       c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
       Shift+V show the raw camera frame or the preprocessed one
@@ -287,13 +288,15 @@ def _project_path(path: Path) -> str:
 def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetector) -> list[int]:
     """The key codes for the page's button actions, in order, to be pressed one per frame.
 
-    rename_seat (with "seat" and "name"), split_seat and join_seat (with "seat"),
-    switch_model (with "path"), switch_count (with "system", a COUNT_SYSTEMS id), and
-    cycle_decks are done straight away and press no key. An unknown action name is printed and skipped."""
+    merge (with "from" and "to", card numbers), rename_seat (with "seat" and "name"), split_seat and
+    join_seat (with "seat"), switch_model (with "path"), switch_count (with "system", a COUNT_SYSTEMS id),
+    and cycle_decks are done straight away and press no key. An unknown action name is printed and skipped."""
     keys = []
     for action in actions:
         name = action["action"]
-        if name in ACTION_KEYS:
+        if name == "merge":  # its button stands for M, which in the window starts typing the numbers instead
+            reader.merge_cards(action.get("from", ""), action.get("to", ""))
+        elif name in ACTION_KEYS:
             keys.append(ACTION_KEYS[name])
         elif name == "rename_seat":
             reader.rename_seat(action.get("seat", ""), action.get("name", ""))

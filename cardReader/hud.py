@@ -98,8 +98,9 @@ NAME_COLUMN = 0.40  # the Game view's seat names take at most this fraction of t
 # the bottom bar
 KEYS = "[V] view    [L] legend/keys    [R] round    [X] rescan    [Shift+R] shoe    [< >] turn    [Q] quit"
 # Related keys sit together, in the order of the browser page's key groups (sidebar/snapshot.py KEY_GROUPS).
-KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), ("R", "new round"), ("X", "rescan round"), ("Shift+R", "new shoe"),
-            (f"Shift+1-{MAX_PLAYERS}", "split seat"), ("G", "grey boxes"), ("N", "placement numbers"),
+KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), ("R", "new round"), ("X", "rescan round"), ("U", "undo last card"),
+            ("M", "merge cards"), ("Shift+R", "new shoe"), (f"Shift+1-{MAX_PLAYERS}", "split seat"),
+            ("G", "grey boxes"), ("N", "placement numbers"),
             ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("< >", "turn view"),
             ("C", "reconnect camera"), ("Q", "quit"), ("E", "edit zones"), ("V", "switch view"),
             ("L", "hide legend"), ("S", "save frame")]
@@ -535,7 +536,7 @@ class Hud:
         scale = 0.45
         _, th, _ = self._size("Ag", scale)
         row_h = max(th, self.r) + self.pad  # tall enough for a badge swatch
-        key_row_h = th + self.pad           # key rows are text only
+        key_row_h = th + self.pad * 3 // 4  # key rows are text only, packed so the Cards Left legend fits 720p
         entry_rows = (len(entries) + 1) // 2
         key_rows = (len(KEY_LIST) + 1) // 2
         header_h = self._size("LEGEND", 0.5)[1] + self.pad

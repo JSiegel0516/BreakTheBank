@@ -100,6 +100,8 @@ The bottom bar lists the main keys; the legend lists them all.
 | `N` | show or hide the placement numbers on the video tags (hidden at start); the hands keep theirs | yes |
 | `R` | new round: forget the table, numbering restarts at 1, the count is kept | yes |
 | `X` | rescan: forget this round's cards and read the table again; the count keeps only earlier rounds | yes |
+| `U` | undo: take back the card placed last this round; every other card keeps its number (see Fixing one card below) | yes |
+| `M` | merge one card into another, one card placed twice: type `M`, the card to fold in, `Enter`, the card it joins, `Enter` (see Fixing one card below) | yes, with two number fields |
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 | yes |
 | `S` | save the current frame to `data/raw/frames/` for labelling | no |
 | `C` | reconnect the camera: reopen the same source after a cable or power interruption | yes |
@@ -171,6 +173,35 @@ earlier round is placed again after a rescan. Face up, it shows as a
 `duplicate`. Face down, it is not added to the face-down count again, as long
 as it lies near where it was when the round began.
 
+**Fixing one card.** Most mistakes are one card, and two keys fix one card
+without a rescan. Every other card keeps its number, and the count keeps every
+other card.
+
+- `U` (undo) takes back the card placed last this round, hidden or not. Its
+  copy leaves the count, so the running count goes back to what it was before
+  that card. A face-down card leaves the face-down count, and a `duplicate`
+  only it reported is cleared. A face-down card left on the table from an
+  earlier round stays in the face-down count, and is not added again when it
+  is placed again where it lay. If its box is still on the table, the reader
+  confirms it again and places it under a new number. With no card this round,
+  `U` says so and does nothing.
+- `M` (merge) folds one card into another when one physical card was placed
+  twice. Press `M`, type the number of the card to fold in, `Enter`, the number
+  of the card it joins, and `Enter`; space works as `Enter`, `Backspace` deletes
+  a digit, and `Esc` or any other key cancels. While typing, the digit keys do
+  not change the number of players. `M 4 Enter 2 Enter` leaves card 2, now read
+  from both cards' boxes. Card 4's copy leaves the count, unless card 2 has its
+  name and holds no copy yet; then card 2 takes it. Number 4 is not used again
+  this round. A number with no card, or one card twice, changes nothing and
+  says why.
+
+```
+--- undo: #5 KH taken back ---
+--- merge: #4 6C into #2 6C ---
+```
+
+The command line:
+
 - `--source 0` picks the camera. With an iPhone as a Continuity Camera, OpenCV
   usually numbers it 0 and the built-in camera 1; try the other number if the
   wrong one opens.
@@ -222,7 +253,7 @@ grey-green at 0, and brown below, deeper for bigger values:
 | Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. With two or three decks a card with copies left is dimmed from the left by the share seen, and its hover text says so (`KH: 1 of 2 seen, locked`); the column on the right counts copies. Below it: the face-down cards never revealed |
 | Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat a [tip](#tips): the play the unseen cards favour, how strongly, and its lead in hundredths of a bet, or a bet tip on an empty seat. A covered card is greyed out. A player holding a pair has a `Split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `Join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A row of tiles under a hand gives its odds from the unseen cards (see Odds row below) |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | first a `Model` dropdown and a `Count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
+| Keys | first a `Model` dropdown and a `Count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `U`, `M`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `Showing raw`, `No signal`, and the messages the window flashes, with a capital first letter (`New round`, `Camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
@@ -239,6 +270,11 @@ before did (a second turn turns the already-turned view) and each message
 shows. `Q` asks for confirmation first, since
 quitting cannot be undone from the page. Zone editing (`E`) and saving frames
 (`S`) need the window.
+
+**Merging from the page.** The `M` button opens two number fields in its
+place: the card to fold in, then the card it joins. `Enter` in the first field
+moves to the second, and `Enter` with both filled merges, as `M` does in the
+window. `Esc`, or clicking away from both fields, closes them unchanged.
 
 **Outcome cues.** The Hands lines show how each hand stands. A player
 blackjack sets off confetti over the whole page for about 3.25 seconds, once
@@ -867,6 +903,12 @@ round 1 #3: expected KS, read KH (wrong suit)
 - The expected running count is Hi-Lo. The log records the running count in
   the system the reader counts in, so record a run to score with Hi-Lo.
 - The exit code is 1 only when a file is missing or has a bad row, not when cards disagree.
+- `U` logs an `undo` row with the card's number. That card is scored as never
+  placed, and the numbers after it close up.
+- A merge logs a `merge` row: the number of the card folded in, with the number
+  of the card it joined in the `card` column. The card folded in is dropped, so
+  the card it joined stands for both, and the numbers after it close up.
+- A round whose every card was undone is not scored.
 - `held` and `counted` rows are left out of the score. A held copy was placed,
   so it is scored like any other card.
 

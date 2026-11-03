@@ -20,6 +20,9 @@ was already used in the round also starts a new one, since pressing r and
 appending a second read.py run to the same log write no event of their own.
 A rescan row (key x) drops the cards of the round in progress, and the cards
 placed after it fill that same round again.
+An undo row (key u) drops its card as if it was never placed. A merge row
+drops the card folded in, so the card it joined stands for both. Either way the
+numbers after it close up, and a round left with no card is not scored.
 Each card's name is the one it was placed with, or its last renamed name.
 Cards are matched by round and placement number, so a missed card shifts the
 numbers of the cards after it in that round.
@@ -80,9 +83,12 @@ class Score:
 def read_log(path: Path) -> tuple[Rounds, int]:
     """Cards placed in each round of a read.py --log CSV, and the last running count logged.
 
-    Raises ValueError for a row with the wrong number of columns or a bad number."""
-    rounds: Rounds = {}
-    current: dict[int, Placement] = {}
+    An undone or merged card is left out, as if never placed: the numbers after it close up, and
+    a round left with no card is no round. Raises ValueError for a row with the wrong number of
+    columns or a bad number."""
+    rounds: list[dict[int, Placement]] = []
+    current: dict[int, Placement] | None = None  # the round in progress by logged number, once it placed a card
+    used: set[int] = set()  # numbers placed in the round in progress, undone and merged ones too
     running_count = 0
     with open(path, newline="") as file:
         for line, row in enumerate(csv.reader(file), start=1):
@@ -94,22 +100,34 @@ def read_log(path: Path) -> tuple[Rounds, int]:
             running_count = _whole_number(event["running_count"], path, line)
             kind = event["event"]
             if kind == "round_over":
-                current = {}
+                current = None
                 continue
             if kind == "rescan":  # the round in progress is read again under the same number
-                if current:
-                    del rounds[len(rounds)]
-                current = {}
+                if current is not None:
+                    rounds.pop()
+                current = None
                 continue
-            if kind not in ("placed", "renamed"):
+            if kind not in ("placed", "renamed", "undo", "merge"):
                 continue
             order = _whole_number(event["order"], path, line)
-            if kind == "placed" and order in current:
-                current = {}
-            if not current:  # the round's first card: store the round, then keep filling it in place
-                rounds[len(rounds) + 1] = current
+            if kind in ("undo", "merge"):
+                if current is not None:
+                    current.pop(order, None)
+                continue
+            if kind == "placed" and order in used:
+                current = None
+            if current is None:  # the round's first card: store the round, then keep filling it in place
+                current, used = {}, set()
+                rounds.append(current)
+            used.add(order)
             current[order] = Placement(event["card"], event["seat"])
-    return rounds, running_count
+    kept = [placements for placements in rounds if placements]
+    return {number: _renumbered(placements) for number, placements in enumerate(kept, start=1)}, running_count
+
+
+def _renumbered(placements: dict[int, Placement]) -> dict[int, Placement]:
+    """The placements numbered 1, 2, ... in their logged order, closing the gaps undone and merged cards left."""
+    return {number: placements[order] for number, order in enumerate(sorted(placements), start=1)}
 
 
 def read_expected(path: Path) -> Rounds:

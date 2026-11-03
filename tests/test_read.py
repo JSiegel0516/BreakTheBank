@@ -369,6 +369,18 @@ def test_page_split_and_join_reach_the_reader_and_press_no_key(monkeypatch, tmp_
     assert calls == [("split", "P1"), ("join", "P2")]
 
 
+def test_page_merge_reaches_the_reader_with_its_numbers_and_undo_presses_u(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(read.Reader, "merge_cards", lambda self, source, target: calls.append((source, target)))
+    posts = {2: [{"action": "merge", "from": "4", "to": "2"}], 3: ["undo"], 4: ["quit"]}
+    server, handled, _ = run_with_page(monkeypatch, tmp_path, posts, [255] * 10)
+
+    assert handled == [ord("u"), ord("q")]                  # merge presses no key: M would start typing it
+    assert calls == [("4", "2")]
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["undo: no card placed this round"]
+
+
 def test_a_page_count_switch_reaches_the_reader_and_presses_no_key(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(read.settings, "COUNT_SYSTEM", "hi_opt_ii")
     posts = {2: [{"action": "switch_count", "system": "uston_apc"}],
