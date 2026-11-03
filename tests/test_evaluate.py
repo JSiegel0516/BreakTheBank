@@ -8,8 +8,10 @@ from cardReader.cards import Detection
 from cardReader.hud import Hud
 from cardReader.reader import LOG_HEADER, Reader
 from cardReader.seats import SeatLayout
-from cardReader.tracker import CardTracker
+from cardReader.tracker import CardTracker, TrackerConfig
 from evaluate import main, read_expected, read_log, report, score
+
+FRAME = 1 / TrackerConfig.nominal_fps  # one update() given no time
 
 HEADER = "time,frame,event,order,card,seat,running_count,x,y\n"
 
@@ -165,7 +167,8 @@ def test_a_log_written_by_the_reader_is_scored(tmp_path):
     with open(path, "w", newline="") as file:
         log = csv.writer(file)
         log.writerow(LOG_HEADER)
-        tracker = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, match_dist=20)
+        tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=5 * FRAME,
+                              match_dist=20)
         reader = Reader(tracker, SeatLayout(3, 640, 360), Hud(), tmp_path / "seats.json", tmp_path / "frames", log=log)
         frame = np.zeros((360, 640, 3), np.uint8)
         p1, p2 = (reader.layout.seats[i].polygon.mean(axis=0) for i in (1, 2))
@@ -186,7 +189,7 @@ def test_a_rescan_right_after_r_keeps_the_round_r_ended(tmp_path):
     path = tmp_path / "log.csv"
     with open(path, "w", newline="") as file:
         log = csv.writer(file)
-        tracker = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20)
+        tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20)
         reader = Reader(tracker, SeatLayout(3, 640, 360), Hud(), tmp_path / "seats.json", tmp_path / "frames", log=log)
         frame = np.zeros((360, 640, 3), np.uint8)
         for _ in range(3):

@@ -35,7 +35,6 @@ def test_focus_defaults_are_the_eight_misread_cards_with_two_extra_copies_and_no
 
 
 @pytest.mark.parametrize("name, value, allowed", [
-    ("FPS", 0, "number above 0"),
     ("CONFIRM_SECONDS", 0, "number above 0"),
     ("CONFIRM_WINDOW_SECONDS", -0.7, "number above 0"),
     ("DROP_SECONDS", "1", "number above 0"),

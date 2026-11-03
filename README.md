@@ -52,8 +52,8 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
    See [Browser dashboard](docs/reading.md#browser-dashboard), which also covers opening it on a phone.
 7. A covered card turns grey and stays in its hand. After 5 seconds out of sight
    (`HIDDEN_SECONDS` in `settings.py`) it counts as picked up: it leaves its hand but stays
-   in the count. Every time in `settings.py` is in seconds; set `FPS` to the speed your
-   reader runs at (see [Tuning the reader](docs/reading.md#tuning-the-reader)).
+   in the count. Every time in `settings.py` is in seconds of real time, at any frame
+   rate (see [Tuning the reader](docs/reading.md#tuning-the-reader)).
 
 ## How it works
 

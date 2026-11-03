@@ -3,7 +3,10 @@ import pytest
 
 from cardReader import camera
 from cardReader.blackjack import shoe_count
-from cardReader.tracker import CardTracker, Detection
+from cardReader.cards import Event
+from cardReader.tracker import CardTracker, Detection, TrackerConfig
+
+FRAME = 1 / TrackerConfig.nominal_fps  # seconds the clock moves on an update() given no time: one nominal frame
 
 
 def det(label, x, y, conf=0.9):
@@ -21,8 +24,101 @@ def run(tr, dets, frames):
     return events
 
 
-def test_card_needs_confirm_frames():
-    tr = CardTracker(confirm_frames=3, drop_frames=5)
+def run_timed(tr, dets, frames, interval):
+    """Like run, on a camera sending a frame every `interval` seconds."""
+    events = []
+    for _ in range(frames):
+        events += tr.update(dets, now=tr.now + interval)
+    return events
+
+
+@pytest.mark.parametrize(("interval", "frames_to_confirm"), [(FRAME, 7), (2 * FRAME, 4), (FRAME / 2, 13)])
+def test_a_card_is_confirmed_once_seen_for_the_set_seconds_at_any_frame_rate(interval, frames_to_confirm):
+    tr = CardTracker(confirm_seconds=0.5, confirm_window_seconds=0.7)
+    run_timed(tr, [], 2, interval)                       # the camera was already running
+    assert run_timed(tr, [det("KH", 50, 200)], frames_to_confirm - 1, interval) == []
+    ev = run_timed(tr, [det("KH", 50, 200)], 1, interval)
+    assert [(e.kind, e.card.label) for e in ev] == [("placed", "KH")]
+    assert (frames_to_confirm - 1) * interval < 0.5 <= frames_to_confirm * interval  # never early, a frame late at most
+
+
+@pytest.mark.parametrize(("confirm_seconds", "interval", "updates_to_confirm"),
+                         [(0.5, FRAME / 2, 14), (0.01, 0.001, 11)])
+def test_with_times_given_a_card_seen_from_the_first_frame_is_not_confirmed_early(confirm_seconds, interval,
+                                                                                   updates_to_confirm):
+    tr = CardTracker(confirm_seconds=confirm_seconds, confirm_window_seconds=0.7)
+    tr.update([det("KH", 50, 200)], now=100.0)           # the first frame has no frame before it: it stands for no time
+    assert run_timed(tr, [det("KH", 50, 200)], updates_to_confirm - 2, interval) == []
+    assert [e.kind for e in run_timed(tr, [det("KH", 50, 200)], 1, interval)] == ["placed"]
+    assert (updates_to_confirm - 2) * interval < confirm_seconds <= (updates_to_confirm - 1) * interval
+
+
+def test_with_times_given_a_short_time_is_not_rounded_away():
+    tr = CardTracker(confirm_seconds=0.01, drop_seconds=1, round_end_seconds=10, hidden_seconds=0.01)
+    run_timed(tr, [], 2, 0.001)
+    assert run_timed(tr, [det("KH", 50, 200)], 9, 0.001) == []          # 9 ms seen of 10
+    assert [e.kind for e in run_timed(tr, [det("KH", 50, 200)], 1, 0.001)] == ["placed"]
+    assert [e.kind for e in run_timed(tr, [], 1, 1.0)] == ["hidden"]
+    assert run_timed(tr, [], 9, 0.001) == []                             # hidden 9 ms of 10
+    assert [e.kind for e in run_timed(tr, [], 1, 0.001)] == ["removed"]
+
+
+def test_two_decks_with_times_given_a_short_copy_hold_still_waits():
+    tr = CardTracker(confirm_seconds=0.001, drop_seconds=1, match_dist=20, decks=2, copy_hold_seconds=0.01)
+    first = [det("KH", 50, 200), det("KH", 80, 200)]    # both corners of one card
+    hand = [*first, det("KH", 110, 200)]                 # and a second KH beside it
+    run_timed(tr, [], 2, 0.001)
+    assert [e.kind for e in run_timed(tr, first, 1, 0.001)] == ["placed"]
+    assert [e.kind for e in run_timed(tr, hand, 1, 0.001)] == ["placed", "held"]  # seen together 1 ms of 10
+    assert run_timed(tr, hand, 8, 0.001) == []
+    ev = run_timed(tr, hand, 1, 0.001)
+    assert [e.kind for e in ev] == ["counted"] and tr.shoe_seen == ["KH", "KH"]
+
+
+def test_a_fast_camera_keeps_every_sighting_a_long_confirm_window_needs():
+    tr = CardTracker(confirm_seconds=5, confirm_window_seconds=6)
+    run_timed(tr, [], 2, 1 / 60)
+    assert run_timed(tr, [det("KH", 50, 200)], 299, 1 / 60) == []      # far more than 200 sightings
+    assert [e.kind for e in run_timed(tr, [det("KH", 50, 200)], 1, 1 / 60)] == ["placed"]  # 5 s at 60 fps
+
+
+def test_a_fast_camera_votes_over_the_whole_label_window():
+    tr = CardTracker(confirm_seconds=0.1, drop_seconds=1, label_window_seconds=5)
+    run_timed(tr, [], 2, 1 / 60)
+    run_timed(tr, [det("BACK", 100, 100)], 300, 1 / 60)
+    run_timed(tr, [det("KS", 100, 100)], 140, 1 / 60)
+    assert labels(tr) == ["BACK"]                         # the last 5 s: 160 BACK reads, 140 KS
+    run_timed(tr, [det("KS", 100, 100)], 30, 1 / 60)
+    assert labels(tr) == ["KS"]                           # 130 BACK, 170 KS
+
+
+def test_without_a_confirm_window_every_sighting_is_kept_until_the_track_is_confirmed():
+    tr = CardTracker(confirm_seconds=100 * FRAME, confirm_confidence=0.7, label_window_seconds=10 * FRAME)
+    run(tr, [det("QD", 50, 200, conf=0.5)], 250)
+    assert len(tr.tracks[1].hits) == 250                 # unconfirmed: the average needs every read
+    run(tr, [det("QD", 50, 200, conf=0.99)], 300)
+    assert labels(tr) == ["QD"]
+    assert len(tr.tracks[1].hits) == 10                  # confirmed: only the label window is kept
+
+
+def test_a_slow_camera_hides_a_card_and_ends_the_round_after_the_set_seconds():
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=4 * FRAME, round_end_seconds=10 * FRAME)
+    run_timed(tr, [], 2, 2 * FRAME)
+    run_timed(tr, [det("KH", 50, 200)], 1, 2 * FRAME)
+    assert labels(tr) == ["KH"]
+    ev = run_timed(tr, [], 6, 2 * FRAME)                 # at half the nominal rate: half the frames
+    # hidden 4 frames' time after its last sighting, the round over 10 frames' time after the card was last there
+    assert [(e.kind, e.frame) for e in ev] == [("hidden", tr.frame - 4), ("round_over", tr.frame)]
+
+
+def test_without_a_time_each_update_is_one_nominal_frame():
+    tr = CardTracker()
+    run(tr, [det("KH", 50, 200)], 3)
+    assert tr.now == pytest.approx(3 * FRAME) and tr.frame == 3
+
+
+def test_card_needs_confirm_seconds():
+    tr = CardTracker(confirm_seconds=3 * FRAME, drop_seconds=5 * FRAME)
     assert tr.update([det("AS", 50, 200)]) == []
     assert tr.update([det("AS", 51, 201)]) == []
     ev = tr.update([det("AS", 50, 200)])
@@ -31,7 +127,7 @@ def test_card_needs_confirm_frames():
 
 
 def test_flicker_does_not_confirm():
-    tr = CardTracker(confirm_frames=3, drop_frames=2)
+    tr = CardTracker(confirm_seconds=3 * FRAME, drop_seconds=2 * FRAME)
     tr.update([det("AS", 50, 200)])
     tr.update([])
     tr.update([])  # dropped
@@ -41,7 +137,7 @@ def test_flicker_does_not_confirm():
 
 
 def test_placement_order_is_kept():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     on_table = []
     for label, x in [("KH", 300), ("2C", 100), ("9D", 500), ("AS", 50)]:
         on_table.append(det(label, x, 200))
@@ -51,13 +147,13 @@ def test_placement_order_is_kept():
 
 
 def test_two_corners_collapse_to_one_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("7D", 50, 200), det("7D", 150, 300)], 3)
     assert labels(tr) == ["7D"]
 
 
 def test_second_corner_appearing_later_is_not_a_new_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("7D", 50, 200)], 3)
     run(tr, [det("7D", 50, 200), det("7D", 150, 300)], 3)
     assert labels(tr) == ["7D"]
@@ -65,7 +161,7 @@ def test_second_corner_appearing_later_is_not_a_new_card():
 
 
 def test_label_vote_survives_one_misread():
-    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME)
     tr.update([det("6C", 50, 200)])
     tr.update([det("6C", 50, 200)])
     tr.update([det("8C", 50, 200)])
@@ -73,13 +169,13 @@ def test_label_vote_survives_one_misread():
 
 
 def test_each_back_is_its_own_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("BACK", 50, 50), det("BACK", 200, 50)], 3)
     assert labels(tr) == ["BACK", "BACK"]
 
 
 def test_covered_card_is_hidden_not_removed():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
     ev = run(tr, [det("5C", 300, 200)], 5)  # a hand covers the KH
     assert [(e.kind, e.card.label) for e in ev] == [("hidden", "KH")]
@@ -88,7 +184,7 @@ def test_covered_card_is_hidden_not_removed():
 
 
 def test_card_returning_keeps_its_number_and_is_not_recounted():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
     run(tr, [det("5C", 300, 200)], 10)                        # KH hidden for a while
     run(tr, [det("5C", 300, 200), det("9D", 500, 200)], 3)    # a new card meanwhile
@@ -99,7 +195,8 @@ def test_card_returning_keeps_its_number_and_is_not_recounted():
 
 
 def test_card_hidden_too_long_is_removed_but_stays_counted():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME,
+                     hidden_seconds=5 * FRAME)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
     ev = run(tr, [det("5C", 300, 200)], 3 + 4)               # hidden after 3 misses, 4 frames short of expiry
     assert [e.kind for e in ev] == ["hidden"]
@@ -110,7 +207,8 @@ def test_card_hidden_too_long_is_removed_but_stays_counted():
 
 
 def test_card_returning_before_the_expiry_keeps_its_number():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=8)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME,
+                     hidden_seconds=8 * FRAME)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
     run(tr, [det("5C", 300, 200)], 3 + 6)
     ev = run(tr, [det("5C", 300, 200), det("KH", 50, 200)], 3)  # back on the expiry frame
@@ -118,7 +216,8 @@ def test_card_returning_before_the_expiry_keeps_its_number():
 
 
 def test_card_placed_after_a_removal_gets_a_fresh_number():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
     run(tr, [det("5C", 300, 200)], 10)                       # KH removed
     ev = run(tr, [det("5C", 300, 200), det("9D", 500, 200)], 3)
@@ -127,7 +226,8 @@ def test_card_placed_after_a_removal_gets_a_fresh_number():
 
 
 def test_card_that_comes_back_after_removal_is_placed_again_but_not_recounted():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
     run(tr, [det("5C", 300, 200)], 10)                       # KH removed
     ev = run(tr, [det("5C", 300, 200), det("KH", 50, 200)], 3)
@@ -135,8 +235,8 @@ def test_card_that_comes_back_after_removal_is_placed_again_but_not_recounted():
     assert tr.shoe_seen == ["KH", "5C"]
 
 
-def test_hidden_frames_zero_removes_a_card_as_soon_as_it_is_hidden():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=0)
+def test_hidden_seconds_zero_removes_a_card_as_soon_as_it_is_hidden():
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME, hidden_seconds=0)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
     ev = run(tr, [det("5C", 300, 200)], 3)
     assert [(e.kind, e.frame) for e in ev] == [("hidden", tr.frame), ("removed", tr.frame)]
@@ -144,7 +244,8 @@ def test_hidden_frames_zero_removes_a_card_as_soon_as_it_is_hidden():
 
 
 def test_round_ends_after_every_card_was_removed():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("KH", 50, 200), det("4S", 300, 200)], 3)
     ev = run(tr, [], 3 + 9)                 # hidden after 3 frames, removed 2 later, round over 9 after hidden
     assert [e.kind for e in ev] == ["hidden", "hidden", "removed", "removed", "round_over"]
@@ -154,7 +255,8 @@ def test_round_ends_after_every_card_was_removed():
 
 
 def test_removed_face_down_card_stays_off_cards_left():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
     run(tr, [det("9S", 300, 100)], 10)
     assert [c.label for c in tr.round] == ["9S"]
@@ -162,8 +264,9 @@ def test_removed_face_down_card_stays_off_cards_left():
 
 
 def test_removed_card_hands_its_count_to_a_card_sharing_its_name():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, label_window=10, round_end_frames=100,
-                     hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20,
+                     label_window_seconds=10 * FRAME, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("9H", 50, 200), det("6H", 300, 200)], 3)
     run(tr, [det("9H", 50, 200), det("9H", 300, 200)], 8)   # the second card is renamed to 9H too
     run(tr, [det("9H", 300, 200)], 10)                      # the first is picked up
@@ -172,7 +275,7 @@ def test_removed_card_hands_its_count_to_a_card_sharing_its_name():
 
 
 def test_face_card_returning_elsewhere_is_still_the_same_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=100)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME)
     run(tr, [det("QS", 50, 200), det("2D", 300, 200)], 3)
     run(tr, [det("2D", 300, 200)], 5)
     ev = run(tr, [det("2D", 300, 200), det("QS", 900, 600)], 3)  # picked up and put down far away
@@ -181,7 +284,7 @@ def test_face_card_returning_elsewhere_is_still_the_same_card():
 
 
 def test_face_down_card_returns_near_where_it_was():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20, round_end_seconds=100 * FRAME)
     run(tr, [det("BACK", 100, 100), det("7H", 400, 100)], 3)
     run(tr, [det("7H", 400, 100)], 5)
     ev = run(tr, [det("7H", 400, 100), det("BACK", 110, 105)], 3)
@@ -190,7 +293,7 @@ def test_face_down_card_returns_near_where_it_was():
 
 
 def test_face_down_card_far_away_is_a_new_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20, round_end_seconds=100 * FRAME)
     run(tr, [det("BACK", 100, 100), det("7H", 400, 100)], 3)
     run(tr, [det("7H", 400, 100)], 5)
     ev = run(tr, [det("7H", 400, 100), det("BACK", 800, 500)], 3)
@@ -198,7 +301,8 @@ def test_face_down_card_far_away_is_a_new_card():
 
 
 def test_removed_face_down_card_put_back_where_it_was_is_not_dealt_again():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
     run(tr, [det("9S", 300, 100)], 10)                       # picked up: removed
     assert [c.label for c in tr.round] == ["9S"] and tr.shoe_unrevealed == 1
@@ -210,7 +314,8 @@ def test_removed_face_down_card_put_back_where_it_was_is_not_dealt_again():
 
 
 def test_two_removed_face_down_cards_put_back_each_find_their_own_spot():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("BACK", 100, 100), det("BACK", 200, 100), det("9S", 300, 300)], 3)
     run(tr, [det("9S", 300, 300)], 10)                       # both picked up
     assert tr.shoe_unrevealed == 2
@@ -221,7 +326,8 @@ def test_two_removed_face_down_cards_put_back_each_find_their_own_spot():
 
 
 def test_a_face_down_card_put_back_later_takes_over_a_spot_another_could_give_up():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("BACK", 100, 100), det("BACK", 160, 100), det("9S", 300, 300)], 3)
     run(tr, [det("9S", 300, 300)], 10)                       # both picked up
     run(tr, [det("9S", 300, 300), det("BACK", 128, 100)], 3)  # nearest (100, 100), in reach of (160, 100) too
@@ -233,7 +339,8 @@ def test_a_face_down_card_put_back_later_takes_over_a_spot_another_could_give_up
 
 
 def test_removed_face_down_card_far_away_or_in_a_later_round_is_a_new_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME)
     run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
     run(tr, [det("9S", 300, 100)], 10)
     run(tr, [det("9S", 300, 100), det("BACK", 100, 300)], 3)    # 200 pixels away
@@ -245,7 +352,7 @@ def test_removed_face_down_card_far_away_or_in_a_later_round_is_a_new_card():
 
 
 def test_round_ends_when_table_stays_empty():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME)
     run(tr, [det("KH", 50, 200), det("4S", 300, 200)], 3)
     ev = run(tr, [], 3 + 10)  # swept: hidden after 3 frames, round over 10 frames later
     assert [e.kind for e in ev][-1] == "round_over"
@@ -255,7 +362,7 @@ def test_round_ends_when_table_stays_empty():
 
 
 def test_short_cover_does_not_end_the_round():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME)
     run(tr, [det("KH", 50, 200)], 3)
     run(tr, [], 8)                      # whole table covered, but not long enough
     ev = run(tr, [det("KH", 50, 200)], 3)
@@ -264,7 +371,7 @@ def test_short_cover_does_not_end_the_round():
 
 
 def test_card_seen_in_a_later_round_is_not_counted_again():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME)
     run(tr, [det("KH", 50, 200)], 3)
     run(tr, [], 20)                     # round over
     run(tr, [det("KH", 50, 200), det("3D", 300, 200)], 3)
@@ -273,7 +380,7 @@ def test_card_seen_in_a_later_round_is_not_counted_again():
 
 
 def test_card_seen_in_a_later_round_is_reported_as_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME)
     run(tr, [det("KH", 50, 200), det("3D", 300, 200)], 3)
     run(tr, [], 20)                     # round over
     ev = run(tr, [det("KH", 400, 200)], 3)
@@ -283,7 +390,8 @@ def test_card_seen_in_a_later_round_is_reported_as_a_duplicate():
 
 
 def test_rename_to_a_name_counted_in_an_earlier_round_is_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=5 * FRAME,
+                     label_window_seconds=10 * FRAME)
     run(tr, [det("KH", 50, 200)], 3)
     run(tr, [], 10)                     # round over
     run(tr, [det("BACK", 50, 200)], 3)
@@ -293,14 +401,14 @@ def test_rename_to_a_name_counted_in_an_earlier_round_is_a_duplicate():
 
 
 def test_two_corners_of_one_card_are_not_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     ev = run(tr, [det("7D", 50, 200)], 3)
     ev += run(tr, [det("7D", 50, 200), det("7D", 150, 300)], 3)
     assert [e.kind for e in ev] == ["placed"]
 
 
 def test_card_still_down_through_a_new_round_is_not_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("QS", 50, 50)], 3)
     tr.new_round()
     ev = run(tr, [det("QS", 50, 50)], 1)
@@ -308,7 +416,7 @@ def test_card_still_down_through_a_new_round_is_not_a_duplicate():
 
 
 def test_name_counted_this_round_is_pending_until_new_round():
-    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME)
     run(tr, [det("QS", 50, 50)], 3)
     assert (tr.shoe_pending, tr.shoe_locked) == ({"QS"}, set())
     tr.new_round()
@@ -316,7 +424,7 @@ def test_name_counted_this_round_is_pending_until_new_round():
 
 
 def test_name_counted_this_round_is_locked_after_round_over():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME)
     run(tr, [det("QS", 50, 50)], 3)
     ev = run(tr, [], 20)
     assert "round_over" in [e.kind for e in ev]
@@ -324,7 +432,7 @@ def test_name_counted_this_round_is_locked_after_round_over():
 
 
 def test_duplicate_name_is_remembered_until_new_shoe():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME)
     run(tr, [det("KH", 50, 200)], 3)
     assert tr.shoe_duplicates == set()
     run(tr, [], 20)                     # round over
@@ -335,7 +443,7 @@ def test_duplicate_name_is_remembered_until_new_shoe():
 
 
 def test_new_shoe_forgets_earlier_names():
-    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME)
     run(tr, [det("QS", 50, 50)], 3)
     run(tr, [], 10)
     tr.new_shoe()
@@ -344,7 +452,7 @@ def test_new_shoe_forgets_earlier_names():
 
 
 def test_new_round_restarts_numbering_but_keeps_the_count():
-    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME)
     run(tr, [det("QS", 50, 50)], 3)
     run(tr, [], 5)                      # swept away
     tr.new_round()
@@ -354,7 +462,7 @@ def test_new_round_restarts_numbering_but_keeps_the_count():
 
 
 def test_new_shoe_resets_the_count():
-    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME)
     run(tr, [det("QS", 50, 50)], 3)
     tr.new_shoe()
     assert tr.shoe_seen == [] and tr.round == []
@@ -363,7 +471,7 @@ def test_new_shoe_resets_the_count():
 
 
 def test_new_round_with_cards_still_down_renumbers_them():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("QS", 50, 50), det("4H", 300, 50)], 3)
     tr.new_round()
     run(tr, [det("QS", 50, 50), det("4H", 300, 50)], 1)
@@ -372,7 +480,7 @@ def test_new_round_with_cards_still_down_renumbers_them():
 
 
 def test_rescan_uncounts_this_rounds_names_and_keeps_earlier_ones_in_order():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("QS", 50, 50), det("4H", 300, 50)], 3)
     run(tr, [], 5)                      # swept away
     tr.new_round()
@@ -385,7 +493,7 @@ def test_rescan_uncounts_this_rounds_names_and_keeps_earlier_ones_in_order():
 
 
 def test_rescan_restores_the_unrevealed_and_duplicates_of_the_round_start():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME, match_dist=20)
     run(tr, [det("BACK", 50, 50), det("KH", 300, 50)], 3)
     run(tr, [], 20)                     # round over: one face-down card dealt, KH locked
     run(tr, [det("BACK", 50, 200), det("KH", 300, 200)], 3)
@@ -395,7 +503,7 @@ def test_rescan_restores_the_unrevealed_and_duplicates_of_the_round_start():
 
 
 def test_cards_on_the_table_come_back_after_a_rescan_numbered_from_1_and_counted_once():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("9C", 50, 50)], 3)
     run(tr, [det("9C", 50, 50), det("6D", 300, 50)], 3)
     run(tr, [det("9C", 50, 50), det("BACK", 300, 50)], 1)
@@ -407,7 +515,7 @@ def test_cards_on_the_table_come_back_after_a_rescan_numbered_from_1_and_counted
 
 
 def test_face_down_card_carried_into_the_round_is_not_dealt_again_after_a_rescan():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("BACK", 100, 100)], 3)
     tr.new_round()                                       # key r while the card is still face down
     run(tr, [det("BACK", 100, 100), det("5H", 300, 100), det("BACK", 300, 300)], 3)
@@ -423,7 +531,7 @@ def test_face_down_card_carried_into_the_round_is_not_dealt_again_after_a_rescan
 
 
 def test_new_shoe_forgets_the_face_down_cards_carried_into_the_round():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("BACK", 100, 100)], 3)
     tr.new_shoe()
     tr.rescan()
@@ -432,7 +540,7 @@ def test_new_shoe_forgets_the_face_down_cards_carried_into_the_round():
 
 
 def test_name_read_again_after_a_rescan_is_not_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("9C", 50, 50)], 3)
     tr.rescan()
     ev = run(tr, [det("9C", 50, 50)], 2)
@@ -440,7 +548,7 @@ def test_name_read_again_after_a_rescan_is_not_a_duplicate():
 
 
 def test_new_round_after_a_rescan_locks_the_names_read_again():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("9C", 50, 50)], 3)
     tr.rescan()
     run(tr, [det("6C", 50, 50)], 2)
@@ -449,7 +557,7 @@ def test_new_round_after_a_rescan_locks_the_names_read_again():
 
 
 def test_rescan_tells_whether_this_round_placed_a_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("9C", 50, 50)], 1)                      # seen, not yet confirmed
     assert tr.rescan() is False
     run(tr, [det("9C", 50, 50)], 2)
@@ -460,13 +568,13 @@ def test_rescan_tells_whether_this_round_placed_a_card():
 
 
 def test_face_down_cards_are_not_counted():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("BACK", 50, 50), det("9S", 300, 50)], 3)
     assert tr.shoe_seen == ["9S"]
 
 
 def test_flickering_detection_is_not_confirmed_when_seen_steadily_is_required():
-    tr = CardTracker(confirm_frames=6, drop_frames=30, confirm_window=8)
+    tr = CardTracker(confirm_seconds=6 * FRAME, drop_seconds=30 * FRAME, confirm_window_seconds=8 * FRAME)
     for _ in range(12):                 # seen every other frame: 12 sightings over 24 frames
         tr.update([det("KS", 50, 200)])
         tr.update([])
@@ -476,7 +584,7 @@ def test_flickering_detection_is_not_confirmed_when_seen_steadily_is_required():
 
 
 def test_disputed_name_waits_for_agreement():
-    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_agreement=0.8)
+    tr = CardTracker(confirm_seconds=4 * FRAME, drop_seconds=30 * FRAME, confirm_agreement=0.8)
     for label in ["6H", "9H"] * 4:      # 50/50 split
         tr.update([det(label, 50, 200)])
     assert tr.round == []
@@ -485,21 +593,22 @@ def test_disputed_name_waits_for_agreement():
 
 
 def test_reads_split_between_suits_of_one_rank_agree():
-    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_agreement=0.8)
+    tr = CardTracker(confirm_seconds=4 * FRAME, drop_seconds=30 * FRAME, confirm_agreement=0.8)
     for label in ["10H", "10D", "10H"] * 2:   # suits disagree, the rank does not
         tr.update([det(label, 50, 200)])
     assert labels(tr) == ["10H"]              # shown under its most common name
 
 
 def test_reads_split_between_ranks_of_one_suit_wait():
-    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_agreement=0.8)
+    tr = CardTracker(confirm_seconds=4 * FRAME, drop_seconds=30 * FRAME, confirm_agreement=0.8)
     for label in ["6H", "9H", "6H"] * 2:
         tr.update([det(label, 50, 200)])
     assert tr.round == []
 
 
 def test_low_average_confidence_is_not_confirmed():
-    tr = CardTracker(confirm_frames=4, drop_frames=30, confirm_window=4, confirm_confidence=0.7)
+    tr = CardTracker(confirm_seconds=4 * FRAME, drop_seconds=30 * FRAME, confirm_window_seconds=4 * FRAME,
+                     confirm_confidence=0.7)
     run(tr, [det("QD", 50, 200, conf=0.55)], 10)
     assert tr.round == []
     run(tr, [det("QD", 50, 200, conf=0.9)], 4)
@@ -507,7 +616,8 @@ def test_low_average_confidence_is_not_confirmed():
 
 
 def test_moving_card_is_confirmed_only_once_it_stops():
-    tr = CardTracker(confirm_frames=5, drop_frames=30, match_dist=40, confirm_window=5, still_distance=6)
+    tr = CardTracker(confirm_seconds=5 * FRAME, drop_seconds=30 * FRAME, match_dist=40,
+                     confirm_window_seconds=5 * FRAME, still_distance=6)
     for i in range(12):                 # slid 15 px a frame across the table
         tr.update([det("8C", 50 + 15 * i, 200)])
     assert tr.round == []
@@ -517,14 +627,15 @@ def test_moving_card_is_confirmed_only_once_it_stops():
 
 
 def test_small_jitter_still_counts_as_held_still():
-    tr = CardTracker(confirm_frames=5, drop_frames=30, confirm_window=5, still_distance=6)
+    tr = CardTracker(confirm_seconds=5 * FRAME, drop_seconds=30 * FRAME, confirm_window_seconds=5 * FRAME,
+                     still_distance=6)
     for dx, dy in [(0, 0), (2, -1), (-2, 1), (1, 2), (-1, -2)]:
         tr.update([det("2H", 300 + dx, 200 + dy)])
     assert labels(tr) == ["2H"]
 
 
 def test_hole_card_turned_face_up_is_renamed_not_added():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, label_window_seconds=10 * FRAME)
     run(tr, [det("BACK", 100, 100), det("7H", 400, 100)], 6)   # dealer: hole card and up card
     assert [(c.order, c.label) for c in tr.round] == [(1, "BACK"), (2, "7H")]
     ev = run(tr, [det("KS", 100, 100), det("7H", 400, 100)], 6)  # the hole card is turned over
@@ -534,7 +645,7 @@ def test_hole_card_turned_face_up_is_renamed_not_added():
 
 
 def test_corrected_misread_fixes_the_count_and_keeps_the_number():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, label_window_seconds=10 * FRAME)
     run(tr, [det("9H", 50, 200)], 3)                     # confirmed under the wrong name
     run(tr, [det("9H", 50, 200), det("2C", 300, 200)], 3)
     assert tr.shoe_seen == ["9H", "2C"]
@@ -546,7 +657,8 @@ def test_corrected_misread_fixes_the_count_and_keeps_the_number():
 
 
 def test_rename_does_not_uncount_a_card_seen_in_an_earlier_round():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=5 * FRAME,
+                     label_window_seconds=10 * FRAME)
     run(tr, [det("KH", 50, 200)], 3)
     run(tr, [], 10)                                       # round over; KH stays counted
     run(tr, [det("KH", 50, 200)], 3)                     # next round: a card misread as the KH
@@ -556,7 +668,7 @@ def test_rename_does_not_uncount_a_card_seen_in_an_earlier_round():
 
 
 def test_two_corners_disagreeing_do_not_rename_until_the_vote_flips():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, label_window_seconds=10 * FRAME)
     run(tr, [det("9H", 50, 200), det("9H", 150, 300)], 3)   # both corners
     assert len(tr.round) == 1
     ev = run(tr, [det("6H", 50, 200), det("9H", 150, 300)], 4)  # one corner changes its mind
@@ -567,7 +679,7 @@ def test_two_corners_disagreeing_do_not_rename_until_the_vote_flips():
 
 
 def test_without_a_label_window_the_vote_is_over_every_read():
-    tr = CardTracker(confirm_frames=2, drop_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME)
     run(tr, [det("BACK", 100, 100)], 20)
     run(tr, [det("KS", 100, 100)], 15)                   # 15 of 35 reads: BACK still wins
     assert tr.round[0].label == "BACK"
@@ -606,7 +718,7 @@ def test_neighbouring_face_down_cards_revealed_in_turn_keep_their_own_numbers():
 
 
 def test_label_stays_counted_while_another_card_still_holds_it():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, label_window_seconds=10 * FRAME)
     run(tr, [det("9H", 50, 200), det("6H", 300, 200)], 3)
     run(tr, [det("9H", 50, 200), det("9H", 300, 200)], 8)   # the second card is renamed to 9H too
     run(tr, [det("5C", 50, 200), det("9H", 300, 200)], 8)   # the first card was really a 5C
@@ -615,7 +727,7 @@ def test_label_stays_counted_while_another_card_still_holds_it():
 
 
 def test_face_down_card_swept_without_a_reveal_is_remembered_until_the_next_shoe():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=5 * FRAME)
     run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
     assert tr.shoe_unrevealed == 1
     run(tr, [], 10)                                          # swept face down: round over
@@ -625,7 +737,7 @@ def test_face_down_card_swept_without_a_reveal_is_remembered_until_the_next_shoe
 
 
 def test_face_down_card_still_down_through_a_new_round_is_dealt_only_once():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, label_window_seconds=10 * FRAME)
     run(tr, [det("BACK", 100, 100)], 3)
     assert tr.shoe_unrevealed == 1
     tr.new_round()                                       # key r while the card is still face down
@@ -648,7 +760,8 @@ def deal_rounds(tr, *rounds):
 
 @pytest.mark.parametrize("decks", [1, 2, 3])
 def test_a_card_is_a_duplicate_only_once_every_deck_has_dealt_it(decks):
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=decks)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME, match_dist=20,
+                     decks=decks)
     ev = deal_rounds(tr, *[[det("KH", 50 + 100 * i, 200)] for i in range(decks)])
     assert "duplicate" not in [e.kind for e in ev]
     assert tr.shoe_seen == ["KH"] * decks
@@ -658,7 +771,7 @@ def test_a_card_is_a_duplicate_only_once_every_deck_has_dealt_it(decks):
 
 
 def test_two_decks_two_far_apart_cards_of_one_name_are_both_counted_and_a_third_is_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
     ev = run(tr, [det("KH", 50, 200), det("KH", 400, 200)], 3)
     assert [(e.kind, e.card.order) for e in ev] == [("placed", 1), ("placed", 2)]
     assert tr.shoe_seen == ["KH", "KH"] and shoe_count(tr.shoe_seen, decks=2).running == -2
@@ -668,7 +781,7 @@ def test_two_decks_two_far_apart_cards_of_one_name_are_both_counted_and_a_third_
 
 
 def test_two_decks_two_corners_of_one_card_are_still_one_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
     ev = run(tr, [det("7D", 50, 200)], 3)
     ev += run(tr, [det("7D", 50, 200), det("7D", 90, 260)], 3)  # 72 px away: within 4 match distances
     assert [e.kind for e in ev] == ["placed"]
@@ -760,7 +873,7 @@ def held_copy_tracker(hold_frames):
     """Two decks, a KH placed at (900, 500), and a second KH fanned 50 px over held against it
     on the frame it is confirmed. Returns the tracker, the hand's detections, and that frame's events."""
     tr = real_tracker()
-    tr.cfg.decks, tr.cfg.copy_hold_frames = 2, hold_frames
+    tr.cfg.decks, tr.cfg.copy_hold_seconds = 2, hold_frames * FRAME
     run(tr, corners("KH", 900, 500), 30)
     hand = [*corners("KH", 900, 500), *corners("KH", 950, 500)]
     return tr, hand, run(tr, hand, 6)
@@ -792,7 +905,7 @@ def test_two_decks_a_held_copy_seen_without_its_first_copy_stays_held():
 
 def test_two_decks_a_held_copy_takes_the_count_of_the_first_copy_when_it_is_removed():
     tr, _, _ = held_copy_tracker(50)
-    tr.cfg.hidden_frames = 2
+    tr.cfg.hidden_seconds = 2 * FRAME
     ev = run(tr, corners("KH", 950, 500), 20)            # the first KH was this one, picked up and put down
     assert [(e.kind, e.card.order) for e in ev] == [("hidden", 1), ("removed", 1), ("counted", 2)]
     assert [(c.order, c.held, c.counted) for c in tr.round] == [(2, False, True)]
@@ -822,7 +935,7 @@ def test_two_decks_a_held_copy_does_not_take_the_count_of_another_card_renamed_a
 def test_two_decks_a_held_copy_does_not_take_the_count_of_another_card_removed():
     tr, hand, _ = held_copy_tracker(100)
     run(tr, [*hand, *corners("KH", 1500, 500)], 6)       # a second KH far away: counted at once
-    tr.cfg.hidden_frames = 2
+    tr.cfg.hidden_seconds = 2 * FRAME
     ev = run(tr, hand, 20)                               # it is picked up
     assert [(e.kind, e.card.order) for e in ev] == [("hidden", 3), ("removed", 3)]
     assert [(c.order, c.held, c.counted) for c in tr.round] == [(1, False, True), (2, True, False)]
@@ -841,7 +954,7 @@ def test_two_decks_a_held_copy_counted_after_the_last_copy_was_dealt_is_a_duplic
 
 def test_two_decks_a_copy_is_not_held_once_every_copy_was_dealt():
     tr = real_tracker()
-    tr.cfg.decks, tr.cfg.copy_hold_frames = 2, 5
+    tr.cfg.decks, tr.cfg.copy_hold_seconds = 2, 5 * FRAME
     run(tr, [*corners("KH", 900, 500), *corners("KH", 1500, 500)], 30)
     ev = run(tr, [*corners("KH", 900, 500), *corners("KH", 1500, 500), *corners("KH", 950, 500)], 6)
     assert [(e.kind, e.card.order) for e in ev] == [("placed", 3), ("duplicate", 3)]
@@ -868,7 +981,7 @@ def test_two_decks_a_held_copy_renamed_away_is_counted_at_once():
 
 def test_two_decks_a_held_copy_renamed_beside_another_card_of_its_new_name_is_held_again():
     tr = real_tracker()
-    tr.cfg.decks, tr.cfg.copy_hold_frames = 2, 50
+    tr.cfg.decks, tr.cfg.copy_hold_seconds = 2, 50 * FRAME
     table = [*corners("KH", 900, 500), *corners("QH", 1000, 500)]
     run(tr, table, 30)
     run(tr, [*table, *corners("KH", 950, 500)], 6)       # held against the KH
@@ -895,7 +1008,7 @@ def test_two_decks_a_hole_card_reveal_beside_a_card_of_that_name_joins_its_own_c
 
 
 def test_two_decks_a_card_still_down_through_a_new_round_is_not_counted_again():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
     run(tr, [det("QS", 50, 50)], 3)
     tr.new_round()
     ev = run(tr, [det("QS", 50, 50)], 1)
@@ -904,7 +1017,7 @@ def test_two_decks_a_card_still_down_through_a_new_round_is_not_counted_again():
 
 
 def test_two_decks_a_second_copy_beside_a_carried_one_is_counted_not_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
     run(tr, [det("KH", 50, 50)], 3)
     tr.new_round()                                       # the KH stays on the table
     ev = run(tr, [det("KH", 50, 50), det("KH", 400, 200)], 3)
@@ -913,7 +1026,8 @@ def test_two_decks_a_second_copy_beside_a_carried_one_is_counted_not_a_duplicate
 
 
 def test_two_decks_renaming_a_copy_away_beside_a_carried_one_gives_back_only_its_own_copy():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=10, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20,
+                     label_window_seconds=10 * FRAME, decks=2)
     run(tr, [det("KH", 50, 50)], 3)
     tr.new_round()                                       # the KH stays on the table
     run(tr, [det("KH", 50, 50), det("KH", 400, 200)], 3)  # a second KH, really a misread 4D
@@ -924,7 +1038,8 @@ def test_two_decks_renaming_a_copy_away_beside_a_carried_one_gives_back_only_its
 
 
 def test_two_decks_a_carried_card_renamed_away_and_back_keeps_only_its_locked_copy():
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, label_window=4, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, label_window_seconds=4 * FRAME,
+                     decks=2)
     run(tr, [det("KH", 50, 50)], 3)
     tr.new_round()                                       # the KH stays on the table
     run(tr, [det("KH", 50, 50)], 1)
@@ -937,8 +1052,9 @@ def test_two_decks_a_carried_card_renamed_away_and_back_keeps_only_its_locked_co
 
 
 def test_two_decks_removing_a_copy_does_not_hand_it_to_a_carried_card():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, label_window=10, round_end_frames=100,
-                     hidden_frames=2, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20,
+                     label_window_seconds=10 * FRAME, round_end_seconds=100 * FRAME,
+                     hidden_seconds=2 * FRAME, decks=2)
     run(tr, [det("KH", 50, 50)], 3)
     tr.new_round()                                       # the KH stays on the table
     run(tr, [det("KH", 50, 50), det("KH", 400, 200)], 3)
@@ -948,14 +1064,16 @@ def test_two_decks_removing_a_copy_does_not_hand_it_to_a_carried_card():
 
 
 def test_two_decks_a_name_can_be_locked_and_pending_at_once():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME, match_dist=20,
+                     decks=2)
     deal_rounds(tr, [det("KH", 50, 200)])
     run(tr, [det("KH", 400, 200)], 3)
     assert (tr.shoe_pending, tr.shoe_locked) == ({"KH"}, {"KH"})
 
 
 def test_two_decks_rename_to_a_name_with_a_copy_left_is_counted_not_a_duplicate():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=5 * FRAME,
+                     label_window_seconds=10 * FRAME, decks=2)
     deal_rounds(tr, [det("KH", 50, 200)])
     run(tr, [det("BACK", 50, 200)], 3)
     ev = run(tr, [det("KH", 50, 200)], 10)
@@ -964,7 +1082,8 @@ def test_two_decks_rename_to_a_name_with_a_copy_left_is_counted_not_a_duplicate(
 
 
 def test_two_decks_renaming_a_second_copy_away_keeps_the_first_counted_in_order():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=5, label_window=10, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=5 * FRAME,
+                     label_window_seconds=10 * FRAME, decks=2)
     deal_rounds(tr, [det("KH", 50, 200), det("5C", 300, 200)])
     run(tr, [det("KH", 50, 200)], 3)                     # a second KH, really a misread 4D
     assert tr.shoe_seen == ["KH", "5C", "KH"]
@@ -973,7 +1092,8 @@ def test_two_decks_renaming_a_second_copy_away_keeps_the_first_counted_in_order(
 
 
 def test_two_decks_rescan_takes_back_only_this_rounds_copies():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME, match_dist=20,
+                     decks=2)
     deal_rounds(tr, [det("KH", 50, 200), det("4C", 300, 200)])
     run(tr, [det("KH", 50, 200), det("KH", 400, 200)], 3)  # the second copy, then a third: a duplicate
     assert tr.shoe_seen == ["KH", "4C", "KH"] and tr.shoe_duplicates == {"KH"}
@@ -983,7 +1103,8 @@ def test_two_decks_rescan_takes_back_only_this_rounds_copies():
 
 
 def test_two_decks_new_shoe_clears_every_copy():
-    tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10, match_dist=20, decks=2)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME, match_dist=20,
+                     decks=2)
     deal_rounds(tr, [det("KH", 50, 200)], [det("KH", 50, 200)])
     assert tr.shoe_seen == ["KH", "KH"]
     tr.new_shoe()
@@ -993,33 +1114,43 @@ def test_two_decks_new_shoe_clears_every_copy():
 
 
 def test_config_object_and_keyword_overrides_agree():
-    from cardReader.tracker import TrackerConfig
-    a = CardTracker(TrackerConfig(confirm_frames=3, match_dist=10), drop_frames=7)
-    assert (a.cfg.confirm_frames, a.cfg.match_dist, a.cfg.drop_frames) == (3, 10, 7)
+    a = CardTracker(TrackerConfig(confirm_seconds=0.3, match_dist=10), drop_seconds=0.7)
+    assert (a.cfg.confirm_seconds, a.cfg.match_dist, a.cfg.drop_seconds) == (0.3, 10, 0.7)
 
     class S:  # the fields settings.py provides
-        FPS, CONFIRM_SECONDS, CONFIRM_WINDOW_SECONDS, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 10, 0.01, 1.0, 0.8, 0.7
+        CONFIRM_SECONDS, CONFIRM_WINDOW_SECONDS, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 0.01, 1.0, 0.8, 0.7
         STILL_DISTANCE, DROP_SECONDS, MATCH_DISTANCE, ROUND_END_SECONDS = 0.01, 3.0, 0.05, 9.0
         LABEL_WINDOW_SECONDS, HIDDEN_SECONDS, COPY_HOLD_SECONDS = 4.5, 0, 0
     cfg = TrackerConfig.from_settings(S, 2000)
-    assert (cfg.still_distance, cfg.match_dist, cfg.label_window) == (20.0, 100.0, 45)
-    # CONFIRM_SECONDS rounds to 0 frames and is raised to 1
-    assert (cfg.confirm_frames, cfg.confirm_window, cfg.drop_frames, cfg.round_end_frames) == (1, 10, 30, 90)
-    assert cfg.hidden_frames == 0                        # 0 s: removed as soon as hidden, not raised to 1 frame
-    assert cfg.copy_hold_frames == 0                     # 0 s: a copy is counted at once
+    assert (cfg.still_distance, cfg.match_dist) == (20.0, 100.0)  # fractions of the width become pixels
+    assert (cfg.confirm_seconds, cfg.confirm_window_seconds, cfg.drop_seconds) == (0.01, 1.0, 3.0)  # seconds kept
+    assert (cfg.round_end_seconds, cfg.label_window_seconds) == (9.0, 4.5)
+    assert (cfg.hidden_seconds, cfg.copy_hold_seconds) == (0, 0)
 
 
-def test_shipped_settings_convert_to_frames_at_the_shipped_fps():
-    import settings
-    from cardReader.tracker import TrackerConfig
-    cfg = TrackerConfig.from_settings(settings, 1920)
-    assert (cfg.confirm_frames, cfg.confirm_window) == (6, 9)
-    assert (cfg.drop_frames, cfg.label_window, cfg.round_end_frames, cfg.hidden_frames) == (12, 19, 37, 62)
-    assert cfg.copy_hold_frames == 19
+def test_a_time_shorter_than_a_frame_still_takes_a_frame():
+    tr = CardTracker(confirm_seconds=0.01, confirm_window_seconds=0.01, drop_seconds=0.01,
+                     round_end_seconds=0.01, label_window_seconds=0.01)
+    ev = tr.update([det("KH", 50, 200)])
+    assert [(e.kind, e.card.label) for e in ev] == [("placed", "KH")]
+    assert [e.kind for e in tr.update([])] == ["hidden", "round_over"]
+
+
+def test_shipped_settings_at_the_nominal_rate_take_the_frames_they_took_as_frame_counts():
+    tr = real_tracker()                                  # updates without a time: 12.4 frames a second
+    kh, fc = corners("KH", 900, 500), corners("5C", 1400, 500)
+    assert run(tr, [*kh, *fc], 5) == []
+    assert [e.kind for e in tr.update([*kh, *fc])] == ["placed", "placed"]  # CONFIRM_SECONDS 0.5: 6 frames
+    assert run(tr, kh, 11) == []
+    assert [e.kind for e in tr.update(kh)] == ["hidden"]                     # DROP_SECONDS 1: 12 frames
+    assert run(tr, kh, 61) == []
+    assert [e.kind for e in tr.update(kh)] == ["removed"]                    # HIDDEN_SECONDS 5: 62 frames
+    assert run(tr, [], 12 + 35) == [Event("hidden", tr.round[0], tr.frame - 35)]
+    assert [e.kind for e in tr.update([])] == ["round_over"]                 # ROUND_END_SECONDS 3: 37 frames
 
 
 def test_bound_gives_each_detection_its_confirmed_card_even_when_misread():
-    tr = CardTracker(confirm_frames=3, drop_frames=5, match_dist=20)
+    tr = CardTracker(confirm_seconds=3 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     tr.update([det("6H", 100, 100)])
     assert tr.bound == [None]                            # seen once: not confirmed yet
     run(tr, [det("6H", 100, 100)], 2)
@@ -1035,7 +1166,7 @@ def test_bound_gives_each_detection_its_confirmed_card_even_when_misread():
 @pytest.mark.parametrize("quarter_turns", [1, 2, 3, -1])
 def test_rotate_turns_cards_and_tracks_with_the_frame(quarter_turns):
     W, H = 64, 36
-    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=6.4, still_distance=0.64)
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=6.4, still_distance=0.64)
     run(tr, [det("KH", 10, 5)], 3)
     tr.update([det("2S", 40, 30)])                       # an unconfirmed track
     tr.rotate(quarter_turns, W, H)
@@ -1055,7 +1186,7 @@ def test_rotate_turns_cards_and_tracks_with_the_frame(quarter_turns):
 
 def test_cards_keep_their_numbers_across_a_quarter_turn():
     W, H = 640, 360
-    tr = CardTracker(confirm_frames=3, drop_frames=5, match_dist=20, still_distance=4)
+    tr = CardTracker(confirm_seconds=3 * FRAME, drop_seconds=5 * FRAME, match_dist=20, still_distance=4)
     run(tr, [det("KH", 100, 50), det("BACK", 500, 300)], 4)
     tr.rotate(1, W, H)
     events = run(tr, [det("KH", H - 1 - 50, 100), det("BACK", H - 1 - 300, 500)], 6)

@@ -132,15 +132,9 @@ count, then the average milliseconds per frame for each stage of the loop:
 average time per frame: read 0.4 ms, preprocess 0.1 ms, detect 31.2 ms, draw 6.8 ms
 ```
 
-When the frames per second averaged over the run are more than a fifth away
-from `FPS` in `settings.py`, a last line gives both:
-
-```
-measured 22.3 fps, but FPS in settings.py is 12.4: set FPS to about 22.3 so the *_SECONDS settings take the time they say
-```
-
-The tracker's times are set in seconds and turned into frames at `FPS`, so a
-wrong `FPS` makes every one of them run fast or slow (see [Tuning the reader](#tuning-the-reader)).
+The tracker times every frame by when it was captured, so its settings in
+seconds take the time they say whatever the frames per second (see
+[Tuning the reader](#tuning-the-reader)).
 
 `read` is taking the newest camera frame, `preprocess` the contrast help (see
 [Dim or washed-out tables](#dim-or-washed-out-tables)), `detect` the model, and
@@ -473,7 +467,9 @@ If a live camera sends no new frame for two seconds (a cable pulled, a capture
 card losing power, the iPhone unlocked or picked up), the window keeps the last
 frame and shows `no signal: press C to reconnect`. The terminal prints
 `no signal from source ...`. While there is no signal nothing is detected, so
-the cards, the round, and the count stay as they were.
+the cards, the round, and the count stay as they were. The tracker's clock
+stops too, so no card is hidden or removed, and no round ends, for the time the
+signal was lost.
 
 Fix the cable or wake the phone, then press `C`. The reader releases the camera
 and opens the same `--source` again at the same width and height. The terminal
@@ -755,13 +751,13 @@ doubles in single deck.
 
   | Check | Setting | Stops |
   |---|---|---|
-  | seen for `CONFIRM_SECONDS` of the last `CONFIRM_WINDOW_SECONDS` | 0.5 s of 0.7 s (6 of 9 frames) | flickering detections adding up over time |
+  | seen for `CONFIRM_SECONDS` of the last `CONFIRM_WINDOW_SECONDS` | 0.5 s of 0.7 s | flickering detections adding up over time |
   | the rank of its most common name has `CONFIRM_AGREEMENT` of all reads | 80% | a card being counted under a disputed rank |
   | the model's average confidence is at least `CONFIRM_CONFIDENCE` | 0.7 | weak, borderline detections |
   | the corner moved less than `STILL_DISTANCE` over those frames | 0.6% of the width | a card being counted while it is still being slid |
 
-  With the defaults a real card is confirmed about 0.5 s after it settles.
-  Frames are given at `FPS` = 12.4, the speed the reader runs at.
+  With the defaults a real card is confirmed about 0.5 s after it settles, at
+  any frame rate: each sighting counts for the time since the frame before it.
   Reads split between suits of one rank (10H and 10D) agree, since the suit
   changes neither the hand nor the count; the card shows its most common name.
 - **One deck (`DECKS` = 1).** Two sightings of the same face are the same card. This merges a
@@ -787,7 +783,7 @@ doubles in single deck.
   is covered joins the first, so it is missed.
   A second copy within four `MATCH_DISTANCE`s of a card of its name is held:
   numbered, printed as `held`, tagged with a magenta `?`, and left out of the
-  count until both are seen together for `COPY_HOLD_SECONDS` (1.5 s, 19 frames),
+  count until both are seen together for `COPY_HOLD_SECONDS` (1.5 s),
   when it prints as `counted`. If the first copy is removed or renamed first, the
   held copy takes over its count. A rescan or the end of the round drops a held copy like
   any other card of the round; a rename holds it again only beside a card of its
@@ -795,11 +791,11 @@ doubles in single deck.
   Each card is counted once per deck, and one more copy prints as `duplicate`
   (see [Decks in the shoe](#decks-in-the-shoe)).
 - **Covered is not removed, at first.** A card that disappears for
-  `DROP_SECONDS` (1 s, 12 frames) becomes hidden: it keeps its number, stays in its hand, and is not
+  `DROP_SECONDS` (1 s) becomes hidden: it keeps its number, stays in its hand, and is not
   counted again when it reappears. A face card is recognised by its name anywhere
   on the table, a face-down card by reappearing near where it was.
 - **Hidden too long is removed.** A card that stays hidden for
-  `HIDDEN_SECONDS` (5 s, 62 frames) was picked up, like a hand the dealer collects mid-round. It
+  `HIDDEN_SECONDS` (5 s) was picked up, like a hand the dealer collects mid-round. It
   leaves the round and its hand, and prints as `removed`, but stays in the count.
   Its number is never given to another card. If it comes back later it is placed
   under a new number and is not counted again. A face-down card that comes back
@@ -808,12 +804,12 @@ doubles in single deck.
   another face-down card. `HIDDEN_SECONDS = 0` removes a
   card as soon as it is hidden.
 - **The round ends when the table is cleared.** If no card is visible for
-  `ROUND_END_SECONDS` (3 s, 37 frames), the round is over and numbering
+  `ROUND_END_SECONDS` (3 s), the round is over and numbering
   restarts. This holds when every card was removed first. A hand briefly
   covering the whole table does not end it. `R` ends a round immediately.
 - **Every face-down card is a separate card.**
 - **A card's name can change, its number cannot.** The name is a vote over the
-  reads in the last `LABEL_WINDOW_SECONDS` (1.5 s, 19 frames). A misread that corrects itself is
+  reads in the last `LABEL_WINDOW_SECONDS` (1.5 s). A misread that corrects itself is
   renamed in place, and prints as `renamed`. The count follows the new name, and
   a name stays counted while any card of the round still holds it.
 - **A hole card turned face up keeps its number.** The face-down box is drawn
@@ -925,32 +921,36 @@ A value out of range (a fraction above 1, `CONFIRM_SECONDS` larger than
 | Cards are missed or take a long time to appear | lower `CONFIDENCE` (e.g. 0.6 to 0.5) | the model accepts less certain boxes |
 | Wrong or phantom cards appear | raise `CONFIDENCE` (e.g. 0.6 to 0.7) | only confident boxes count |
 | Phantom or wrong cards get confirmed | raise `CONFIRM_CONFIDENCE` (0.7 to 0.8) or `CONFIRM_AGREEMENT` (0.8 to 0.9) | only consistent, confident reads count |
-| A flickering detection still gets confirmed | raise `CONFIRM_SECONDS` closer to `CONFIRM_WINDOW_SECONDS` (e.g. 0.6 s of 0.7 s, 7 of 9 frames) | it must be seen almost every frame |
+| A flickering detection still gets confirmed | raise `CONFIRM_SECONDS` closer to `CONFIRM_WINDOW_SECONDS` (e.g. 0.6 s of 0.7 s) | it must be seen almost every frame |
 | A card is confirmed while still being slid | lower `STILL_DISTANCE` (0.006 to 0.004) | it must be stiller |
 | Real cards never get a number | lower `CONFIRM_CONFIDENCE` (to 0.6) or raise `STILL_DISTANCE` (to 0.01, a shaky camera) | a check is too strict for your setup |
-| Cards take too long to get their number | lower `CONFIRM_SECONDS` and `CONFIRM_WINDOW_SECONDS` together (e.g. 0.3 s of 0.5 s, 4 of 6 frames) | confirms sooner, with more risk of flicker |
-| A covered card turns grey too quickly | raise `DROP_SECONDS` (e.g. 1 s to 2 s, 12 to 25 frames) | it can stay out of sight longer before it is marked hidden |
-| A covered card is removed while still on the table | raise `HIDDEN_SECONDS` (e.g. 5 s to 10 s, 62 to 124 frames) | it can stay hidden longer before it counts as picked up |
-| A collected hand stays in the seats too long | lower `HIDDEN_SECONDS` (e.g. 5 s to 3 s, 62 to 37 frames); 0 removes at once | a hidden card counts as picked up sooner |
-| The round ends while cards are only covered | raise `ROUND_END_SECONDS` (e.g. 3 s to 5 s, 37 to 62 frames) | the table must stay empty longer |
+| Cards take too long to get their number | lower `CONFIRM_SECONDS` and `CONFIRM_WINDOW_SECONDS` together (e.g. 0.3 s of 0.5 s) | confirms sooner, with more risk of flicker |
+| A covered card turns grey too quickly | raise `DROP_SECONDS` (e.g. 1 s to 2 s) | it can stay out of sight longer before it is marked hidden |
+| A covered card is removed while still on the table | raise `HIDDEN_SECONDS` (e.g. 5 s to 10 s) | it can stay hidden longer before it counts as picked up |
+| A collected hand stays in the seats too long | lower `HIDDEN_SECONDS` (e.g. 5 s to 3 s); 0 removes at once | a hidden card counts as picked up sooner |
+| The round ends while cards are only covered | raise `ROUND_END_SECONDS` (e.g. 3 s to 5 s) | the table must stay empty longer |
 | The next round starts too slowly after a sweep | lower `ROUND_END_SECONDS` | the empty table is noticed sooner |
 | Cards land in the wrong seat | press `1` to `5` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
-| Two or three decks: one card is still counted twice | raise `COPY_HOLD_SECONDS` (e.g. 1.5 s to 3 s, 19 to 37 frames) | a second read of a card must last longer beside it before it counts |
-| Two or three decks: a real second copy counts too late | lower `COPY_HOLD_SECONDS` (e.g. 1.5 s to 0.5 s, 19 to 6 frames); 0 counts at once | a copy beside a card of its name is counted sooner |
-| A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW_SECONDS` (1.5 s to 1 s, 19 to 12 frames) | the name vote forgets old reads sooner |
-| A card's name flips back and forth | raise `LABEL_WINDOW_SECONDS` (1.5 s to 3 s, 19 to 37 frames) | one bad second of reads cannot outvote the rest |
+| Two or three decks: one card is still counted twice | raise `COPY_HOLD_SECONDS` (e.g. 1.5 s to 3 s) | a second read of a card must last longer beside it before it counts |
+| Two or three decks: a real second copy counts too late | lower `COPY_HOLD_SECONDS` (e.g. 1.5 s to 0.5 s); 0 counts at once | a copy beside a card of its name is counted sooner |
+| A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW_SECONDS` (1.5 s to 1 s) | the name vote forgets old reads sooner |
+| A card's name flips back and forth | raise `LABEL_WINDOW_SECONDS` (1.5 s to 3 s) | one bad second of reads cannot outvote the rest |
 | Small or distant cards are not read | raise `INPUT_SIZE` (e.g. 1280 to 1600) | the model sees more detail; costs speed |
 | The video is choppy (low fps) | lower `INPUT_SIZE` (e.g. 1280 to 960) | less work per frame |
 | Cards are missed in a very dim room | `PREPROCESS = "gamma"` (try with `P` first) | the shadows are always lifted, not only below `PREPROCESS_DARK_BELOW` |
 | `auto` switches on too late or too early | `PREPROCESS_DARK_BELOW` or `PREPROCESS_BRIGHT_ABOVE` | the mean grey level (0 to 255) at which it brightens or darkens |
 
-The `*_SECONDS` settings are turned into frames once, at start-up:
-`max(1, round(seconds * FPS))`, so every one is at least a frame, except
-`HIDDEN_SECONDS = 0` and `COPY_HOLD_SECONDS = 0`. The frames in brackets above are at `FPS = 12.4`, the
-speed the reader runs at on the development Mac. If your reader runs at another
-speed, set `FPS` to it and every time keeps its meaning; the quit summary prints
-the measured fps when it is more than a fifth away from `FPS`.
+The `*_SECONDS` settings are real time at any frame rate: the tracker times
+each frame by when it was captured, and a recorded video by its position in the
+file, so a replay is timed as the live run was. A time is reached on the first
+frame by which that long has passed, never before, so it can run up to a frame
+over: at 12.4 frames per second, the speed of the development Mac, a card needs
+7 sightings (0.56 s) for `CONFIRM_SECONDS = 0.5`. Every time is at least one
+frame, except `HIDDEN_SECONDS = 0` and `COPY_HOLD_SECONDS = 0`. A slower reader
+has fewer, longer frames, so each one counts for more: at 6 frames per second,
+3 sightings confirm a card. A sighting is kept as long as its windows look back,
+however fast the camera.
 
 ## Troubleshooting
 

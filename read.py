@@ -79,15 +79,18 @@ Each camera frame is first turned by CAMERA_ROTATION in settings.py (0, 90, 180,
 it live; the message names the CAMERA_ROTATION that keeps the new angle. Everything
 after uses the turned frame: detection, zones, tags, and the frame s saves.
 
+Each frame is passed to the tracker with its capture time (capture_time), so the
+*_SECONDS settings in settings.py hold in real time at any frame rate. A video file's
+frames are timed by their position in the file, so a replay times every card as the
+live run did.
+
 If a live camera sends no new frame for two seconds (a cable pulled, the phone
-locked), the window says "no signal" over the last frame and the tracker waits.
-Press c to reopen the same source.
+locked), the window says "no signal" over the last frame and the tracker waits: the
+time without a signal is left off its clock. Press c to reopen the same source.
 
 The bottom bar shows the fps, the smoothed detect milliseconds, and the preprocess
 mode with its milliseconds. On quit the average milliseconds per stage are printed: read (the newest
-camera frame), preprocess, detect, and draw (the overlay and the window). When the fps
-averaged over the run is more than a fifth away from FPS in settings.py, both are printed:
-the tracker's *_SECONDS settings are turned into frames at FPS, so FPS should match.
+camera frame), preprocess, detect, and draw (the overlay and the window).
 
 While editing zones (key E) the detector runs on one frame in EDIT_DETECT_EVERY and the
 cards found are reused in between, and each frame spends EDIT_MOUSE_MS handling the mouse
@@ -170,13 +173,15 @@ class StageTimer:
         return ", ".join(f"{stage} {ms:.1f} ms" for stage, ms in self.averages().items())
 
 
-def fps_note(measured: float, expected: float) -> str:
-    """The quit summary's warning when the measured fps is more than a fifth away from FPS in
-    settings.py, which turns every *_SECONDS setting into frames; "" when they are close enough."""
-    if abs(measured - expected) <= 0.2 * expected:
-        return ""
-    return (f"measured {measured:.1f} fps, but FPS in settings.py is {expected}: "
-            f"set FPS to about {measured:.1f} so the *_SECONDS settings take the time they say")
+def capture_time(cam: Camera) -> float:
+    """When the frame cam.read() just returned was captured, in seconds, for the tracker's clock.
+
+    A video file's frame is timed by its position in the file, so a replay times every card as
+    the live run it recorded did, however fast it is processed. A live frame is timed by
+    time.monotonic() as it is read."""
+    if cam.is_file:
+        return cam.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+    return time.monotonic()
 
 
 def list_cameras():
@@ -414,14 +419,15 @@ def main():
         timer = StageTimer()
         t_last, fps = time.time(), 0.0
         signal_lost = False
+        lost_at, offline_seconds = 0.0, 0.0  # time without a signal is kept off the tracker's clock
         dets, frames_processed = [], 0
         dets_rotation = reader.rotation  # the turn the cached dets were detected at
         pending_keys: deque[int] = deque()  # window keys and page buttons not pressed yet, oldest first
-        run_start = time.perf_counter()
         try:
             while True:
                 start = time.perf_counter()
                 ok, frame = cam.read()
+                captured = capture_time(cam)
                 timer.lap("read", start)
                 if not ok and cam.is_file:
                     break
@@ -432,12 +438,15 @@ def main():
                     frame = np.zeros((H, W, 3), np.uint8)  # it never sent a frame: say so over black
                 frame = rotate(frame, reader.rotation)
 
-                # A stale camera repeats its last frame: nothing new to detect, so the tracker is left alone.
+                # A stale camera repeats its last frame: nothing new to detect, so the tracker is left
+                # alone, and its clock waits too, so no card times out over the gap.
                 no_signal = cam.stale
                 if no_signal and not signal_lost:
                     print(f"no signal from source {args.source}: press C in the window to reconnect")
+                    lost_at = captured
                 elif signal_lost and not no_signal:
                     print(f"signal back from source {args.source}")
+                    offline_seconds += captured - lost_at
                 signal_lost = no_signal
 
                 start = time.perf_counter()
@@ -454,7 +463,7 @@ def main():
                         dets = models.detector(enhanced)
                         dets_rotation = reader.rotation
                         timer.lap("detect", start)
-                    reader.process(frame, dets)
+                    reader.process(frame, dets, captured - offline_seconds)
                     frames_processed += 1
 
                 now = time.time()
@@ -495,10 +504,6 @@ def main():
             print(f"{COUNT_SYSTEMS[count.system].name} running count {count.running:+d}, "
                   f"true count {count.true:+.1f}, {reader.cards_left_text()}")
             print(f"average time per frame: {timer.summary()}")
-            run_seconds = time.perf_counter() - run_start
-            note = fps_note(frames_processed / run_seconds, settings.FPS) if frames_processed else ""
-            if note:
-                print(note)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ read.py owns the camera, the window, and the command line; this class owns
 everything in between, so it can be driven in a test without either:
 
     reader = Reader(tracker, layout, hud, seats_file, frames_dir, log=csv_writer)
-    events = reader.process(frame, detections)     # tracker -> seats -> print, log, flash
+    events = reader.process(frame, detections, now)  # tracker -> seats -> print, log, flash
     keep_going = reader.handle_key(key, frame)     # the keys listed in hud.KEY_LIST (C is read.py's)
     reader.rename_seat("P1", "Ann")                # from the browser page; "" restores P1
     reader.split_seat("P1"), reader.join_seat("P1") # from the browser page; keys Shift+1-5 toggle_split
@@ -157,16 +157,17 @@ class Reader:
         self.table.layout = self.editor.layout = layout
         self.editor.selected = None
 
-    def process(self, frame: np.ndarray, dets: list[Detection]) -> list[Event]:
+    def process(self, frame: np.ndarray, dets: list[Detection], now: float | None = None) -> list[Event]:
         """Feed one frame's detections to the tracker and report what changed.
 
+        now: the frame's capture time in seconds, passed to CardTracker.update (None: one nominal frame on).
         Follows a change of frame size by rescaling the seat layout. Prints each
         event, flashes "round over" on the overlay and clears every split, and appends
         a row per event to the CSV log if there is one. Returns the tracker's events for this frame."""
         h, w = frame.shape[:2]
         if (w, h) != (self.layout.width, self.layout.height):
             self.set_layout(self.layout.resized(w, h))
-        events = self.tracker.update(dets)
+        events = self.tracker.update(dets, now)
         self.count = self._recount()
         for event in events:
             card = event.card
