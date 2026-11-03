@@ -4,6 +4,7 @@ import pytest
 from cardReader import camera
 from cardReader.blackjack import shoe_count
 from cardReader.cards import Event
+from cardReader.deck import BACK
 from cardReader.tracker import CardTracker, Detection, TrackerConfig
 
 FRAME = 1 / TrackerConfig.nominal_fps  # seconds the clock moves on an update() given no time: one nominal frame
@@ -530,6 +531,84 @@ def test_face_down_card_carried_into_the_round_is_not_dealt_again_after_a_rescan
     assert tr.shoe_unrevealed == 1                       # still once after a second rescan
 
 
+def test_two_decks_undo_takes_back_a_phantom_copy_and_keeps_every_other_card():
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
+    table = [det("KH", 100, 100), det("9C", 400, 100)]
+    run(tr, table, 3)
+    before = shoe_count(tr.shoe_seen, decks=2).running
+    phantom = det("KH", 300, 300)                        # far from the real KH: a second copy
+    ev = run(tr, table + [phantom], 3)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 3)] and tr.shoe_seen == ["KH", "9C", "KH"]
+    undone = tr.undo_last()
+    assert (undone.order, undone.label) == (3, "KH")
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH"), (2, "9C")]
+    assert tr.shoe_seen == ["KH", "9C"] and shoe_count(tr.shoe_seen, decks=2).running == before
+    assert run(tr, table + [phantom], 1) == []           # its tracks are forgotten: confirmed again first
+    ev = run(tr, table + [phantom], 1)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 4)]
+
+
+def test_undo_on_a_round_with_no_cards_does_nothing():
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
+    run(tr, [det("9C", 50, 50)], 1)                      # seen, not yet confirmed
+    assert tr.undo_last() is None
+    assert tr.round == [] and tr.shoe_seen == [] and len(tr.tracks) == 1
+
+
+def test_undo_takes_a_face_down_card_off_the_unrevealed_and_a_duplicate_off_the_duplicates():
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=10 * FRAME, match_dist=20)
+    run(tr, [det("KH", 300, 50)], 3)
+    run(tr, [], 20)                                      # round over: KH locked
+    run(tr, [det("BACK", 50, 200)], 3)
+    assert tr.shoe_unrevealed == 1
+    assert tr.undo_last().label == BACK and tr.shoe_unrevealed == 0
+    ev = run(tr, [det("KH", 300, 200)], 3)
+    assert [e.kind for e in ev] == ["placed", "duplicate"] and tr.shoe_duplicates == {"KH"}
+    tr.undo_last()
+    assert tr.shoe_duplicates == set() and tr.shoe_seen == ["KH"]
+
+
+def test_an_undone_face_down_card_dealt_before_is_not_added_again_and_a_new_one_is_added_once():
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
+    run(tr, [det("BACK", 100, 100)], 3)
+    tr.new_round()                                       # key r while the card is still face down
+    run(tr, [det("BACK", 100, 100)], 3)
+    assert [(c.order, c.label) for c in tr.round] == [(1, BACK)] and tr.shoe_unrevealed == 1
+    tr.undo_last()
+    assert tr.shoe_unrevealed == 1                       # dealt in the round before: it stays dealt
+    run(tr, [det("BACK", 100, 100)], 3)
+    assert [c.order for c in tr.round] == [2] and tr.shoe_unrevealed == 1   # the same card, not added again
+    run(tr, [det("BACK", 100, 100), det("BACK", 300, 300)], 3)
+    assert [c.order for c in tr.round] == [2, 3] and tr.shoe_unrevealed == 2
+    tr.undo_last()
+    assert tr.shoe_unrevealed == 1                       # dealt this round: it comes off
+    run(tr, [det("BACK", 100, 100), det("BACK", 300, 300)], 3)
+    assert [c.order for c in tr.round] == [2, 4] and tr.shoe_unrevealed == 2   # placed again, added once
+
+
+def test_merge_folds_one_card_into_another_and_its_number_is_not_reused():
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
+    table = [det("9C", 50, 50), det("KH", 300, 50), det("5D", 50, 300), det("KH", 300, 300)]
+    run(tr, table, 3)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "9C"), (2, "KH"), (3, "5D"), (4, "KH")]
+    tracks_of_4 = [track_id for track_id, card in tr._card_of.items() if card.order == 4]
+    assert tr.merge(4, 2).order == 4
+    assert [c.order for c in tr.round] == [1, 2, 3]
+    assert tr.shoe_seen == ["9C", "KH", "5D"]            # the merged card's copy left the count
+    assert all(tr._card_of[track_id].order == 2 for track_id in tracks_of_4)
+    assert run(tr, table, 2) == []                       # both tracks stay with card 2: nothing placed again
+    ev = run(tr, table + [det("7S", 500, 300)], 3)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 5)]
+
+
+@pytest.mark.parametrize(("order_from", "order_to"), [(3, 1), (1, 3), (1, 1)])
+def test_merge_with_a_missing_number_or_one_card_does_nothing(order_from, order_to):
+    tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
+    run(tr, [det("9C", 50, 50), det("KH", 300, 50)], 3)
+    assert tr.merge(order_from, order_to) is None
+    assert [c.order for c in tr.round] == [1, 2] and tr.shoe_seen == ["9C", "KH"]
+
+
 def test_new_shoe_forgets_the_face_down_cards_carried_into_the_round():
     tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20)
     run(tr, [det("BACK", 100, 100)], 3)
@@ -887,6 +966,16 @@ def test_two_decks_a_copy_beside_a_card_of_its_name_is_held_until_both_are_seen_
     ev = run(tr, hand, 1)
     assert [(e.kind, e.card.order) for e in ev] == [("counted", 2)]
     assert [c.held for c in tr.round] == [False, False] and tr.shoe_seen == ["KH", "KH"]
+
+
+def test_two_decks_merging_a_card_into_its_held_copy_hands_the_copy_over():
+    tr, hand, _ = held_copy_tracker(50)
+    assert [(c.order, c.counted, c.held) for c in tr.round] == [(1, True, False), (2, False, True)]
+    tr.merge(1, 2)
+    assert [(c.order, c.counted) for c in tr.round] == [(2, True)] and tr.shoe_seen == ["KH"]
+    ev = run(tr, hand, 3)                                # its hold ends as when the first copy is removed
+    assert [(e.kind, e.card.order) for e in ev] == [("counted", 2)]   # all four corners are card 2's
+    assert [(c.order, c.counted, c.held) for c in tr.round] == [(2, True, False)] and tr.shoe_seen == ["KH"]
 
 
 def test_two_decks_a_hold_of_zero_frames_counts_a_copy_at_once():

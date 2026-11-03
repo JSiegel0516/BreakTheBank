@@ -409,6 +409,12 @@ def test_rescan_key_is_listed_and_on_the_bottom_bar():
     assert ("X", "rescan round") in KEY_LIST and "[X] rescan" in KEYS
 
 
+def test_undo_and_merge_keys_are_listed_beside_rescan():
+    keys = [key for key, _ in KEY_LIST]
+    assert keys[keys.index("X") + 1:keys.index("X") + 3] == ["U", "M"]
+    assert ("U", "undo last card") in KEY_LIST and ("M", "merge cards") in KEY_LIST
+
+
 def test_video_tags_show_the_placement_badge_only_when_show_order_is_on():
     W, H = 1280, 720
     layout = SeatLayout(3, W, H)

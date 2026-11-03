@@ -296,6 +296,12 @@
   .keylist button:hover { border-color: var(--badge); }
   .keylist button:active { background: var(--panel); }
   .key.window { color: var(--grey); }
+  /* the merge button's two number fields, open in its place */
+  .key.merge { flex-direction: row; flex-wrap: wrap; gap: .3rem; }
+  .merge input {
+    width: 3.2em; min-height: 2rem; padding: 0 .3em; font: inherit; text-align: center; color: var(--text);
+    background: var(--well); border: 1px solid var(--badge); border-radius: .3em;
+  }
   .deckcount { min-width: 2em; color: var(--badge); font-size: .9rem; font-weight: 700; }
   /* 1-5 and < >: the key and what it does on one line, its buttons below */
   .choices .label { display: flex; align-items: center; gap: .35rem; }
@@ -361,6 +367,7 @@
   let flashTimer = null;
   let connected = false;
   let renaming = false;      // a seat name's text field is open; Hands waits until it closes
+  let merging = false;       // the merge fields are open; Keys waits until they close
 
   function esc(text) {
     return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[c]);
@@ -676,6 +683,7 @@
     setHtml("deckBody", renderDeck(latest.grid, latest.unrevealed));
     document.getElementById("seatsTitle").textContent = `HANDS (${latest.players} player${latest.players > 1 ? "s" : ""})`;
     if (!renaming) setHtml("seatsBody", renderSeats(latest));  // rewriting would drop the name being typed
+    if (merging) return;  // rewriting would drop the numbers being typed
     setHtml("keysBody", renderModel(latest.model) + renderCountSystem(latest.count_system)
       + renderKeys(latest.keys, latest.players, latest.decks));
   }
@@ -777,8 +785,42 @@
   };
   document.getElementById("keysBody").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
-    if (button) postAction({ action: button.dataset.action });
+    if (!button) return;
+    if (button.dataset.action === "merge") startMerge(button);
+    else postAction({ action: button.dataset.action });
   });
+
+  // The merge button opens two number fields in its place: the card to fold in, then the card it
+  // joins. Enter in the first moves to the second; Enter with both filled merges. Escape cancels,
+  // and so does leaving both fields.
+  function startMerge(button) {
+    const form = document.createElement("div");
+    form.className = "key merge";
+    form.innerHTML = `<kbd>M</kbd><input inputmode="numeric" aria-label="Card to fold in" placeholder="#">`
+      + `<span class="action">into</span><input inputmode="numeric" aria-label="Card it joins" placeholder="#">`;
+    const [from, to] = form.querySelectorAll("input");
+    let closed = false;
+    const close = (save) => {
+      if (closed) return;
+      closed = true;
+      if (save) postAction({ action: "merge", from: from.value.trim(), to: to.value.trim() });
+      merging = false;
+      written.delete("keysBody");  // put the merge button back
+      render();
+    };
+    form.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") close(false);
+      if (event.key !== "Enter") return;
+      if (from.value.trim() && to.value.trim()) close(true);
+      else (from.value.trim() ? to : from).focus();
+    });
+    form.addEventListener("focusout", (event) => {
+      if (!form.contains(event.relatedTarget)) close(false);
+    });
+    merging = true;
+    button.replaceWith(form);
+    from.focus();
+  }
 
   // Choosing a model asks the reader to load it. The dropdown goes back to the model the
   // reader runs until the reader reports the new one, which takes as long as loading it.

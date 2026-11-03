@@ -314,6 +314,97 @@ def test_x_rescans_the_round_recounts_and_logs_a_rescan_row(tmp_path, capsys):
     assert rows[-1][1:] == [str(r.tracker.frame), "rescan", "", "", "", "0", "", ""]
 
 
+def two_cards(r, second="KD"):
+    """Place 5H in P1, then `second` in P2. Returns the detections of both."""
+    p1, p2 = (r.layout.seats[i].polygon.mean(axis=0) for i in (1, 2))
+    first = [Detection("5H", 0.9, float(p1[0]), float(p1[1]))]
+    both = first + [Detection(second, 0.9, float(p2[0]), float(p2[1]))]
+    r.process(frame(), first)
+    r.process(frame(), first)
+    r.process(frame(), both)
+    r.process(frame(), both)
+    return both
+
+
+def test_u_undoes_the_last_card_recounts_and_logs_an_undo_row(tmp_path, capsys):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    two_cards(r)
+    assert [c.order for c in r.tracker.round] == [1, 2] and r.count.running == 0
+    capsys.readouterr()
+    assert r.handle_key(ord("u"), frame()) is True
+    assert [c.order for c in r.tracker.round] == [1] and r.count.running == 1
+    assert "--- undo: #2 KD taken back ---" in capsys.readouterr().out
+    assert r.hud._message == "undo: #2 KD taken back"
+    row = list(csv.reader(io.StringIO(buf.getvalue())))[-1]
+    assert len(row) == len(LOG_HEADER) and row[1:7] == [str(r.tracker.frame), "undo", "2", "KD", "P2", "1"]
+
+
+def test_u_with_no_card_this_round_says_so_and_logs_nothing(tmp_path):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    assert r.handle_key(ord("u"), frame()) is True
+    assert r.hud._message == "undo: no card placed this round" and buf.getvalue() == ""
+
+
+def test_merge_cards_folds_one_card_into_another_and_logs_a_merge_row(tmp_path, capsys):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    two_cards(r)
+    capsys.readouterr()
+    assert r.merge_cards("2", "1") is True
+    assert [c.order for c in r.tracker.round] == [1] and r.count.running == 1
+    assert "--- merge: #2 KD into #1 5H ---" in capsys.readouterr().out
+    assert r.hud._message == "merge: #2 KD into #1 5H"
+    row = list(csv.reader(io.StringIO(buf.getvalue())))[-1]
+    assert len(row) == len(LOG_HEADER) and row[1:7] == [str(r.tracker.frame), "merge", "2", "1", "P2", "1"]
+
+
+@pytest.mark.parametrize(("order_from", "order_to", "message"), [
+    ("3", "1", "merge: no card #3 this round"),
+    ("2", "7", "merge: no card #7 this round"),
+    ("2", "2", "merge: #2 cannot be merged into itself"),
+    ("two", "1", "merge needs two card numbers"),
+    ("", "1", "merge needs two card numbers"),
+])
+def test_merge_cards_with_a_missing_number_changes_nothing_and_says_why(tmp_path, order_from, order_to, message):
+    buf = io.StringIO()
+    r = make_reader(tmp_path, log=csv.writer(buf))
+    two_cards(r)
+    rows = buf.getvalue()
+    assert r.merge_cards(order_from, order_to) is False
+    assert [c.order for c in r.tracker.round] == [1, 2] and r.count.running == 0
+    assert r.hud._message == message and buf.getvalue() == rows
+
+
+def press(r, keys):
+    for key in keys:
+        r.handle_key(key if isinstance(key, int) else ord(key), frame())
+
+
+def test_m_types_two_card_numbers_in_the_window_and_merges_them(tmp_path):
+    r = make_reader(tmp_path, players=3)
+    two_cards(r)
+    press(r, ["m", "2"])
+    assert r.hud._message.startswith("merge #2 into #?")
+    press(r, [13, "1"])                                  # Enter ends the first number; 1 is not the player count
+    assert r.layout.players == 3 and r.hud._message.startswith("merge #2 into #1")
+    press(r, [13])
+    assert [c.order for c in r.tracker.round] == [1] and r.merge_typing is None
+
+
+def test_m_entry_takes_backspace_and_escape_or_another_key_cancels_it(tmp_path):
+    r = make_reader(tmp_path, players=3)
+    two_cards(r)
+    press(r, ["m", "2", "5", 8, 32, 27])                 # 25, Backspace, space, then Escape
+    assert r.hud._message == "merge cancelled" and r.merge_typing is None
+    assert [c.order for c in r.tracker.round] == [1, 2] and r.layout.players == 3
+    press(r, ["m", "2", "v"])                            # any other key cancels and does what it does
+    assert r.merge_typing is None and r.hud.view == "game"
+    press(r, ["m", 13, 13])                              # Enter with no number typed waits for one
+    assert r.merge_typing == [""]
+
+
 def test_p_cycles_the_preprocess_modes_and_shift_v_toggles_the_displayed_frame(tmp_path):
     r = make_reader(tmp_path)
     assert (r.preprocess, r.show_enhanced) == ("off", True)

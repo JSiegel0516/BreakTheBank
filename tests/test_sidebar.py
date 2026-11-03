@@ -298,9 +298,19 @@ def test_posted_actions_are_drained_in_order_and_bad_posts_are_refused(server):
 def test_every_button_presses_a_key_the_reader_handles():
     assert ACTION_KEYS["players_3"] == ord("3") and ACTION_KEYS["new_shoe"] == ord("R")
     assert set(ACTION_KEYS) == {f"players_{n}" for n in range(1, 6)} | {
-        "placement_numbers", "grey_boxes", "new_round", "rescan", "new_shoe", "reconnect", "preprocess",
-        "raw_or_enhanced", "turn_left", "turn_right", "quit"}
+        "placement_numbers", "grey_boxes", "new_round", "rescan", "undo", "merge", "new_shoe", "reconnect",
+        "preprocess", "raw_or_enhanced", "turn_left", "turn_right", "quit"}
     assert set(BUTTONS) <= {key for key, _ in KEY_LIST}
+
+
+def test_undo_and_merge_are_buttons_in_the_table_row_and_merge_opens_two_number_fields(reader):
+    keys = {entry["key"]: entry for entry in snapshot_of(reader)["keys"]}
+    assert keys["U"]["buttons"] == [{"action": "undo", "text": "u"}] and keys["U"]["group"] == "table"
+    assert keys["M"]["buttons"] == [{"action": "merge", "text": "m"}] and keys["M"]["group"] == "table"
+    page = server_module.PAGE.read_text()
+    assert 'if (button.dataset.action === "merge") startMerge(button);' in page
+    assert 'postAction({ action: "merge", from: from.value.trim(), to: to.value.trim() });' in page
+    assert 'aria-label="Card to fold in"' in page and 'aria-label="Card it joins"' in page
 
 
 def test_every_key_has_one_page_group_and_each_group_is_one_run_of_the_list():

@@ -17,6 +17,9 @@ have no button in the keys list. Choosing a model posts "switch_model" with its
 weights path, which read.LiveDetector loads. Choosing a counting system posts
 "switch_count" with its COUNT_SYSTEMS id, which read.py passes to Reader.set_count_system.
 The decks button posts "cycle_decks", for Reader.cycle_decks; there is no key for it.
+The merge button opens two number fields on the page and posts "merge" with "from"
+(the card to fold in) and "to" (the card it joins), which read.py passes to
+Reader.merge_cards instead of pressing M, the window's way to type the numbers.
 
 Each entry of the keys list names its group (KEY_GROUPS): table, overlay, image,
 camera, or window. The page shows each group's keys side by side on one row.
@@ -47,12 +50,15 @@ from ..tips import Tip, bet_tip, tip
 
 # The page's buttons, by the KEY_LIST key they stand for: (action name, the key it presses).
 # Keys left out (E, V, L, S) work in the window only; Shift+1-5 has its buttons on the hands instead.
+# The merge button posts its card numbers rather than pressing M (see read.page_keys).
 BUTTONS = {
     f"1-{MAX_PLAYERS}": [(f"players_{n}", str(n)) for n in range(1, MAX_PLAYERS + 1)],
     "G": [("grey_boxes", "g")],
     "N": [("placement_numbers", "n")],
     "R": [("new_round", "r")],
     "X": [("rescan", "x")],
+    "U": [("undo", "u")],
+    "M": [("merge", "m")],
     "Shift+R": [("new_shoe", "R")],
     "C": [("reconnect", "c")],
     "P": [("preprocess", "p")],
@@ -63,7 +69,8 @@ BUTTONS = {
 ACTION_KEYS = {action: ord(key) for buttons in BUTTONS.values() for action, key in buttons}  # name -> key code
 # The page's row for each KEY_LIST key. Rows appear in KEY_LIST order, which keeps each group's keys together.
 KEY_GROUPS = {
-    f"1-{MAX_PLAYERS}": "table", "R": "table", "X": "table", "Shift+R": "table", f"Shift+1-{MAX_PLAYERS}": "table",
+    f"1-{MAX_PLAYERS}": "table", "R": "table", "X": "table", "U": "table", "M": "table", "Shift+R": "table",
+    f"Shift+1-{MAX_PLAYERS}": "table",
     "G": "overlay", "N": "overlay",
     "P": "image", "Shift+V": "image", "< >": "image",
     "C": "camera", "Q": "camera",

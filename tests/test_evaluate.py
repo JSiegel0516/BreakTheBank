@@ -123,6 +123,39 @@ def test_a_rescan_before_any_card_changes_nothing(tmp_path):
     assert {r: [p.card for p in placements.values()] for r, placements in read.items()} == {1: ["10H"]}
 
 
+def cards_of(read):
+    return {r: {order: p.card for order, p in placements.items()} for r, placements in read.items()}
+
+
+def test_an_undone_card_is_scored_as_never_placed(tmp_path):
+    result = evaluate(tmp_path, ROUND_1, ("placed", 1, "10H", "P1", -1), ("placed", 2, "KH", "P2", -2),
+                      ("undo", 2, "KH", "P2", -1), ("placed", 3, "6C", "P2", -1))
+    assert (result.cards_read, result.correct, result.problems) == (2, 2, [])
+
+
+def test_a_merged_card_is_scored_as_the_card_it_joined(tmp_path):
+    expected = "round,order,card\n1,1,10H\n1,2,6C\n1,3,4D\n"
+    result = evaluate(tmp_path, expected, ("placed", 1, "10H", "P1", -1), ("placed", 2, "6H", "P2", 0),
+                      ("placed", 3, "6C", "P2", 1), ("merge", 2, "3", "P2", 0), ("placed", 4, "4D", "P1", 1))
+    assert (result.cards_read, result.correct, result.problems) == (3, 3, [])
+
+
+def test_the_numbers_after_an_undone_or_merged_card_close_up(tmp_path):
+    read, _ = read_log(log_file(tmp_path, ("placed", 1, "10H", "P1", -1), ("placed", 2, "KH", "P2", -2),
+                                ("placed", 3, "6C", "P2", -2), ("merge", 3, "2", "P2", -2),
+                                ("renamed", 2, "6C", "P2", 0), ("placed", 4, "9D", "P1", 0),
+                                ("undo", 4, "9D", "P1", 0), ("placed", 5, "4D", "P1", 1)))
+    assert cards_of(read) == {1: {1: "10H", 2: "6C", 3: "4D"}}
+
+
+def test_a_round_whose_every_card_was_undone_is_no_round(tmp_path):
+    read, _ = read_log(log_file(tmp_path, ("placed", 1, "KH", "P1", -1), ("undo", 1, "KH", "P1", 0),
+                                ("round_over", "", "", "", 0), ("placed", 1, "10H", "P1", -1),
+                                ("undo", 1, "10H", "P1", 0), ("placed", 2, "4D", "P1", 1),
+                                ("rescan", "", "", "", 0), ("placed", 1, "6C", "P2", 1)))
+    assert cards_of(read) == {1: {1: "6C"}}
+
+
 def test_wrong_seat_is_listed_but_not_an_error(tmp_path):
     result = evaluate(tmp_path, "round,order,card,seat\n1,1,10H,P2\n", ("placed", 1, "10H", "P1", -1))
     assert kinds(result) == [("wrong seat", 1, 1)]
@@ -202,3 +235,26 @@ def test_a_rescan_right_after_r_keeps_the_round_r_ended(tmp_path):
             reader.process(frame, [Detection("6C", 0.9, 300, 100)])
     read, _ = read_log(path)
     assert {r: [p.card for p in placements.values()] for r, placements in read.items()} == {1: ["5H"], 2: ["6C"]}
+
+
+def test_a_log_with_the_readers_undo_and_merge_rows_is_scored(tmp_path):
+    path = tmp_path / "log.csv"
+    with open(path, "w", newline="") as file:
+        log = csv.writer(file)
+        tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, match_dist=20, decks=2)
+        reader = Reader(tracker, SeatLayout(3, 640, 360), Hud(), tmp_path / "seats.json", tmp_path / "frames", log=log)
+        frame = np.zeros((360, 640, 3), np.uint8)
+        table = [Detection("10H", 0.9, 100, 100), Detection("6C", 0.9, 300, 100)]
+        for _ in range(3):
+            reader.process(frame, table + [Detection("6C", 0.9, 300, 250)])   # 6C read twice, far apart
+        reader.merge_cards("3", "2")
+        for _ in range(3):
+            reader.process(frame, table + [Detection("KS", 0.9, 500, 250)])   # a phantom KS
+        reader.handle_key(ord("u"), frame)
+        for _ in range(3):
+            reader.process(frame, table + [Detection("4D", 0.9, 100, 250)])
+    read, count = read_log(path)
+    expected = read_expected(expected_file(tmp_path, "round,order,card\n1,1,10H\n1,2,6C\n1,3,4D\n"))
+    result = score(expected, read, count)
+    assert (result.correct, result.problems) == (3, [])
+    assert (result.count_read, result.count_expected) == (1, 1)

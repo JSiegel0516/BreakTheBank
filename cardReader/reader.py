@@ -10,6 +10,8 @@ everything in between, so it can be driven in a test without either:
     reader.split_seat("P1"), reader.join_seat("P1") # from the browser page; keys Shift+1-5 toggle_split
     reader.set_count_system("uston_apc")           # from the browser page's dropdown: recounts the shoe
     reader.cycle_decks()                           # from the browser page's deck button: 1 -> 2 -> 3 -> 1
+    reader.undo_last()                             # key U: take back the card placed last this round
+    reader.merge_cards("4", "2")                   # the page's merge fields, or key M then 4 Enter 2 Enter
 
 reader.count_system is the blackjack.COUNT_SYSTEMS id reader.count is made in.
 The running count printed with each placed card and logged in the CSV follows it.
@@ -46,6 +48,11 @@ the running count, marks it counted at last. Key X (rescan) logs one
 rescan row, with the running count after the rescan and no card, so
 evaluate.py reads the round again under the same number. A rescan before the
 round's first card logs nothing, since there is nothing to read again.
+Key U logs an undo row: the card taken back, with its number, name, seat, and
+position, and the running count after it. A merge logs a merge row: the card
+folded in, with its number, seat, and position, but the number of the card it
+joined in the card column. evaluate.py scores an undone card as never placed and
+a merged card as the card it joined.
 """
 from __future__ import annotations
 
@@ -68,6 +75,9 @@ from .tracker import CardTracker
 
 LOG_HEADER = ["time", "frame", "event", "order", "card", "seat", "running_count", "x", "y"]
 MAX_NAME_LENGTH = 16  # characters in a seat's display name
+ENTER_KEYS = (13, 10, 32)  # cv2.waitKey codes that end a typed merge number: Enter (macOS, Linux) and space
+BACKSPACE_KEYS = (8, 127)
+ESCAPE_KEY = 27
 
 
 class Reader:
@@ -87,6 +97,7 @@ class Reader:
         self.show_enhanced = True     # False: the window shows the raw camera frame instead (key Shift+V)
         self.rotation = rotation % 4  # read.py turns each camera frame this many quarter turns clockwise
         self.seat_names = load_seat_names(self.seats_file)  # seat id -> display name, for renamed seats only
+        self.merge_typing: list[str] | None = None  # after key M: the card numbers typed so far, else None
 
     @property
     def layout(self) -> SeatLayout:
@@ -178,17 +189,29 @@ class Reader:
             if event.kind == "round_over":
                 self.table.clear_splits()
                 self.hud.flash("round over: table cleared")
-            if self.log:
-                self.log.writerow([f"{time.time():.3f}", event.frame, event.kind,
-                                   card.order if card else "", card.label if card else "", seat or "",
-                                   self.count.running, round(card.x) if card else "", round(card.y) if card else ""])
+            self._log(event.kind, event.frame, card)
         return events
+
+    def _log(self, kind: str, frame: int, card: Card | None = None, card_text: str | None = None):
+        """Append one row to the CSV log, if there is one, with the running count now. A card fills
+        order, card (its label, or card_text when given), its seat, x, and y; without one they are empty."""
+        if not self.log:
+            return
+        if card is None:
+            self.log.writerow([f"{time.time():.3f}", frame, kind, "", "", "", self.count.running, "", ""])
+            return
+        seat = self.table.seat_of(card) or ""
+        label = card.label if card_text is None else card_text
+        self.log.writerow([f"{time.time():.3f}", frame, kind, card.order, label, seat, self.count.running,
+                           round(card.x), round(card.y)])
 
     def handle_key(self, k: int, frame: np.ndarray) -> bool:
         """Act on a key code from cv2.waitKey. Returns False when the reader should quit.
 
         frame: the camera frame as turned by rotation, before preprocessing; S saves it, and
-        < and > turn from its size."""
+        < and > turn from its size. After M, keys type the merge first (see type_merge_key)."""
+        if self.merge_typing is not None and self.type_merge_key(k):
+            return True
         if k == ord("q"):
             return False
         if ord("1") <= k <= ord(str(MAX_PLAYERS)):
@@ -220,9 +243,13 @@ class Reader:
             print("--- rescan: this round is read again ---")
             self.hud.flash("rescan: reading this round again")
             # R logs nothing, so a rescan row before this round's first card would drop the round R ended.
-            if self.log and placed_this_round:
-                self.log.writerow([f"{time.time():.3f}", self.tracker.frame, "rescan", "", "", "",
-                                   self.count.running, "", ""])
+            if placed_this_round:
+                self._log("rescan", self.tracker.frame)
+        elif k == ord("u"):
+            self.undo_last()
+        elif k == ord("m"):
+            self.merge_typing = [""]
+            self._flash_merge_typing()
         elif k == ord("R"):
             self.tracker.new_shoe()
             self.table.clear_splits()
@@ -243,6 +270,76 @@ class Reader:
         elif k == ord("<"):
             self.turn(-1, frame.shape[1], frame.shape[0])
         return True
+
+    def undo_last(self) -> Card | None:
+        """Take back the card placed last this round (key U, see CardTracker.undo_last): recount,
+        print and flash it, and log an undo row with its number. Returns the card, or None, with a
+        message and nothing logged, when the round has no card."""
+        card = self.tracker.undo_last()
+        if card is None:
+            self.hud.flash("undo: no card placed this round", 2.5)
+            return None
+        self.count = self._recount()
+        message = f"undo: #{card.order} {card.label} taken back"
+        print(f"--- {message} ---")
+        self.hud.flash(message)
+        self._log("undo", self.tracker.frame, card)
+        return card
+
+    def merge_cards(self, order_from: str, order_to: str) -> bool:
+        """Fold card order_from into card order_to, one card placed twice (see CardTracker.merge), from
+        the page's merge fields or key M: recount, print and flash it, and log a merge row with
+        order_from's number and its label's place taken by order_to's number. Returns False, with a
+        message and nothing changed, unless both are numbers of two different cards of this round."""
+        try:
+            source, target = int(order_from), int(order_to)
+        except ValueError:
+            self.hud.flash("merge needs two card numbers", 2.5)
+            return False
+        cards = {card.order: card for card in self.tracker.round}
+        missing = next((order for order in (source, target) if order not in cards), None)
+        if missing is not None:
+            self.hud.flash(f"merge: no card #{missing} this round", 2.5)
+            return False
+        if source == target:
+            self.hud.flash(f"merge: #{source} cannot be merged into itself", 2.5)
+            return False
+        survivor = cards[target]
+        merged = self.tracker.merge(source, target)
+        self.count = self._recount()
+        message = f"merge: #{merged.order} {merged.label} into #{survivor.order} {survivor.label}"
+        print(f"--- {message} ---")
+        self.hud.flash(message)
+        self._log("merge", self.tracker.frame, merged, card_text=str(target))
+        return True
+
+    def type_merge_key(self, k: int) -> bool:
+        """One key of the window's merge after M: digits type a card number, Backspace deletes one,
+        and Enter or space ends the number. The first number is the card to fold in, the second the
+        card it joins; ending the second merges them (merge_cards). Escape cancels. Returns False for
+        any other key, which cancels the merge too and is then handled as usual."""
+        typed = self.merge_typing
+        if ord("0") <= k <= ord("9"):
+            typed[-1] += chr(k)
+        elif k in BACKSPACE_KEYS:
+            typed[-1] = typed[-1][:-1]
+        elif k in ENTER_KEYS:
+            if len(typed) == 2 and typed[-1]:
+                self.merge_typing = None
+                self.merge_cards(*typed)
+                return True
+            if typed[-1]:
+                typed.append("")
+        else:
+            self.merge_typing = None
+            self.hud.flash("merge cancelled")
+            return k == ESCAPE_KEY
+        self._flash_merge_typing()
+        return True
+
+    def _flash_merge_typing(self):
+        first, second = (self.merge_typing + [""])[:2]
+        self.hud.flash(f"merge #{first or '?'} into #{second or '?'}: Enter after each number, Esc cancels", 10)
 
     def turn(self, quarter_turns: int, width: int, height: int):
         """Turn the view clockwise by quarter_turns (-1: anticlockwise). width, height: the frame size before it.
