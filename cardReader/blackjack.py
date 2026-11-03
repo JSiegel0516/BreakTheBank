@@ -16,7 +16,9 @@ to zero over a deck. The true count divides the running count by the decks
 still to be dealt (Hi-Lo, Hi-Opt II) or the half-decks (Uston APC). Cards
 left is the shoe (1 to MAX_DECKS decks of 52) minus the face cards seen and
 minus the face-down cards that were dealt and never turned over: those are
-gone, but nobody saw what they were, so they do not change the running count. The divisor never
+gone, but nobody saw what they were, so they do not change the running count. Every
+display shows a different cards-left figure, the unseen copies (hud.DealtCards.unseen),
+which keeps those face-down cards in, since any of them could be any unseen card. The divisor never
 counts fewer cards than MIN_DECKS_LEFT of a deck (a quarter deck, 13 cards,
 which is half a half-deck), so the true count does not blow up as the last
 few cards come out. A positive
@@ -148,6 +150,8 @@ class CountSystem:
     name: str               # display name, e.g. "Hi-Opt II"
     values: dict[str, int]  # rank -> what one card of it adds to the running count
     unit_cards: int         # cards in one unit of the true count's divisor: a deck or a half-deck
+    bet_more_at: float      # true count at or above which an empty seat's tip says bet more (tips.bet_tip)
+    bet_less_at: float      # true count at or below which it says bet less
 
     def value(self, label: str) -> int:
         """What one card adds to the running count. BACK is 0."""
@@ -160,13 +164,16 @@ def _by_rank(groups: dict[str, int]) -> dict[str, int]:
 
 
 DEFAULT_COUNT_SYSTEM = "hi_lo"
+# The bet thresholds are starting values in each system's own units, larger for systems whose
+# points are larger; Uston APC's are per half-deck.
 COUNT_SYSTEMS = {  # system id -> system, in the order the page's dropdown lists them
-    "hi_lo": CountSystem("Hi-Lo", _by_rank({"2 3 4 5 6": 1, "7 8 9": 0, "10 J Q K A": -1}), CARDS_PER_DECK),
+    "hi_lo": CountSystem("Hi-Lo", _by_rank({"2 3 4 5 6": 1, "7 8 9": 0, "10 J Q K A": -1}), CARDS_PER_DECK,
+                         bet_more_at=2, bet_less_at=-1),
     "hi_opt_ii": CountSystem("Hi-Opt II", _by_rank({"2 3 6 7": 1, "4 5": 2, "8 9 A": 0, "10 J Q K": -2}),
-                             CARDS_PER_DECK),
+                             CARDS_PER_DECK, bet_more_at=4, bet_less_at=-2),
     "uston_apc": CountSystem("Uston APC",
                              _by_rank({"2 8": 1, "3 4 6 7": 2, "5": 3, "9": -1, "10 J Q K": -3, "A": 0}),
-                             CARDS_PER_DECK // 2),
+                             CARDS_PER_DECK // 2, bet_more_at=3, bet_less_at=-2),
 }
 
 
@@ -179,7 +186,9 @@ def hi_lo(label: str) -> int:
 class ShoeCount:
     running: int      # sum of the system's values of every card seen this shoe
     true: float       # running count per deck (half-deck for Uston APC) still to be dealt, floored as above
-    cards_left: int   # cards not yet dealt: the shoe minus faces seen and face-down cards never revealed
+    # cards still in the shoe, the true count's divisor: the shoe minus faces seen and face-down cards
+    # never revealed. Displays show the unseen copies instead (hud.DealtCards.unseen), face-down cards included.
+    cards_left: int
     system: str = DEFAULT_COUNT_SYSTEM  # the COUNT_SYSTEMS id it was counted in
     decks: int = 1    # decks in the shoe: cards_left starts from decks * CARDS_PER_DECK
 

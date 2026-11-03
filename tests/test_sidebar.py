@@ -80,9 +80,13 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert hands["dealer"]["kind"] == "dealer" and hands["dealer"]["hint"] is None
     assert [card["label"] for card in hands["P1"]["cards"]] == ["KS", "6H"]
     assert hands["P1"]["total"] == "16" and hands["P1"]["hint"] == "stand"   # hard 16 against a 6
-    assert hands["P2"]["hint"] is None                                       # one card: no hint
+    assert hands["P1"]["tip"]["tone"] == "firm" and hands["P1"]["tip"]["text"] == "Stand."
+    assert hands["P2"]["hint"] is None and hands["P2"]["tip"] is None        # one card: no tip
+    assert hands["dealer"]["tip"] is None
     assert hands["P3"] == {"seat": "P3", "name": "P3", "part": None, "kind": "player", "cards": [], "total": "-",
-                           "hint": None, "can_split": False, "outcome": None,
+                           "hint": "bet-more", "can_split": False, "outcome": None,   # true count +2.2
+                           "tip": {"text": "Bet more", "tone": "normal", "gap": None,
+                                   "title": "true count +2.2 (Hi-Lo): bet more at +2 or above, less at -1 or below"},
                            "odds": {"blackjack": 5}, "stand": None, "insurance": None,  # 2 * 4/48 aces * 15/47 tens
                            "was": None}
     # 48 unseen: 16 needs a 5, 4, 3, or 2 (three 2s left) for 21 to 18; a 6 (two left), 7, 8, 9, or ten busts
@@ -168,6 +172,47 @@ def hand_rows(snapshot):
              hand["can_split"]) for hand in snapshot["hands"]]
 
 
+def test_player_hands_get_a_firm_a_close_and_a_normal_tip_from_the_unseen_cards(tmp_path):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2)
+    reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
+    place(reader, ("10D", 0, -30), ("BACK", 0, 30), ("10S", 1, -30), ("QH", 1, 30), ("10C", 2, -30), ("6H", 2, 30),
+          ("AS", 3, -30), ("7H", 3, 30))
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    assert (hands["P1"]["hint"], hands["P1"]["tip"]["text"], hands["P1"]["tip"]["tone"]) == ("stand", "Stand.", "firm")
+    assert hands["P1"]["tip"]["gap"] >= 10
+    assert hands["P1"]["tip"]["title"].endswith("over hit, against 97 unseen cards")   # 104 less 7 faces
+    close = hands["P2"]                                              # hard 16 against a 10
+    assert close["tip"]["tone"] == "close" and close["tip"]["text"] == f"Close: {close['hint']}"
+    normal = hands["P3"]                                             # soft 18 against a 10
+    assert (normal["hint"], normal["tip"]["text"], normal["tip"]["tone"]) == ("hit", "Hit", "normal")
+    assert 3 <= normal["tip"]["gap"] < 10
+    assert hands["dealer"]["tip"] is None and hands["dealer"]["hint"] is None
+
+
+def test_a_player_hand_falls_back_to_basic_strategy_without_values(reader, monkeypatch):
+    monkeypatch.setattr("cardReader.tips.play_values", lambda *args: None)
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    assert hands["P1"]["hint"] == "stand"                            # hard 16 against a 6
+    assert hands["P1"]["tip"]["text"] == "Stand" and hands["P1"]["tip"]["tone"] == "normal"
+    assert hands["P1"]["tip"]["gap"] is None and "basic strategy" in hands["P1"]["tip"]["title"]
+
+
+@pytest.mark.parametrize(("seen", "hint", "text"), [
+    ([], "bet-flat", "Bet flat"),                                    # true count 0
+    (["2S", "3S"], "bet-more", "Bet more"),                          # +2 over 50 cards: +2.1
+    (["2S", "3S", "4S", "5S", "6S"], "bet-more", "Bet more."),       # +5.5: firm at +4
+    (["KS"], "bet-less", "Bet less"),                                # -1.0
+    (["KS", "QS", "JS", "10S", "AS"], "bet-less", "Bet less."),      # -5.5: firm at -2
+])
+def test_empty_player_seats_get_a_bet_tip_from_the_true_count(tmp_path, seen, hint, text):
+    reader = new_reader(tmp_path, 3)
+    place(reader, *[(label, 0, 60 * i - 120) for i, label in enumerate(seen)])   # all in the dealer's strip
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    for seat in ["P1", "P2", "P3"]:
+        assert (hands[seat]["hint"], hands[seat]["tip"]["text"], hands[seat]["tip"]["gap"]) == (hint, text, None)
+    assert hands["dealer"]["tip"] is None
+
+
 def test_snapshot_offers_a_split_only_on_a_players_pair_and_shows_split_hands_by_part(tmp_path):
     tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
     reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
@@ -178,7 +223,7 @@ def test_snapshot_offers_a_split_only_on_a_players_pair_and_shows_split_hands_by
         ("dealer", "DEALER", None, ["6C", "6D"], None, False),         # the dealer's pair is never split
         ("P1", "Ann", None, ["8S", "8H"], "split", True),
         ("P2", "P2", None, ["9S", "9H"], "split", True),
-        ("P3", "P3", None, [], None, False)]
+        ("P3", "P3", None, [], "bet-more", False)]                     # true count +2.3
 
     reader.split_seat("P1")
     assert hand_rows(snapshot_of(reader))[1:3] == [
@@ -277,7 +322,28 @@ def test_the_page_colours_every_count_cue_and_stacks_hands_above_cards_left_when
         assert f'"{cue}": "{tone}"' in page
     assert 'grid-template-areas: "count" "seats" "deck" "keys" "status";' in page
     assert 'grid-template-areas: "deck count" "deck seats" "deck keys" "status status";' in page
-    assert "${count.high_left}/${count.high_total}" in page and "${count.aces_left}/${count.aces_total}" in page
+    assert "fraction(count.high_left, count.high_total)" in page
+    assert "fraction(count.aces_left, count.aces_total)" in page
+
+
+def test_the_page_styles_tips_by_tone_and_play_and_shows_their_lead_and_hover():
+    page = server_module.PAGE.read_text()
+    assert ".hint.firm { font-weight: 700; text-transform: uppercase; }" in page
+    assert ".hint.close { background: none; color: var(--tip); }" in page
+    for play, colour in [("hit", "amber"), ("stand", "green"), ("double", "seat"), ("split", "duplicate"),
+                         ("bet-more", "green"), ("bet-less", "red"), ("bet-flat", "dim")]:
+        assert f".hint.{play} {{ --tip: var(--{colour}); }}" in page
+    assert 'class="hint ${esc(hand.hint)} ${esc(tip.tone)}" title="${esc(tip.title)}">${esc(tip.text)}</div>' in page
+    assert '${tip.gap >= 0 ? "+" : ""}${tip.gap}</span>' in page
+    assert "${splitButton(hand)}${renderTip(hand)}" in page
+
+
+def test_the_page_stacks_cards_left_and_names_the_face_down_cards_beside_it():
+    page = server_module.PAGE.read_text()
+    assert "fraction(count.cards_left, count.deck_size)}${faceDown}" in page
+    assert "const faceDown = unrevealed ? `<span class=\"facedown\">\\u00b7 ${unrevealed} face down</span>` : \"\";" \
+        in page                                                       # no suffix with none face down
+    assert "renderCount(latest.count, latest.unrevealed)" in page
 
 
 def test_the_count_facts_match_the_grid_after_a_shoe_of_high_cards(tmp_path):
@@ -307,6 +373,27 @@ def test_with_two_decks_the_count_grid_and_odds_use_every_copy(tmp_path):
     assert (rows["A"]["left"], rows["K"]["left"], rows["10"]["left"], rows["2"]["left"]) == (7, 7, 7, 8)
     hands = {hand["seat"]: hand for hand in snapshot["hands"]}
     assert hands["P2"]["odds"] == {"blackjack": 7}                # 7 aces among 101 unseen copies (one deck: 6%)
+
+
+def test_cards_left_is_one_figure_with_face_down_cards_a_duplicate_and_fewer_decks(tmp_path):
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=3)
+    reader = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames")
+    empty = np.zeros((H, W, 3), np.uint8)
+    place(reader, ("KH", 1, 0), ("KH", 2, 0), ("KH", 3, 0))     # three copies with three decks
+    for _ in range(5):
+        reader.process(empty, [])
+    reader.handle_key(ord("r"), empty)
+    reader.cycle_decks()
+    assert reader.cycle_decks() == 2                             # lowered mid-shoe: two KH still count
+    place(reader, ("5C", 0, -30), ("BACK", 0, 30), ("KH", 1, -30), ("9D", 1, 30), ("2S", 2, -30), ("BACK", 2, 30))
+    snapshot = snapshot_of(reader)
+    count = snapshot["count"]
+    grid_left = sum(row["left"] for row in snapshot["grid"])
+    unseen = DealtCards.from_tracker(reader.tracker).unseen()
+    assert "KH" in DealtCards.from_tracker(reader.tracker).duplicates   # the third KH this round
+    assert count["cards_left"] == grid_left == len(unseen) == 99     # KH twice, 5C, 9D, 2S seen
+    assert (count["deck_size"], snapshot["unrevealed"]) == (104, 2)
+    assert reader.count.cards_left == 97                             # the true count's divisor leaves out both
 
 
 def test_the_page_offers_the_decks_button_in_the_table_row_and_dims_tiles_by_copies_seen():
@@ -449,7 +536,8 @@ def test_the_page_marks_hand_outcomes_and_holds_a_confetti_canvas():
 
 def test_the_page_writes_labels_in_sentence_case_and_keeps_headings_and_tile_labels_uppercase():
     page = server_module.PAGE.read_text()
-    for label in ["<span>Running</span>", "<span>Left</span>", "<span>Tens &amp; aces</span>", "<span>Aces</span>",
+    for label in ['<span class="label">Running</span>', '<span class="label">Left</span>',
+                  '<span class="label">Tens &amp; aces</span>', '<span class="label">Aces</span>',
                   'title="Split into two hands">Split</button>', 'title="Make one hand again">Join</button>',
                   "Face down, never revealed: ${unrevealed}", '<div id="countBody">Waiting for read.py ...</div>',
                   "Not connected: is read.py --web running?", "No signal: press C to reconnect",

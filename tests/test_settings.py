@@ -28,6 +28,12 @@ def test_no_rotated_copies_is_valid():
     settings.validate(shipped(TRAIN_ROTATED_COPIES=()))
 
 
+def test_focus_defaults_are_the_eight_misread_cards_with_two_extra_copies_and_none_is_valid():
+    assert settings.FOCUS_CLASSES == ("AD", "2D", "6D", "BACK", "9S", "4C", "4H", "2H")
+    assert settings.FOCUS_EXTRA_COPIES == 2
+    settings.validate(shipped(FOCUS_CLASSES=(), FOCUS_EXTRA_COPIES=0))
+
+
 @pytest.mark.parametrize("name, value, allowed", [
     ("FPS", 0, "number above 0"),
     ("CONFIRM_SECONDS", 0, "number above 0"),
@@ -68,6 +74,13 @@ def test_no_rotated_copies_is_valid():
     ("DECKS", 1.5, "whole number from 1 to 3"),
     ("DECKS", 2.0, "whole number from 1 to 3"),
     ("DECKS", True, "whole number from 1 to 3"),
+    ("FOCUS_CLASSES", ("AD", "ZZ"), "tuple of different card names from deck.CLASSES"),
+    ("FOCUS_CLASSES", ("ad",), "tuple of different card names from deck.CLASSES"),
+    ("FOCUS_CLASSES", ("AD", "AD"), "tuple of different card names from deck.CLASSES"),
+    ("FOCUS_CLASSES", ["AD"], "tuple of different card names from deck.CLASSES"),
+    ("FOCUS_EXTRA_COPIES", -1, "whole number of 0 or more"),
+    ("FOCUS_EXTRA_COPIES", 1.5, "whole number of 0 or more"),
+    ("FOCUS_EXTRA_COPIES", True, "whole number of 0 or more"),
 ])
 def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, allowed):
     with pytest.raises(ValueError) as error:

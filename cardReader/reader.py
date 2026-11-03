@@ -15,7 +15,9 @@ reader.count_system is the blackjack.COUNT_SYSTEMS id reader.count is made in.
 The running count printed with each placed card and logged in the CSV follows it.
 reader.decks is the decks in the shoe, from the tracker's config; the count's
 cards left start from 52 per deck. cycle_decks changes it and recounts the
-cards already seen.
+cards already seen. reader.count.cards_left is the true count's divisor, the
+cards still in the shoe; cards_left_text() gives what every display shows,
+the unseen copies with the face-down cards among them named beside it.
 
 reader.seat_names maps seat ids to display names, loaded from and saved to the
 seats file and shared by every player count. They are for people only: events
@@ -55,7 +57,7 @@ import numpy as np
 from .blackjack import COUNT_SYSTEMS, DEFAULT_COUNT_SYSTEM, MAX_DECKS, ShoeCount, is_pair, shoe_count
 from .cards import Card, Detection, Event
 from .deck import BACK
-from .hud import SPLIT_KEYS, VIEWS, Hud, seat_title
+from .hud import SPLIT_KEYS, VIEWS, DealtCards, Hud, seat_title
 from .preprocess import MODES
 from .seats import DEALER, MAX_PLAYERS, SeatLayout, ZoneEditor, load_seat_names, save_seat_names
 from .table import Table
@@ -135,9 +137,17 @@ class Reader:
         self.tracker.cfg = replace(self.tracker.cfg, decks=decks)
         self.count = self._recount()
         shoe = f"{decks} deck{'s' if decks > 1 else ''}"
-        print(f"--- {shoe}: running count {self.count.running:+d}, {self.count.cards_left} cards left ---")
+        print(f"--- {shoe}: running count {self.count.running:+d}, {self.cards_left_text()} ---")
         self.hud.flash(shoe)
         return decks
+
+    def cards_left_text(self) -> str:
+        """Cards left for the terminal, as the page and the window show them: the unseen copies
+        (hud.DealtCards.unseen), then the face-down cards never revealed among them when there
+        are any, e.g. "99 cards left, 2 face down"."""
+        dealt = DealtCards.from_tracker(self.tracker)
+        text = f"{len(dealt.unseen())} cards left"
+        return f"{text}, {dealt.unrevealed} face down" if dealt.unrevealed else text
 
     def set_layout(self, layout: SeatLayout):
         """Swap the seat layout everywhere it is held."""

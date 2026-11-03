@@ -22,6 +22,9 @@ SYNTHETIC_IMAGES = 2000    # synthetic images added to the dataset. 0 = real dat
 VAL_FRACTION = 0.15        # share of images held out to measure accuracy
 TRAIN_ROTATED_COPIES = (90, 270)  # each real train photo is also added turned clockwise by these degrees (90, 180
                                   # or 270), so corners are seen sideways. 180 adds nothing: cards show both ways up.
+FOCUS_CLASSES = ("AD", "2D", "6D", "BACK", "9S", "4C", "4H", "2H")  # the cards most often misread (docs/training.md):
+                                  # real train photos holding any of them are added FOCUS_EXTRA_COPIES more times
+FOCUS_EXTRA_COPIES = 2     # extra copies of each such photo and of its rotated copies. 0 = none.
 BASE_WEIGHTS = "yolo11n.pt"   # pretrained starting point, downloaded automatically. yolo11s.pt is bigger and slower.
 EPOCHS = 100
 PATIENCE = 20          # stop early after this many epochs with no validation improvement. best.pt is kept either way.
@@ -89,6 +92,7 @@ def validate(config) -> None:
     Raises ValueError listing every invalid value with its allowed range."""
     from cardReader.blackjack import COUNT_SYSTEMS, MAX_DECKS  # imported here so settings.py stays cheap to import
     from cardReader.dataset import ROTATIONS
+    from cardReader.deck import CLASSES
     from cardReader.preprocess import MODES
     from cardReader.seats import MAX_PLAYERS
 
@@ -99,7 +103,10 @@ def validate(config) -> None:
           "ROUND_END_SECONDS"),
          lambda v: _is_number(v) and v > 0, "a number above 0"),
         (("HIDDEN_SECONDS",), lambda v: _is_number(v) and v >= 0, "a number of 0 or more"),
-        (("SYNTHETIC_IMAGES",), lambda v: _is_whole(v) and v >= 0, "a whole number of 0 or more"),
+        (("SYNTHETIC_IMAGES", "FOCUS_EXTRA_COPIES"), lambda v: _is_whole(v) and v >= 0, "a whole number of 0 or more"),
+        (("FOCUS_CLASSES",),
+         lambda v: isinstance(v, tuple) and all(name in CLASSES for name in v) and len(set(v)) == len(v),
+         "a tuple of different card names from deck.CLASSES, such as ('AD', 'BACK'), or () for none"),
         (("CAMERA_WIDTH", "CAMERA_HEIGHT"),
          lambda v: v is None or (_is_whole(v) and v >= 1), "None or a whole number of 1 or more"),
         (("STILL_DISTANCE", "MATCH_DISTANCE"),

@@ -10,6 +10,7 @@ python read.py      # read cards off the table, in placement order
 python evaluate.py --log round1.csv --expected round1Expected.csv   # score a logged run against the real cards
 python benchmark.py --limit 20   # does preprocessing help the model in dim or bright light?
 python benchmark.py --confusions # which names does the model get wrong, and on what boxes?
+python benchmark.py --confusions --focus AD,9S   # and what were these cards read as?
 ```
 
 ## Quick start
@@ -40,8 +41,11 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
    and `L` to hide the legend and key list. All keys are in [docs/reading.md](docs/reading.md#keys).
 6. On a laptop screen, run `python read.py --web` instead and open the address it prints
    (`http://127.0.0.1:8765/`) in a browser. The window then shows only the video, and the
-   page shows the count, the Cards Left grid, every hand with a basic strategy hint, the keys,
-   and the status, sized to fit the browser window. Its buttons do what the keys do;
+   page shows the count, the Cards Left grid, every hand with a tip, the keys, and the
+   status, sized to fit the browser window. A tip names the play the unseen cards favour
+   (`STAND.` when it is well ahead, `Close: hit` when it is nearly level) with its lead in
+   hundredths of a bet; an empty seat gets `Bet more`, `Bet less`, or `Bet flat` from the
+   true count. See [Tips](docs/reading.md#tips). Its buttons do what the keys do;
    `python read.py --no-display --web` runs with the page alone. Click a seat's name
    under Hands to give it the player's name; names are kept between runs. The `model`
    dropdown switches to any trained run in `models/` without restarting.
@@ -77,8 +81,10 @@ The detector is the only learned part. Everything else is plain rules and is
 covered by `pytest`, including the pipeline that builds the training set.
 
 A dealer's hole card turned face up keeps its number and is renamed from `BACK`
-to its face. The count's cards left also leaves out face-down cards that were
-never turned up. The true count divides by at least a quarter deck, so it stays
+to its face. Cards left is the unseen copies, the same figure on the page, in
+the window, and in the Cards Left grid, with face-down cards never turned up
+named beside it (`Left 99/104 · 2 face down`). The true count leaves those
+face-down cards out and divides by at least a quarter deck, so it stays
 sensible near the end of the deck. Details are in
 [docs/reading.md](docs/reading.md#seats-hands-and-the-count).
 
@@ -89,7 +95,7 @@ BreakTheBank/                 (the folder git clone creates)
 ├── train.py                  build the training set from data/raw, then train the detector
 ├── read.py                   the live reader: camera -> detector -> tracker -> ordered cards
 ├── evaluate.py               scores a read.py --log against the cards really dealt
-├── benchmark.py              accuracy and speed of each preprocess mode on darkened, brightened, overexposed and hazy photos; --confusions lists wrong names
+├── benchmark.py              accuracy and speed of each preprocess mode on darkened, brightened, overexposed and hazy photos; --confusions lists wrong names and what each focus card was read as
 ├── settings.py               every tunable number and path, with comments
 ├── pyproject.toml            dependencies, pytest and ruff config; uv.lock pins the exact versions
 ├── CONTRIBUTING.md           branch, test, PR: how changes get in
@@ -104,6 +110,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── seats.py              seat layout by number of players, and the mouse zone editor
 │   ├── blackjack.py          hand totals and the counting systems
 │   ├── strategy.py           basic strategy: hit, stand, double, or split for a hand
+│   ├── tips.py               the page's tips: each play's value against the unseen cards, and bet tips
 │   ├── sidebar/              the browser dashboard of read.py --web: snapshot, server, page.html
 │   ├── tracker.py            detections -> cards in placement order (thresholds: TrackerConfig)
 │   ├── table.py              cards -> the hand at every seat
@@ -129,6 +136,7 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_autolabel.py     corner completion with a faked model
 │   ├── test_blackjack.py     hand totals, counting systems, seat layout
 │   ├── test_strategy.py      every row of the basic strategy tables
+│   ├── test_tips.py          play values checked by hand, tones, the fallback, and bet tips
 │   ├── test_sidebar.py       the dashboard's snapshot, server, and button actions
 │   ├── test_seats.py         zone editing, saving and loading
 │   └── test_provenance.py    manifest checks, promotion
@@ -199,7 +207,7 @@ and check that `which python` ends in `BreakTheBank/.venv/bin/python`.
 ## Documentation
 
 - [docs/reading.md](docs/reading.md): running the reader, keys, camera setup, seats and the count, scoring a recorded run, tuning, troubleshooting, known limitations
-- [docs/training.md](docs/training.md): how training works, the step-by-step guide, improving the model, Colab, glossary
+- [docs/training.md](docs/training.md): how training works, the step-by-step guide, improving the model, [targeting the most misread cards](docs/training.md#targeting-misread-cards-model-6) for model 6, Colab, glossary
 - [docs/results.md](docs/results.md): every trained model's scores and the comparisons between them, and the preprocessing benchmark
 
 Every tunable number is in `settings.py`, with a comment on each. `read.py` and

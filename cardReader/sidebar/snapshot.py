@@ -42,8 +42,8 @@ from ..deck import SUITS
 from ..hud import EDIT_HELP, GRID_RANKS, HIGH_RANKS, KEY_LIST, DealtCards, count_cue, seat_title
 from ..reader import Reader
 from ..seats import DEALER, MAX_PLAYERS
-from ..strategy import hint
 from ..table import OTHER, Hand
+from ..tips import Tip, bet_tip, tip
 
 # The page's buttons, by the KEY_LIST key they stand for: (action name, the key it presses).
 # Keys left out (E, V, L, S) work in the window only; Shift+1-5 has its buttons on the hands instead.
@@ -76,9 +76,12 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
     """The dashboard's view of reader (its tracker, layout, count, and modes) this frame.
 
     count: the true count as "headline" with its "cue" (hud.count_cue), the running count,
-    cards left of "deck_size" (52 per deck), and the unseen tens and aces ("high_left" of
+    "cards_left" of "deck_size" (52 per deck), and the unseen tens and aces ("high_left" of
     "high_total") and aces ("aces_left" of "aces_total"), counted in copies, which match
-    the grid's "left" column. decks: the decks in the shoe, shown on the decks button.
+    the grid's "left" column. cards_left is every unseen copy (DealtCards.unseen), so it is
+    the sum of the grid's "left" column and the odds' card pool; it keeps the face-down cards
+    never revealed ("unrevealed", shown beside it), unlike the true count's divisor
+    (ShoeCount.cards_left). decks: the decks in the shoe, shown on the decks button.
     Each grid card gives "seen" of its "copies" (one per deck).
     count_system: the counting-system dropdown, {"current": the COUNT_SYSTEMS id reader counts
     in, "choices": [{"id", "name"}]}. Each grid row's "value" is its rank's value in that system.
@@ -94,12 +97,13 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
     hands = reader.table.hands(reader.tracker.round)
     dealer_labels = next((hand.labels for hand in hands if hand.seat == DEALER), [])
     unseen = dealt.unseen()
+    bet = bet_tip(count.true, count.system)
     return {
         "count": {
             "headline": f"{count.true:+.1f}",
             "cue": count_cue(count.true)[0],
             "running": f"{count.running:+d}",
-            "cards_left": count.cards_left,
+            "cards_left": len(unseen),
             "deck_size": count.decks * CARDS_PER_DECK,
             "high_left": dealt.left(HIGH_RANKS),
             "high_total": len(HIGH_RANKS) * len(SUITS) * dealt.decks,
@@ -113,7 +117,7 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
         },
         "grid": [_grid_row(rank, dealt, COUNT_SYSTEMS[count.system]) for rank in GRID_RANKS],
         "unrevealed": dealt.unrevealed,
-        "hands": [_hand(hand, dealer_labels, reader.seat_names, unseen) for hand in hands],
+        "hands": [_hand(hand, dealer_labels, reader.seat_names, unseen, bet) for hand in hands],
         "players": reader.layout.players,
         "edit_help": EDIT_HELP if reader.editor.active else [],
         "keys": [_key(key, label) for key, label in KEY_LIST],
@@ -149,12 +153,16 @@ def _grid_row(rank: str, dealt: DealtCards, counting: CountSystem) -> dict:
     return {"rank": rank, "value": counting.values[rank], "cards": cards, "left": left}
 
 
-def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: list[str]) -> dict:
+def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: list[str], bet: Tip) -> dict:
     """One hand's block: its seat id ("dealer", "P1", "OTHER"), the seat's display name, and its cards.
 
     part: 1 or 2 for a hand of a split seat, else None; the page shows it after the name.
     can_split: a player seat that is not split and holds a pair, so the page offers a split button.
-    Only player seats get a strategy hint, which never says split for a hand of a split seat.
+    hint and tip: only player seats get them. A player hand gets tips.tip against the unseen
+    cards, which never says split for a hand of a split seat; an empty player seat gets bet,
+    the bet tip for the true count (tips.bet_tip). hint is the tip's play, which names the
+    pill's colour ("stand", "bet-more", ...), and tip is {"text", "tone", "gap", "title"}
+    (see tips.Tip); both None for no tip.
     outcome: blackjack.outcome against the dealer for a player hand; the dealer's own
     blackjack.milestone ('blackjack', 'twenty-one', 'bust', or None); None for OTHER.
     odds: the hand's chances from the unseen card labels: blackjack.player_odds for a player
@@ -173,6 +181,9 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: l
     kind = {DEALER: "dealer", OTHER: "other"}.get(hand.seat, "player")
     cards = [{"order": card.order, "label": card.label, "hidden": card.hidden} for card in hand.cards]
     unsplit = hand.part is None
+    hand_tip = None
+    if kind == "player":
+        hand_tip = tip(hand.labels, dealer_labels, unseen, can_split=unsplit) if hand.cards else bet
     return {
         "seat": hand.seat,
         "name": seat_title(hand.seat, names),
@@ -180,7 +191,8 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: l
         "kind": kind,
         "cards": cards,
         "total": hand.total,
-        "hint": hint(hand.labels, dealer_labels, can_split=unsplit) if kind == "player" else None,
+        "hint": hand_tip.play if hand_tip else None,
+        "tip": _tip_fields(hand_tip),
         "can_split": kind == "player" and unsplit and is_pair(hand.labels),
         "outcome": _outcome(kind, hand.labels, dealer_labels),
         "odds": _odds(kind, hand.labels, dealer_labels, unseen),
@@ -188,6 +200,13 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: l
         "insurance": insurance(hand.labels, unseen) if kind == "dealer" else None,
         "was": _was(kind, hand.labels, dealer_labels, unseen),
     }
+
+
+def _tip_fields(hand_tip: Tip | None) -> dict | None:
+    """What the page shows of a tip beside its colour: its text, tone, gap, and hover title."""
+    if hand_tip is None:
+        return None
+    return {"text": hand_tip.text, "tone": hand_tip.tone, "gap": hand_tip.gap, "title": hand_tip.title}
 
 
 def _outcome(kind: str, labels: list[str], dealer_labels: list[str]) -> str | None:

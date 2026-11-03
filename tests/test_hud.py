@@ -271,6 +271,35 @@ def test_the_window_counts_cards_left_out_of_the_whole_shoe(monkeypatch):
                shoe_count(["KH"], decks=2), dealt=DealtCards(pending={"KH"}, decks=2))
     assert "103/104" in texts
     assert "7" in texts and "8" in texts                    # the K row's copies left, and every other row's
+    assert not [text for text in texts if text.endswith(" face down")]   # no suffix with none face down
+
+
+@pytest.mark.parametrize("view", ["cards_left", "game"])
+@pytest.mark.parametrize(("W", "H"), [(640, 360), (1280, 720), (3840, 2160)])
+def test_the_window_counts_face_down_cards_in_cards_left_and_names_them_beside_it(monkeypatch, view, W, H):
+    drawn = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText",
+                        lambda img, text, org, *a: drawn.append((text, org)) or put_text(img, text, org, *a))
+    hud = Hud()
+    hud.view = view
+    canvas = hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H),
+                      shoe_count(["KH"], decks=2, unrevealed=2),
+                      dealt=DealtCards(pending={"KH"}, unrevealed=2, decks=2))
+    where = dict(drawn)
+    assert "103/104" in where and "2 face down" in where   # the grid's unseen copies, whole at every size
+    suffix_x, suffix_y = where["2 face down"]
+    assert suffix_x + hud._size("2 face down", 0.55)[0] <= canvas.shape[1] - hud.pad   # inside the sidebar
+    beside = suffix_y == where["103/104"][1]
+    assert beside == (W >= 1280)                            # a narrow sidebar puts it on a line of its own
+
+
+def test_without_dealt_cards_the_window_counts_a_whole_shoe(monkeypatch):
+    texts = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a: texts.append(text) or put_text(img, text, *a))
+    Hud().draw(np.zeros((720, 1280, 3), np.uint8), [], [], 30.0, SeatLayout(3, 1280, 720), shoe_count([], decks=3))
+    assert "156/156" in texts
 
 
 def test_a_mini_card_with_copies_left_is_filled_by_the_share_seen():

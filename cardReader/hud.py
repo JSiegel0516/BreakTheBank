@@ -23,7 +23,10 @@
       chosen on the browser page), the true count as the headline, beside it
       what the count means and whom it favours (count_cue, one half per line:
       "high cards left" above "favours player"), then the running count and
-      cards left out of the shoe (e.g. 38/52, or 90/104 with two decks).
+      cards left out of the shoe (e.g. 38/52, or 90/104 with two decks): the
+      unseen copies, as the grid counts them, followed in grey by the face-down
+      cards never revealed among them ("2 face down") when there are any, on
+      a line of its own below when the sidebar is too narrow for it beside.
       Then the current view:
         - Cards Left: the deck as a grid of mini cards (white, with the rank
           above the suit shape), one row per rank (2 to A) with its value in
@@ -304,7 +307,8 @@ class Hud:
         its name; any other box is thin grey, drawn only while show_unmatched is set. A
         detection without an entry, or every detection when bound is None, is not bound.
         editor: the zone editor, drawn with handles while it is active.
-        dealt: the shoe's cards for the Cards Left view's grid (None: an empty grid).
+        dealt: the shoe's cards for the Cards Left view's grid and the count's cards left
+        (None: a full shoe of count.decks decks).
         stage_ms: smoothed milliseconds per stage; "detect" and "preprocess" go in the bottom bar.
         no_signal: the camera has stopped sending frames; says so over the video.
         preprocess, showing_raw: the preprocess mode, and whether `frame` is the raw camera
@@ -344,13 +348,14 @@ class Hud:
             return view
 
         side = np.full((view.shape[0], round(SIDEBAR * W), 3), PANEL, np.uint8)
-        y = self._count_block(side, count, self._view_tabs(side))
+        dealt = dealt or DealtCards(decks=count.decks)
+        y = self._count_block(side, count, dealt, self._view_tabs(side))
         bottom = side.shape[0] - self._bar_height()
         if editing:
             bottom = self._edit_help(side, bottom)
         if self.view == "cards_left":
             counting = COUNT_SYSTEMS[count.system]
-            grid_bottom = self._deck_grid(side, dealt or DealtCards(), counting, y, bottom)
+            grid_bottom = self._deck_grid(side, dealt, counting, y, bottom)
             if self.show_legend:
                 self._legend(side, bottom, ceiling=grid_bottom, counting=counting)
         else:
@@ -598,10 +603,13 @@ class Hud:
         self._text(side, hint, (side_w - self.pad - hint_w, text_y), 0.5, DIM)
         return bottom
 
-    def _count_block(self, side, count: ShoeCount, top: int) -> int:
+    def _count_block(self, side, count: ShoeCount, dealt: DealtCards, top: int) -> int:
         """The count below `top`: TRUE COUNT and the counting system's name, the true count as
         the headline with the cue beside it (count_cue, one half per line, so it takes no more
-        height than the headline), then the running count and cards left. Returns the y below it."""
+        height than the headline), then the running count and cards left. Cards left is dealt's
+        unseen copies out of the shoe, as the grid counts them, followed in grey by the face-down
+        cards never revealed ("2 face down") when there are any: beside it, or on a line of its own
+        under it when the sidebar is too narrow, so the block is taller only then. Returns the y below it."""
         cue, colour = count_cue(count.true)
         title_w, title_h, _ = self._size("TRUE COUNT", 0.5)
         headline = f"{count.true:+.1f}"
@@ -621,12 +629,23 @@ class Hud:
             line_y = y - i * (small_h + self.pad // 2)
             self._text(side, self._fit(line, side.shape[1] - self.pad - cue_x, 0.55), (cue_x, line_y), 0.55, colour)
         y += 2 * self.pad + small_h
-        col_w = (side.shape[1] - 2 * self.pad) // 2
-        parts = [("running", f"{count.running:+d}"), ("left", f"{count.cards_left}/{count.decks * CARDS_PER_DECK}")]
-        for i, (title, value) in enumerate(parts):
-            x = self.pad + i * col_w
+        left = f"{len(dealt.unseen())}/{dealt.decks * CARDS_PER_DECK}"
+        x = self.pad
+        for title, value in [("running", f"{count.running:+d}"), ("left", left)]:
+            left_x = x
             self._text(side, title, (x, y), 0.55, GREY)
-            self._text(side, value, (x + self._size(title, 0.55)[0] + self.pad, y), 0.55, WHITE)
+            x += self._size(title, 0.55)[0] + self.pad
+            self._text(side, value, (x, y), 0.55, WHITE)
+            x += self._size(value, 0.55)[0] + 3 * self.pad
+        if dealt.unrevealed:
+            suffix = f"{dealt.unrevealed} face down"
+            suffix_w = self._size(suffix, 0.55)[0]
+            x -= 2 * self.pad  # the suffix sits close to the figure it qualifies
+            if x + suffix_w > side.shape[1] - self.pad:  # no room beside it: a line of its own, under "left"
+                x = left_x
+                y += small_h + self.pad
+            scale = 0.55 * min(1.0, (side.shape[1] - self.pad - x) / suffix_w)  # whole, if smaller
+            self._text(side, suffix, (x, y), scale, GREY)
         y += 2 * self.pad
         cv2.line(side, (self.pad, y - self.pad), (side.shape[1] - self.pad, y - self.pad), DIM, 1)
         return y

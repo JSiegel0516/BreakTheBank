@@ -7,6 +7,7 @@
     python benchmark.py --data /path/to/data/dataset/realVal.yaml --imgsz 1024
     python benchmark.py --confusions             # which names does the live model get wrong, and on what boxes?
     python benchmark.py --confusions --model models/<run>/weights/best.pt --csv model5.csv
+    python benchmark.py --confusions --focus AD,9S   # the focus table for these cards only
 
 Runs the live model (MODEL_PATH, at --imgsz and CONFIDENCE from settings.py) over
 the real validation photos listed in data/dataset/realVal.yaml (written by
@@ -38,7 +39,10 @@ and aspect (width / height). The CSV goes to --csv, or by default to
 confusions.csv in the model's run folder. It prints the totals (labelled,
 found, wrong names, missed), the rank swaps with counts, and the wrong-name
 rate (wrong / found) by aspect: upright below 0.8, diagonal 0.8 to 1.25,
-sideways above 1.25; and by box width tercile.
+sideways above 1.25; and by box width tercile. Last comes the focus table:
+one row per focus card (FOCUS_CLASSES in settings.py, or --focus) with its
+labelled, found, wrong, and missed corners, and what it was read as, such as
+"6S 2, 9C 1". The CSV is the same either way.
 """
 from __future__ import annotations
 
@@ -57,7 +61,7 @@ import yaml
 
 import settings
 from cardReader.cards import Detection
-from cardReader.deck import BACK, RANKS, rank_of
+from cardReader.deck import BACK, CLASSES, RANKS, rank_of
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
 
 LEVELS = ("3.5", "2.5", "1.8", "1", "0.6", "gain1.6", "gain2.2", "flat0.55", "flat0.35")
@@ -362,6 +366,32 @@ def confusion_summary(corners: list[Corner]) -> str:
     return "\n\n".join(parts)
 
 
+def focus_table(corners: list[Corner], focus: Iterable[str]) -> str:
+    """One row per focus class, in the order given, even with none labelled: how many corners of it are
+    labelled, found, given another name, and missed, and "read as": each other name with its count,
+    most often first, such as "6S 2, 9C 1" ("-" for none)."""
+    lines = [["class", "labelled", "found", "wrong", "missed", "read as"]]
+    for name in focus:
+        mine = [c for c in corners if c.label.name == name]
+        found = [c for c in mine if c.predicted is not None]
+        read_as = Counter(c.predicted for c in found if c.predicted != name)
+        wrong = sum(read_as.values())
+        listed = sorted(read_as.items(), key=lambda item: (-item[1], item[0]))
+        lines.append([name, str(len(mine)), str(len(found)), str(wrong), str(len(mine) - len(found)),
+                      ", ".join(f"{other} {count}" for other, count in listed) or "-"])
+    return _aligned(lines)
+
+
+def focus_arg(text: str) -> list[str]:
+    """--focus: comma-separated card names such as "AD,9S", in any case. Raises ArgumentTypeError for
+    a name not in deck.CLASSES."""
+    names = [name.strip().upper() for name in text.split(",") if name.strip()]
+    unknown = [name for name in names if name not in CLASSES]
+    if unknown:
+        raise argparse.ArgumentTypeError(f"not card names: {', '.join(unknown)} (names are like AD, 10H, BACK)")
+    return names
+
+
 def default_confusions_csv(model: str) -> Path:
     """confusions.csv in the model's run folder (the folder holding weights/), or beside the model."""
     folder = Path(model).parent
@@ -369,13 +399,15 @@ def default_confusions_csv(model: str) -> Path:
 
 
 def list_confusions(args: argparse.Namespace, detector: Callable[[np.ndarray], list[Detection]]):
-    """Read every validation photo once, print confusion_summary, and write the wrong-name rows to a CSV."""
+    """Read every validation photo once, print confusion_summary and then focus_table for args.focus,
+    and write the wrong-name rows to a CSV."""
     print(f"model {args.model} at imgsz {args.imgsz}, unchanged photos")
     corners = read_corners(val_samples(Path(args.data), args.limit), detector)
     if not corners:
         raise SystemExit(f"no labelled corners in the validation images of {args.data}")
     print(f"{len({c.image for c in corners})} images")
     print(confusion_summary(corners))
+    print("\nfocus cards:\n" + focus_table(corners, args.focus))
     path = Path(args.csv) if args.csv else default_confusions_csv(args.model)
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -406,6 +438,9 @@ def main():
     ap.add_argument("--csv", default=None, help="also write the rows to this CSV file")
     ap.add_argument("--confusions", action="store_true",
                     help="list every wrong-name box on the unchanged photos instead (CSV default: the run folder)")
+    ap.add_argument("--focus", type=focus_arg, default=list(settings.FOCUS_CLASSES),
+                    help="with --confusions: the cards the focus table covers, comma-separated, such as AD,9S "
+                         "(default: FOCUS_CLASSES in settings.py)")
     args = ap.parse_args()
     try:
         settings.validate(settings)

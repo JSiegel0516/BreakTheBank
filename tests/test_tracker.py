@@ -197,6 +197,53 @@ def test_face_down_card_far_away_is_a_new_card():
     assert [(e.kind, e.card.order) for e in ev] == [("placed", 3)]
 
 
+def test_removed_face_down_card_put_back_where_it_was_is_not_dealt_again():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
+    run(tr, [det("9S", 300, 100)], 10)                       # picked up: removed
+    assert [c.label for c in tr.round] == ["9S"] and tr.shoe_unrevealed == 1
+    ev = run(tr, [det("9S", 300, 100), det("BACK", 140, 120)], 3)  # put back within 3 match distances
+    assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("placed", 3, "BACK")]
+    assert tr.shoe_unrevealed == 1                           # the same card, not a second one dealt
+    run(tr, [det("9S", 300, 100), det("BACK", 140, 120), det("BACK", 150, 200)], 3)
+    assert tr.shoe_unrevealed == 2                           # another face-down card is dealt
+
+
+def test_two_removed_face_down_cards_put_back_each_find_their_own_spot():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    run(tr, [det("BACK", 100, 100), det("BACK", 200, 100), det("9S", 300, 300)], 3)
+    run(tr, [det("9S", 300, 300)], 10)                       # both picked up
+    assert tr.shoe_unrevealed == 2
+    # (155, 100) is in reach of both spots but nearer (200, 100); (70, 100) reaches only (100, 100)
+    run(tr, [det("9S", 300, 300), det("BACK", 155, 100), det("BACK", 70, 100)], 3)
+    assert [c.label for c in tr.table()] == ["9S", "BACK", "BACK"]
+    assert tr.shoe_unrevealed == 2
+
+
+def test_a_face_down_card_put_back_later_takes_over_a_spot_another_could_give_up():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    run(tr, [det("BACK", 100, 100), det("BACK", 160, 100), det("9S", 300, 300)], 3)
+    run(tr, [det("9S", 300, 300)], 10)                       # both picked up
+    run(tr, [det("9S", 300, 300), det("BACK", 128, 100)], 3)  # nearest (100, 100), in reach of (160, 100) too
+    assert tr.shoe_unrevealed == 2
+    run(tr, [det("9S", 300, 300), det("BACK", 128, 100), det("BACK", 50, 100)], 3)  # reaches (100, 100) only
+    assert tr.shoe_unrevealed == 2                           # the first moves over to (160, 100)
+    run(tr, [det("9S", 300, 300), det("BACK", 128, 100), det("BACK", 50, 100), det("BACK", 130, 130)], 3)
+    assert tr.shoe_unrevealed == 3                           # in reach of both spots, both taken: a new card
+
+
+def test_removed_face_down_card_far_away_or_in_a_later_round_is_a_new_card():
+    tr = CardTracker(confirm_frames=2, drop_frames=3, match_dist=20, round_end_frames=100, hidden_frames=2)
+    run(tr, [det("BACK", 100, 100), det("9S", 300, 100)], 3)
+    run(tr, [det("9S", 300, 100)], 10)
+    run(tr, [det("9S", 300, 100), det("BACK", 100, 300)], 3)    # 200 pixels away
+    assert tr.shoe_unrevealed == 2
+    run(tr, [det("9S", 300, 100)], 10)
+    tr.new_round()
+    run(tr, [det("BACK", 100, 300)], 3)                          # where one was removed, but a new round
+    assert tr.shoe_unrevealed == 3
+
+
 def test_round_ends_when_table_stays_empty():
     tr = CardTracker(confirm_frames=2, drop_frames=3, round_end_frames=10)
     run(tr, [det("KH", 50, 200), det("4S", 300, 200)], 3)
@@ -357,6 +404,31 @@ def test_cards_on_the_table_come_back_after_a_rescan_numbered_from_1_and_counted
     ev = run(tr, [det("6D", 300, 50), det("9C", 50, 50)], 1)
     assert [(e.kind, e.card.order, e.card.label) for e in ev] == [("placed", 1, "6D"), ("placed", 2, "9C")]
     assert tr.shoe_seen == ["6D", "9C"] and tr.shoe_unrevealed == 0
+
+
+def test_face_down_card_carried_into_the_round_is_not_dealt_again_after_a_rescan():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("BACK", 100, 100)], 3)
+    tr.new_round()                                       # key r while the card is still face down
+    run(tr, [det("BACK", 100, 100), det("5H", 300, 100), det("BACK", 300, 300)], 3)
+    assert tr.shoe_unrevealed == 2
+    tr.rescan()
+    assert tr.shoe_unrevealed == 1                       # back to the round's start: the carried card
+    run(tr, [det("BACK", 100, 100), det("5H", 300, 100), det("BACK", 300, 300)], 3)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "BACK"), (2, "5H"), (3, "BACK")]
+    assert tr.shoe_unrevealed == 2                       # the carried card once, this round's once
+    tr.rescan()
+    run(tr, [det("BACK", 100, 100)], 3)
+    assert tr.shoe_unrevealed == 1                       # still once after a second rescan
+
+
+def test_new_shoe_forgets_the_face_down_cards_carried_into_the_round():
+    tr = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20)
+    run(tr, [det("BACK", 100, 100)], 3)
+    tr.new_shoe()
+    tr.rescan()
+    run(tr, [det("BACK", 100, 100)], 3)
+    assert tr.shoe_unrevealed == 1                       # dealt from the new shoe
 
 
 def test_name_read_again_after_a_rescan_is_not_a_duplicate():
