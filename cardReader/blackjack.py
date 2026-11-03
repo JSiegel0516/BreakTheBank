@@ -31,6 +31,11 @@ those unseen cards, so it counts as a random draw from them. dealer_final_odds
 plays the dealer out, drawing without replacement until DEALER_STANDS_AT or bust;
 stand_odds compares a standing player hand with those finals. insurance says
 whether the 2-to-1 insurance bet pays on average against the unseen cards.
+
+After the round: last_card_odds, stood_odds, and dealer_final_chance say how likely
+a finished hand's result was. Each returns the cards in question to the unseen cards
+(a player's last card, or the dealer's cards after its up card) and reuses the odds
+above. Cards seen since then stay seen, so the figures are close, not a replay of the shoe.
 """
 from __future__ import annotations
 
@@ -359,10 +364,20 @@ def stand_odds(player_labels: list[str], dealer_labels: list[str], unseen: list[
     chances = _dealer_chances(dealer_labels, unseen)
     if chances is None:
         return None
+    stand = _stand_chances(player_labels, chances)
+    return {result: _percent(chance, 1) for result, chance in stand.items()}
+
+
+def _stand_chances(player_labels: list[str], chances: dict[str, Fraction]) -> dict[str, Fraction]:
+    """The exact chances a standing player hand wins, pushes, or loses against the dealer's finals
+    (_dealer_finals). A player blackjack beats every final but a dealer blackjack, which pushes."""
+    dealer_blackjack = chances.get("blackjack", Fraction(0))
+    if is_blackjack(player_labels):
+        return {"win": 1 - dealer_blackjack, "push": dealer_blackjack, "lose": Fraction(0)}
     player_total = hand_value(player_labels)[0]
     win = chances["bust"]
     push = Fraction(0)
-    lose = chances.get("blackjack", Fraction(0))
+    lose = dealer_blackjack
     for final in DEALER_FINALS[:-1]:
         dealer_total = int(final)
         if dealer_total < player_total:
@@ -371,7 +386,75 @@ def stand_odds(player_labels: list[str], dealer_labels: list[str], unseen: list[
             push += chances[final]
         else:
             lose += chances[final]
-    return {"win": _percent(win, 1), "push": _percent(push, 1), "lose": _percent(lose, 1)}
+    return {"win": win, "push": push, "lose": lose}
+
+
+def _hand_result(labels: list[str]) -> str:
+    """A complete hand's result as the odds name it: "blackjack", "bust", or its total, such as "19"."""
+    if is_blackjack(labels):
+        return "blackjack"
+    total = hand_value(labels)[0]
+    return "bust" if total > 21 else str(total)
+
+
+def last_card_odds(labels: list[str], dealer_labels: list[str], unseen: list[str]) -> dict | None:
+    """For a finished player hand, the chance, as a whole percentage, that its last card made its
+    result, e.g. {"result": "21", "chance": 8}. result is "blackjack", "bust", or the hand's total.
+
+    The hand without its last card draws one card from the unseen card labels plus that card.
+    A blackjack gives the two-card blackjack chance of an empty seat (player_odds) against the
+    unseen cards plus both of its cards. Cards seen since that card was dealt stay seen.
+    None for a hand without an outcome against dealer_labels (see outcome), or when nothing is unseen."""
+    if not unseen or outcome(labels, dealer_labels) is None:
+        return None
+    result = _hand_result(labels)
+    if result == "blackjack":
+        return {"result": result, "chance": player_odds([], dealer_labels, unseen + labels)["blackjack"]}
+    before, pool = labels[:-1], unseen + labels[-1:]
+    totals = [hand_value(before + [card])[0] for card in pool]
+    hits = sum(total > 21 for total in totals) if result == "bust" else totals.count(int(result))
+    return {"result": result, "chance": _percent(hits, len(pool))}
+
+
+def _replayed_dealer(dealer_labels: list[str], unseen: list[str]) -> dict[str, Fraction] | None:
+    """_dealer_finals for a finished dealer played out again from its up card, its first card in
+    placement order, over a hole card drawn from unseen plus the dealer's other cards. None while
+    the dealer is unfinished, when nothing is unseen, or when those cards can run out."""
+    if not unseen or not dealer_finished(dealer_labels):
+        return None
+    return _dealer_chances([dealer_labels[0], BACK], unseen + dealer_labels[1:])
+
+
+def stood_odds(player_labels: list[str], dealer_labels: list[str], unseen: list[str]) -> dict | None:
+    """For a player hand settled against a finished dealer, the chance, as a whole percentage, of
+    its result when it stood, e.g. {"result": "win", "chance": 42}.
+
+    The hand stands against the dealer's up card alone, as stand_odds does, with the hole card
+    and the dealer's later draws returned to the unseen card labels (see _replayed_dealer).
+    None unless outcome is "win", "push", or "lose", when nothing is unseen, or when the
+    returned cards could run out before the dealer finishes."""
+    result = outcome(player_labels, dealer_labels)
+    if result not in ("win", "push", "lose"):
+        return None
+    chances = _replayed_dealer(dealer_labels, unseen)
+    if chances is None:
+        return None
+    return {"result": result, "chance": _percent(_stand_chances(player_labels, chances)[result], 1)}
+
+
+def dealer_final_chance(labels: list[str], unseen: list[str]) -> dict | None:
+    """For a finished dealer, the chance, as a whole percentage, of the final it reached from its
+    up card, e.g. {"result": "19", "chance": 13}. result is "blackjack", "bust", or a total of 17 to 21;
+    "21" leaves blackjack out, as in dealer_final_odds.
+
+    The dealer is played out again from its up card with its other cards returned to the unseen card
+    labels (see _replayed_dealer). None while the dealer is unfinished, when nothing is unseen, or
+    when the returned cards could run out before the dealer finishes."""
+    chances = _replayed_dealer(labels, unseen)
+    if chances is None:
+        return None
+    result = _hand_result(labels)
+    return {"result": result, "chance": _percent(chances[result], 1)}
 
 
 def insurance(dealer_labels: list[str], unseen: list[str]) -> str | None:

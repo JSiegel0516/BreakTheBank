@@ -1,15 +1,16 @@
 import http.client
 import json
 import queue
+import re
 import urllib.error
 import urllib.request
 
 import numpy as np
 import pytest
 
-from cardReader.blackjack import _dealer_finals
+from cardReader.blackjack import _dealer_finals, dealer_final_chance, stood_odds
 from cardReader.cards import Detection
-from cardReader.hud import CUE_SEPARATOR, EDIT_HELP, KEY_LIST, Hud, count_cue
+from cardReader.hud import CUE_SEPARATOR, EDIT_HELP, KEY_LIST, DealtCards, Hud, count_cue
 from cardReader.reader import Reader
 from cardReader.seats import SeatLayout
 from cardReader.sidebar import server as server_module
@@ -82,7 +83,8 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert hands["P2"]["hint"] is None                                       # one card: no hint
     assert hands["P3"] == {"seat": "P3", "name": "P3", "part": None, "kind": "player", "cards": [], "total": "-",
                            "hint": None, "can_split": False, "outcome": None,
-                           "odds": {"blackjack": 5}, "stand": None, "insurance": None}  # 2 * 4/48 aces * 15/47 tens
+                           "odds": {"blackjack": 5}, "stand": None, "insurance": None,  # 2 * 4/48 aces * 15/47 tens
+                           "was": None}
     # 48 unseen: 16 needs a 5, 4, 3, or 2 (three 2s left) for 21 to 18; a 6 (two left), 7, 8, 9, or ten busts
     assert hands["P1"]["odds"] == {"21": 8, "20": 8, "19": 8, "18": 6, "bust": 60}
     assert hands["P2"]["odds"] == {"blackjack": 0}                           # a 2 cannot make a blackjack
@@ -200,6 +202,9 @@ def test_server_serves_the_page_and_streams_the_last_snapshot(server):
     assert "new EventSource(\"/events\")" in page
     with pytest.raises(urllib.error.HTTPError, match="404"):
         urllib.request.urlopen(server.url + "missing", timeout=5)
+    with urllib.request.urlopen(server.url + "Inter-Regular.woff2", timeout=5) as font:
+        assert font.headers.get_content_type() == "font/woff2"
+        assert font.read() == server_module.FONT.read_bytes() and server_module.FONT.read_bytes()[:4] == b"wOF2"
 
     snapshot = {"count": {"headline": "+1.0"}, "timing": {"fps": 12.0}}
     server.publish(snapshot)
@@ -374,12 +379,52 @@ def test_a_snapshot_plays_the_dealer_out_once_for_every_hand(tmp_path):
     assert 99 <= sum(hands["dealer"]["odds"].values()) <= 101
 
 
+def test_the_page_shows_a_finished_hand_how_likely_its_result_was_in_place_of_its_live_odds():
+    page = server_module.PAGE.read_text()
+    render_odds = page[page.index("function renderOdds(hand) {"):page.index("function renderDealerOdds(hand)")]
+    first_line = render_odds.splitlines()[1].strip()
+    assert first_line == "if (hand.was) return renderWas(hand.was);"     # before the live rows and the dealer's
+    assert "let tiles = statTile(was.result.toUpperCase(), was.chance);" in page
+    assert "if (was.stand) tiles += statTile(was.stand.result.toUpperCase(), was.stand.chance);" in page
+    assert '<div class="odds"><span class="group">Odds were</span>${tiles}</div>' in page
+
+
 def test_a_finished_dealer_has_no_finals_and_its_players_no_stand_row(tmp_path):
     reader = new_reader(tmp_path, 1)
     place(reader, ("KC", 0, -30), ("7D", 0, 30), ("9S", 1, -30), ("8H", 1, 30))
     hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
     assert hands["dealer"]["odds"] is None and hands["dealer"]["insurance"] is None
     assert hands["P1"]["outcome"] == "push" and hands["P1"]["stand"] is None
+
+
+def test_finished_hands_carry_how_likely_their_results_were(tmp_path):
+    reader = new_reader(tmp_path, 2)
+    place(reader, ("KC", 0, -30), ("7D", 0, 30), ("9S", 1, -30), ("8H", 1, 30), ("5C", 2, 0))
+    loose = [Detection("7C", 0.9, 5.0, 5.0)]                       # a corner of the frame, in no seat
+    frame = np.zeros((H, W, 3), np.uint8)
+    reader.process(frame, loose)
+    reader.process(frame, loose)
+    unseen = DealtCards.from_tracker(reader.tracker).unseen()
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    # P1 pushed with 17: 4 eights among the 46 unseen and its 8H; the stand figure replays the dealer from its KC
+    assert hands["P1"]["was"] == {"result": "17", "chance": 9,
+                                  "stand": stood_odds(["9S", "8H"], ["KC", "7D"], unseen)}
+    assert hands["P1"]["was"]["stand"]["result"] == "push"
+    assert hands["dealer"]["was"] == dealer_final_chance(["KC", "7D"], unseen)
+    assert hands["dealer"]["was"]["result"] == "17"
+    assert hands["P2"]["was"] is None and hands["P2"]["odds"] is not None   # one card: still playing
+    assert hands["OTHER"]["was"] is None
+    for hand in (hands["P1"], hands["dealer"]):
+        assert hand["odds"] is None and hand["stand"] is None and hand["insurance"] is None
+
+
+def test_a_hand_finished_before_the_dealer_has_no_stand_figure_yet(tmp_path):
+    reader = new_reader(tmp_path, 1)
+    place(reader, ("9C", 0, 0), ("KS", 1, -30), ("AH", 1, 30))
+    hands = {hand["seat"]: hand for hand in snapshot_of(reader)["hands"]}
+    # a blackjack over 49 unseen plus the KS and AH: 2 * 4/51 aces * 16/50 tens
+    assert hands["P1"]["was"] == {"result": "blackjack", "chance": 5, "stand": None}
+    assert hands["dealer"]["was"] is None
 
 
 def test_the_page_has_a_counting_system_dropdown_and_scales_the_row_shading():
@@ -397,9 +442,65 @@ def test_the_page_marks_hand_outcomes_and_holds_a_confetti_canvas():
     assert "outcome-${hand.outcome}" in page
     for cue in ["blackjack", "twenty-one", "win", "bust", "lose"]:
         assert f".outcome-{cue}" in page
-    assert 'const OUTCOME_TAG = { win: "win", push: "push", lose: "lost" };' in page
+    assert 'const OUTCOME_TAG = { win: "Win", push: "Push", lose: "Lost" };' in page
     assert '<span class="tag ${hand.outcome}">' in page
     assert ".hand.dealer.pulse" in page and ".hand.dealer.outcome-bust" in page
+
+
+def test_the_page_writes_labels_in_sentence_case_and_keeps_headings_and_tile_labels_uppercase():
+    page = server_module.PAGE.read_text()
+    for label in ["<span>Running</span>", "<span>Left</span>", "<span>Tens &amp; aces</span>", "<span>Aces</span>",
+                  'title="Split into two hands">Split</button>', 'title="Make one hand again">Join</button>',
+                  "Face down, never revealed: ${unrevealed}", '<div id="countBody">Waiting for read.py ...</div>',
+                  "Not connected: is read.py --web running?", "No signal: press C to reconnect",
+                  "<span>Model ${esc(modelName(snapshot.model))}</span>",
+                  "<span>Detect ${t.detect_ms.toFixed(1)} ms</span>",
+                  "<span>Prep ${esc(snapshot.preprocess)} ${t.preprocess_ms.toFixed(1)} ms</span>",
+                  "<span>Showing raw</span>", "${t.fps.toFixed(1)} fps", 'title="Click to rename"',
+                  '<span class="action">Deck${decks > 1 ? "s" : ""}</span>',
+                  "<span>Model</span>", "<span>Count</span>"]:
+        assert label in page
+    # labels the snapshot sends in lower case, and that the window shares, get a capital on the page
+    assert '<span class="action">${esc(sentence(entry.label))}</span>' in page
+    assert '<span class="cue">${esc(sentence(count.cue))}</span>' in page
+    assert "flash = sentence(message.text);" in page
+    assert "${esc(sentence(hand.total))}" in page                                       # "Soft 18"
+    assert "snapshot.edit_help.map((line) => esc(sentence(line)))" in page
+    for heading in ["TRUE COUNT \\u00b7 ${systemName(latest.count_system)}", "<h2>CARDS LEFT</h2>",
+                    '<h2 id="seatsTitle">HANDS</h2>', ">KEYS</button></h2>"]:
+        assert heading in page
+    assert 'statTile("BLACKJACK", hand.odds.blackjack)' in page and "<span class=\"group\">STAND</span>" in page
+    assert ".tag {" in page and "text-transform: uppercase; vertical-align" not in page   # tags keep their case
+
+
+def _colours(page: str) -> dict[str, str]:
+    root = page[page.index(":root {"):page.index("}", page.index(":root {"))]
+    return dict(re.findall(r"--([a-z-]+):\s*(#[0-9A-Fa-f]{6})", root))
+
+
+def _contrast(foreground: str, background: str) -> float:
+    def luminance(colour: str) -> float:
+        channels = [int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_the_page_uses_the_darker_greens_and_every_text_colour_stays_readable_on_a_section():
+    colours = _colours(server_module.PAGE.read_text())
+    assert (colours["panel"], colours["card"], colours["well"]) == ("#003F22", "#2A523E", "#002E19")
+    for text in ["text", "grey", "dim", "badge", "amber", "red", "green", "seat"]:
+        assert _contrast(colours[text], colours["card"]) >= 4.5, text
+
+
+def test_the_page_sets_its_text_in_the_bundled_inter_with_the_system_fonts_behind_it():
+    page = server_module.PAGE.read_text()
+    assert '@font-face {\n    font-family: "Inter";' in page
+    assert 'src: url("/Inter-Regular.woff2") format("woff2");' in page
+    assert 'body { font: 16px/1.3 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }' in page
+    assert "fonts.googleapis" not in page and "https://" not in page                  # works offline
+    assert server_module.FONT.name == "Inter-Regular.woff2" and server_module.FONT.with_name("Inter-OFL.txt").exists()
     assert 'matchMedia("(prefers-reduced-motion: reduce)")' in page
     assert "requestAnimationFrame(drawConfetti)" in page
 

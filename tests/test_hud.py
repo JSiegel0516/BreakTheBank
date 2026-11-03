@@ -22,6 +22,7 @@ from cardReader.hud import (
     DealtCards,
     Hud,
     count_cue,
+    seat_title,
     status_text,
     value_legend,
     value_shade,
@@ -406,7 +407,7 @@ def test_game_legend_lists_the_placement_number_only_when_show_order_is_on(monke
     assert "covered, still counted" in texts
 
 
-def test_game_view_shows_display_names_and_the_video_keeps_seat_ids(monkeypatch):
+def test_the_game_view_and_the_video_zone_labels_show_display_names(monkeypatch):
     W, H = 1280, 720
     texts = []
     put_text = cv2.putText
@@ -415,9 +416,103 @@ def test_game_view_shows_display_names_and_the_video_keeps_seat_ids(monkeypatch)
     hud.view = "game"
     hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(3, W, H), shoe_count([]),
              seat_names={"P1": "Ann", "dealer": "House"})
-    assert {"Ann", "House", "P2", "P3"} <= set(texts)
-    assert {"P1", "DEALER"} <= set(texts)                          # the zone labels on the video
-    assert texts.count("P2") == 2 and texts.count("Ann") == 1
+    for title in ("Ann", "House", "P2", "P3"):
+        assert texts.count(title) == 2                             # the Game view and the zone label
+    assert "P1" not in texts and "DEALER" not in texts
+    for W, H in ((1280, 720), (640, 360)):
+        texts.clear()
+        hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(5, W, H), shoe_count([]), sidebar=False)
+        assert texts[:6] == ["DEALER", "P1", "P2", "P3", "P4", "P5"]  # no names: the whole seat ids
+
+
+def _top_edge_midpoint(polygon: np.ndarray) -> tuple[float, float]:
+    ends = np.roll(polygon, -1, axis=0)
+    midpoints = (polygon + ends) / 2
+    return tuple(midpoints[np.argmin(midpoints[:, 1])])
+
+
+def _tilted_rectangle(cx, cy, half_w, half_h, degrees) -> np.ndarray:
+    angle = np.radians(degrees)
+    rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    corners = np.array([(-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)])
+    return (corners @ rotation.T + (cx, cy)).astype(np.int32)
+
+
+@pytest.mark.parametrize(("W", "H", "layout_of", "names"), [
+    (1280, 720, lambda W, H: SeatLayout(3, W, H), {"P1": "Ann", "dealer": "House"}),
+    (640, 360, lambda W, H: SeatLayout(5, W, H), {f"P{i}": "W" * 16 for i in range(1, 6)}),
+    (1280, 720, lambda W, H: SeatLayout(2, W, H, [SeatLayout(2, W, H).seats[0].polygon,
+                                                  _tilted_rectangle(300, 500, 120, 90, 25),
+                                                  _tilted_rectangle(900, 500, 120, 90, -30)]), {}),
+])
+def test_each_zone_label_is_centred_on_its_top_most_edge_inside_the_polygon(monkeypatch, W, H, layout_of, names):
+    layout = layout_of(W, H)
+    drawn = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText",
+                        lambda img, text, org, *a: drawn.append((text, org)) or put_text(img, text, org, *a))
+    hud = Hud()
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, layout, shoe_count([]), sidebar=False, seat_names=names)
+    labels = drawn[:len(layout.seats)]                              # the zone labels come first
+    for seat, (text, (x, y)) in zip(layout.seats, labels, strict=True):
+        title = seat_title(seat.name, names)
+        assert text == title or (text.endswith("..") and title.startswith(text[:-2]))
+        w, h, _ = hud._size(text, 0.6)
+        mid_x, _ = _top_edge_midpoint(seat.polygon.astype(float))
+        assert abs(x + w / 2 - mid_x) <= 1
+        half_pad = hud.pad // 2
+        panel = [(x - half_pad, y - h - half_pad), (x + w + half_pad, y - h - half_pad),
+                 (x + w + half_pad, y + half_pad), (x - half_pad, y + half_pad)]
+        contour = seat.polygon.reshape(-1, 1, 2)
+        assert all(cv2.pointPolygonTest(contour, (float(px), float(py)), False) >= 0 for px, py in panel)
+
+
+def test_a_zone_label_moves_below_a_notch_cut_into_a_concave_zone(monkeypatch):
+    W, H = 1600, 900                                                   # text scale 1, padding 10
+    dealer = SeatLayout(1, W, H).seats[0].polygon
+    notched = np.array([(100, 100), (300, 100), (300, 110), (190, 110), (190, 120), (300, 120),
+                        (300, 300), (100, 300)], np.int32)
+    drawn = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText",
+                        lambda img, text, org, *a: drawn.append((text, org)) or put_text(img, text, org, *a))
+    hud = Hud()
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, SeatLayout(1, W, H, [dealer, notched]), shoe_count([]),
+             sidebar=False, seat_names={"P1": "Ann"})
+    text, (x, y) = drawn[1]
+    assert text == "Ann"
+    w, h, _ = hud._size(text, 0.6)
+    half_pad = hud.pad // 2
+    contour = notched.reshape(-1, 1, 2)
+    panel_points = [(float(px), float(py)) for px in range(x - half_pad, x + w + half_pad + 1)
+                    for py in range(y - h - half_pad, y + half_pad + 1)]
+    assert all(cv2.pointPolygonTest(contour, point, False) >= 0 for point in panel_points)
+
+
+def test_a_zone_label_moves_down_where_the_zone_widens_and_is_left_out_where_nothing_fits(monkeypatch):
+    W, H = 1280, 720
+    dealer = SeatLayout(2, W, H).seats[0].polygon
+    narrow_top = np.array([(300, 400), (310, 400), (500, 600), (100, 600)], np.int32)
+    tiny = np.array([(900, 400), (904, 400), (902, 404)], np.int32)
+    layout = SeatLayout(2, W, H, [dealer, narrow_top, tiny])
+    drawn = []
+    put_text = cv2.putText
+    monkeypatch.setattr(cv2, "putText",
+                        lambda img, text, org, *a: drawn.append((text, org)) or put_text(img, text, org, *a))
+    hud = Hud()
+    hud.draw(np.zeros((H, W, 3), np.uint8), [], [], 30.0, layout, shoe_count([]), sidebar=False,
+             seat_names={"P1": "Ann", "P2": "Bo"})
+    texts = [text for text, _ in drawn]
+    assert texts[:2] == ["DEALER", "Ann"]
+    assert "Bo" not in texts and "B.." not in texts                     # the tiny zone has no label
+    _, (x, y) = drawn[1]
+    w, h, _ = hud._size("Ann", 0.6)
+    half_pad = hud.pad // 2
+    assert abs(x + w / 2 - 305) <= 1 and y - h - half_pad > 400 + hud.pad   # moved below the narrow edge
+    panel = [(x - half_pad, y - h - half_pad), (x + w + half_pad, y - h - half_pad),
+             (x + w + half_pad, y + half_pad), (x - half_pad, y + half_pad)]
+    contour = narrow_top.reshape(-1, 1, 2)
+    assert all(cv2.pointPolygonTest(contour, (float(px), float(py)), False) >= 0 for px, py in panel)
 
 
 @pytest.mark.parametrize(("W", "H", "name"), [(1280, 720, "Ann"), (640, 360, "W" * 16)])
@@ -433,7 +528,8 @@ def test_game_view_shows_a_split_seat_as_two_numbered_lines(monkeypatch, W, H, n
     splits = {"P1": (1, 2)}
     hud.draw(np.zeros((H, W, 3), np.uint8), [], cards, 30.0, layout, shoe_count(["8S", "8H"]),
              seat_names={"P1": name}, splits=splits)
-    titles = [text for text in texts if text.startswith(name[:2])]
+    sidebar_texts = texts[len(layout.seats):]                           # after the zone labels on the video
+    titles = [text for text in sidebar_texts if text.startswith(name[:2])]
     assert len(titles) == 2 and titles[0].endswith(" 1") and titles[1].endswith(" 2")   # a long name keeps its part
     assert splits == {"P1": (1, 2)}
     hud.draw(np.zeros((H, W, 3), np.uint8), [], cards[:1], 30.0, layout, shoe_count(["8S"]), splits=splits)

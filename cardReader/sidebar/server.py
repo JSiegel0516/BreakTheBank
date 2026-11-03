@@ -8,7 +8,9 @@
 
 Routes:
     GET /          page.html
-    GET /events    a Server-Sent Events stream: each event is one "data:" line of snapshot JSON
+    GET /Inter-Regular.woff2
+                   the page's font, bundled so the page needs no network
+    GET /events   a Server-Sent Events stream: each event is one "data:" line of snapshot JSON
     POST /action   a JSON object with an "action" name and optional string fields, such as
                    {"action": "new_round"} or {"action": "rename_seat", "seat": "P1", "name": "Ann"},
                    queues it for drain_actions; 204 when queued, 400 for any other body.
@@ -33,6 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PAGE = Path(__file__).with_name("page.html")
+FONT = Path(__file__).with_name("Inter-Regular.woff2")  # the page's typeface, SIL Open Font License (Inter-OFL.txt)
 HEARTBEAT_SECONDS = 0.5  # an unchanged snapshot is sent again this often
 KEEPALIVE_SECONDS = 1.0  # a stream with nothing to send writes a comment this often, to notice a closed page
 QUEUE_SIZE = 64          # events waiting per page, and actions waiting for the reader
@@ -116,7 +119,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 (the name http.server calls)
         path = self.path.split("?")[0]
         if path == "/":
-            self._page()
+            self._file(PAGE, "text/html; charset=utf-8")
+        elif path == f"/{FONT.name}":
+            self._file(FONT, "font/woff2")
         elif path == "/events":
             self._events()
         else:
@@ -154,10 +159,10 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # the terminal is kept for card events
 
-    def _page(self):
-        body = PAGE.read_bytes()
+    def _file(self, path: Path, content_type: str):
+        body = path.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

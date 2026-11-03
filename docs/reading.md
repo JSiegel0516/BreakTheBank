@@ -9,7 +9,7 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 
 | On screen | Meaning |
 |---|---|
-| Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`) |
+| Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`), each labelled with the seat's display name (`P1` or `DEALER` until renamed), centred just below the middle of the zone's top-most edge |
 | Sidebar, top | tabs naming the two views, `CARDS LEFT` and `GAME`: the current one is filled in yellow, and `[V]` beside them is the key that switches (see below) |
 | Sidebar, under the tabs | `TRUE COUNT` followed by the counting system's name (`Hi-Lo` unless [switched on the page](#browser-dashboard)), the true count in large type, beside it what the count means and whom it favours (`high cards left` over `favours player`, `low cards left` over `favours dealer`, or `even deck`), then the running count and cards left out of the shoe (`38/52`, or `90/104` with two decks) |
 | Sidebar, below | the Cards Left view or the Game view (see below) |
@@ -90,7 +90,7 @@ The bottom bar lists the main keys; the legend lists them all.
 | Key | Action | Page button |
 |---|---|---|
 | `1` to `5` | number of players; loads your saved layout for that count, or the template | yes, one per count |
-| `Shift+1` to `Shift+5` | split the pair of P1 to P5 into two hands, or join a split seat back into one (see [Split hands](#seats-hands-and-the-count)). On a US keyboard these send `!` `@` `#` `$` `%` | yes, `split` or `join` on the player's line under Hands |
+| `Shift+1` to `Shift+5` | split the pair of P1 to P5 into two hands, or join a split seat back into one (see [Split hands](#seats-hands-and-the-count)). On a US keyboard these send `!` `@` `#` `$` `%` | yes, `Split` or `Join` on the player's line under Hands |
 | `E` | edit zones with the mouse; press `E` again to save them and lock | no |
 | `V` | switch the sidebar between the Cards Left view and the Game view; the tabs and a message name the new one | no |
 | `L` | show or hide the legend and key list | no |
@@ -198,25 +198,35 @@ the video, its tags and zones, and the bottom bar. The reader prints
 page holds what the sidebar did, with real fonts, and reflows to fit the browser
 window without scrolling sideways. A wide window puts Cards Left on the left and
 True Count, Hands, and Keys on the right. Under 900 pixels wide the sections
-stack in one column: True Count, Hands, Cards Left, Keys. It is drawn on
+stack in one column: True Count, Hands, Cards Left, Keys.
+
+The page is set in Inter, a font under the SIL Open Font License. The reader's
+own server serves it (`cardReader/sidebar/Inter-Regular.woff2`, licence in
+`Inter-OFL.txt`), so the page needs no internet connection. Only the regular
+weight is bundled; the browser thickens it for bold text. Until it loads, or if
+it cannot, the system font shows. Section headings (`TRUE COUNT`, `HANDS`,
+`CARDS LEFT`, `KEYS`) and tile labels (`BLACKJACK`, `STAND`, `WIN`) are in
+capitals. Every other label and message starts with a capital and continues in
+lower case, such as `Running`, `New round`, and `Split`. The window keeps its
+own lower-case labels. The page is drawn on dark
 casino-felt greens, so its colours are paler than the window's: red text is
 pink, green text is mint, and the grid rows are tinted emerald above 0,
 grey-green at 0, and brown below, deeper for bigger values:
 
 | On the page | Meaning |
 |---|---|
-| True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`high cards left · favours player`, `low cards left · favours dealer`, or `even deck`), then the running count, cards left (`39/52`, or `90/104` with two decks), tens and aces left (`tens & aces 17/20`, out of 40 with two decks), and aces left (`aces 3/4`, out of 8 with two decks). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
+| True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`High cards left · favours player`, `Low cards left · favours dealer`, or `Even deck`), then the running count, cards left (`Left 39/52`, or `90/104` with two decks), tens and aces left (`Tens & aces 17/20`, out of 40 with two decks), and aces left (`Aces 3/4`, out of 8 with two decks). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
 | Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. With two or three decks a card with copies left is dimmed from the left by the share seen, and its hover text says so (`KH: 1 of 2 seen, locked`); the column on the right counts copies. Below it: the face-down cards never revealed |
-| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A row of tiles under a hand gives its odds from the unseen cards (see Odds row below) |
+| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `Split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `Join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A row of tiles under a hand gives its odds from the unseen cards (see Odds row below) |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | first a `model` dropdown and a `count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
-| Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `showing raw`, `no signal`, and the messages the window flashes (`new round`, `camera turned ...`) |
+| Keys | first a `Model` dropdown and a `Count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
+| Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `Showing raw`, `No signal`, and the messages the window flashes, with a capital first letter (`New round`, `Camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
 shorter than a frame still appears once. The reader sends the page an update
 only when something on it changed, plus one every half second so the frames
 per second stay current. If the reader stops, the status line says
-`not connected`, and the page catches up by itself once the reader is back.
+`Not connected`, and the page catches up by itself once the reader is back.
 
 **Buttons.** A button does exactly what its key does, with the same message on
 the page and in the window: new round, new shoe, players, reconnect, and so on.
@@ -230,9 +240,9 @@ quitting cannot be undone from the page. Zone editing (`E`) and saving frames
 **Outcome cues.** The Hands lines show how each hand stands. A player
 blackjack sets off confetti over the whole page for about 3.25 seconds, once
 per hand, and its line glows gold. A player 21, or a hand that beat the dealer,
-gets a gold outline and a gold total; a win also gets a `WIN` tag. A bust has a
-red total and a red glow. A hand that lost turns grey with a `LOST` tag, and a
-push gets a plain `PUSH` tag. The dealer's line pulses amber when the dealer
+gets a gold outline and a gold total; a win also gets a `Win` tag. A bust has a
+red total and a red glow. A hand that lost turns grey with a `Lost` tag, and a
+push gets a plain `Push` tag. The dealer's line pulses amber when the dealer
 has blackjack or 21, or when any player hand lost, and turns red when the
 dealer busts. Win, push, and lose wait until the dealer is finished: no card
 face down and a total of 17 or more, or bust. The dealer stands on soft 17. A
@@ -257,11 +267,17 @@ so they are exact too.
 | Player with one card | one tile, `BLACKJACK 31%`: the chance the second card makes a blackjack; 0% unless the card is an ace or a ten-value card |
 | Dealer with one card up and one face down | `BLACKJACK 31%`, the chance the hole card makes a blackjack (0% unless the up card is an ace or a ten-value card), then the dealer's final totals `21 5%`, `20 13%`, `19 13%`, `18 13%`, `17 13%`, and `BUST 12%`. Here `21` leaves blackjack out, so every tile is a separate outcome. With an ace up, an `INSURANCE` tile follows: `TAKE` when more than a third of the unseen cards are ten-value, else `SKIP`. Insurance pays 2 to 1, so a third is the break-even point |
 | Dealer still drawing with no face-down card | the six final-total tiles, `21` to `BUST`, without `BLACKJACK` or `INSURANCE` |
+| Finished player hand (bust, blackjack, 21, or a win, push, or loss) | a row headed `Odds were`. Its first tile, such as `21 8%` or `BUST 31%`, is the chance the last card made the hand's result: the hand without that card drawing from the unseen cards plus that card. The tile is the hand's total for a hand that stood. A blackjack shows `BLACKJACK 5%`, the empty seat's chance of a two-card blackjack with both its cards back among the unseen cards. Once the dealer has finished, a second tile, `WIN 42%`, `PUSH 6%`, or `LOSE 52%`, is the chance of that result when the hand stood: the `STAND` figure against the dealer's up card alone, with the hole card and the dealer's later cards back among the unseen cards |
+| Finished dealer | a row headed `Odds were` with one tile, such as `19 13%`, `BUST 31%`, or `BLACKJACK 5%`: the chance of the dealer's final from its up card alone, with its other cards back among the unseen cards. `21` leaves blackjack out, as above |
 
 Each tile is rounded to a whole percent on its own, so a row may sum to 99% or
-101%. There is no odds row for loose cards (OTHER), for a finished hand
+101%. The `Odds were` figures take the dealer's first card placed as its up card.
+Cards dealt to other seats since stay seen, so the figures are close rather than a
+replay of the shoe. There is no live odds row for loose cards (OTHER), for a finished hand
 (blackjack, 21, bust, or a win, push, or loss), for a hand with a face-down
-card, or for a dealer with no card face up or that has finished drawing. The
+card, or for a dealer with no card face up or that has finished drawing. Loose
+cards and hands still playing get no `Odds were` row, and neither does a finished
+hand when nothing is unseen. The
 dealer's tiles and every `STAND` row are also left out when so few cards are
 unseen that the dealer could run out before finishing, since the chances would
 then be incomplete. There is no `STAND` row for an empty seat or a one-card
@@ -282,26 +298,29 @@ Game view within a frame, with a message such as `P1 is now Ann`. Clear the
 field and press Enter to go back to `P1`. A name longer than 16 characters, or a
 seat not at the table, is refused with a message. Names are saved in
 `data/seats.json`, so they come back when the reader restarts, and they belong to
-the seat, whatever the player count. Only the page and the Game view use them:
-the zone labels on the video, the terminal, and the `--log` CSV keep the seat ids
+the seat, whatever the player count. The page, the Game view, and the zone
+labels on the video use them; the terminal and the `--log` CSV keep the seat ids
 (`P1`), so `evaluate.py` scores any run. In a small window the Game view
-shortens a long name to fit, ending it in `..`, so the cards keep their room. The
+shortens a long name to fit, ending it in `..`, so the cards keep their room. A
+zone label stays inside its zone: where the zone narrows towards its top edge, or
+an edited zone has a notch there, the label moves down, at most to the zone's middle, and a name that still crosses the
+outline is shortened the same way. A zone too small for any label shows none. The
 window draws letters outside plain ASCII (such as `é`) as `?`. OTHER cannot be renamed, and there is no renaming
 from the window. Both lines of a split seat rename the same seat.
 
-**Splitting a pair.** A `split` button appears on a player's line while it holds
+**Splitting a pair.** A `Split` button appears on a player's line while it holds
 exactly two face-up cards of equal value (a jack and a queen are a pair of tens).
 Clicking it does what `Shift+1` to `Shift+5` do in the window, with the same
-message; a split line's `join` button undoes it. The dealer and OTHER lines never
+message; a split line's `Join` button undoes it. The dealer and OTHER lines never
 have either button.
 
-**Switching models.** The `model` dropdown lists every trained run in `models/`
+**Switching models.** The `Model` dropdown lists every trained run in `models/`
 that has `weights/best.pt`, by folder name, with the live model first as
-`cards (live: <run>)`. The one running is selected, and the status line names it.
+`Cards (live: <run>)`. The one running is selected, and the status line names it.
 Choose another to try it without restarting: the status line says
-`loading <run> ...`, the video pauses while the model loads (a few seconds), then
-the terminal prints `model <run> on mps` (or `cuda`, `cpu`) and the page shows
-`model: <run>`. The cards on the table, their numbers, and the count are kept. In
+`Loading <run> ...`, the video pauses while the model loads (a few seconds), then
+the terminal prints `model <run> on mps` (or `cuda`, `cpu`) and the page's status
+line shows `Model <run>`. The cards on the table, their numbers, and the count are kept. In
 capture mode (no model at start-up) choosing a model starts detection. The model
 is loaded with the same `--imgsz`, `--conf`, and `--device` as at start-up, and
 the next start uses `--model` (or `MODEL_PATH`) again; promote a run with
@@ -310,7 +329,7 @@ appears after the next switch. A path outside `models/`, a run without weights,
 or a file that fails to load is refused with a message, and the model running
 stays.
 
-**Switching counting systems.** The `count` dropdown lists Hi-Lo, Hi-Opt II,
+**Switching counting systems.** The `Count` dropdown lists Hi-Lo, Hi-Opt II,
 and Uston APC (see [Counting systems](#seats-hands-and-the-count)). The reader starts on
 `COUNT_SYSTEM` in `settings.py`. Choose another and the reader recounts every
 card seen this shoe in it at once. The terminal prints
@@ -535,14 +554,14 @@ While editing, the detector runs on one frame in three (`EDIT_DETECT_EVERY` in
 then 1. Face-down cards are left out of the total and shown as `+1 hidden`.
 
 **Split hands.** A player holding a pair can split it into two hands with
-`Shift+1` to `Shift+5` (P1 to P5) or the page's `split` button. The seat must
+`Shift+1` to `Shift+5` (P1 to P5) or the page's `Split` button. The seat must
 hold exactly two cards, both face up and of equal value; anything else is refused
 with a message and nothing changes. The seat then shows two lines, its name
 followed by `1` and `2`; hand 1 starts from the card further left in the image.
 Every later card in the seat joins the hand whose first card lies nearest. Each
 hand has its own total and hint.
 
-- The same key or the `join` button makes one hand again.
+- The same key or the `Join` button makes one hand again.
 - `R`, `X`, `Shift+R`, a new player count, and the end of a round clear every split.
 - Taking either of the two first cards off the table makes the seat one hand again.
 - The terminal prints one line per split or join, such as
@@ -552,7 +571,7 @@ hand has its own total and hint.
 
 **Counting systems.** Every face card adds its value to the running count once
 per shoe. The reader starts on `COUNT_SYSTEM` in `settings.py` (`"hi_lo"`,
-`"hi_opt_ii"`, or `"uston_apc"`), and the page's `count` dropdown switches it
+`"hi_opt_ii"`, or `"uston_apc"`), and the page's `Count` dropdown switches it
 live. Each system sums to zero over a deck:
 
 | Cards | Hi-Lo | Hi-Opt II | Uston APC |

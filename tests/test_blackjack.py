@@ -2,6 +2,7 @@ import pytest
 
 from cardReader.blackjack import (
     COUNT_SYSTEMS,
+    dealer_final_chance,
     dealer_final_odds,
     dealer_finished,
     dealer_odds,
@@ -11,11 +12,13 @@ from cardReader.blackjack import (
     insurance,
     is_blackjack,
     is_pair,
+    last_card_odds,
     milestone,
     outcome,
     player_odds,
     shoe_count,
     stand_odds,
+    stood_odds,
 )
 from cardReader.seats import DEALER, MAX_PLAYERS, SeatLayout
 
@@ -307,6 +310,79 @@ def test_a_live_hand_gets_its_chances_if_it_stands_now(player, dealer, unseen, o
 ])
 def test_a_hand_that_cannot_stand_now_has_no_stand_odds(player, dealer):
     assert stand_odds(player, dealer, ["KC", "AH", "5D"]) is None
+
+
+@pytest.mark.parametrize(("player", "dealer", "unseen", "was"), [
+    # 15 before the 6D; pool KC 6C 2D 6D makes 25, 21, 17, 21
+    (["10S", "5H", "6D"], ["9C"], ["KC", "6C", "2D"], {"result": "21", "chance": 50}),
+    # 15 before the 9D; pool KC QC 2D 9D makes 25, 25, 17, 24
+    (["10S", "5H", "9D"], ["9C"], ["KC", "QC", "2D"], {"result": "bust", "chance": 75}),
+    # an empty seat over QC 5D 2H AS KH: 2 * 1/5 aces * 2/4 tens
+    (["AS", "KH"], ["9C"], ["QC", "5D", "2H"], {"result": "blackjack", "chance": 20}),
+    # a won 18: 10 before the 8H; pool 8C 5D KH 8H makes 18, 15, 20, 18
+    (["10S", "8H"], ["9C", "8D"], ["8C", "5D", "KH"], {"result": "18", "chance": 50}),
+    # a soft hand: soft 16 before the 5D; pool 5D 5C KH makes 21, 21, 16
+    (["AS", "5H", "5D"], ["9C"], ["5C", "KH"], {"result": "21", "chance": 67}),
+])
+def test_a_finished_hand_gets_the_chance_its_last_card_made_its_result(player, dealer, unseen, was):
+    assert last_card_odds(player, dealer, unseen) == was
+
+
+@pytest.mark.parametrize(("player", "dealer", "unseen"), [
+    (["10S", "8H"], ["9C"], ["KC"]),                           # still playing
+    (["10S", "BACK"], ["9C", "8D"], ["KC"]),                   # a card face down
+    (["10S"], ["9C", "8D"], ["KC"]),                           # one card
+    (["10S", "5H", "6D"], ["9C"], []),                         # nothing unseen
+])
+def test_an_unfinished_hand_or_nothing_unseen_has_no_last_card_odds(player, dealer, unseen):
+    assert last_card_odds(player, dealer, unseen) is None
+
+
+# The dealer 9C 8D replayed from its 9C over 8C 5D KH and its 8D: 17 for an 8 (1/2), 19 for the KH (1/4),
+# and a bust after the 5D (1/4), since any third card busts 14.
+@pytest.mark.parametrize(("player", "stood"), [
+    (["10S", "8H"], {"result": "win", "chance": 75}),          # a 17 or a bust
+    (["10S", "7H"], {"result": "push", "chance": 50}),         # a 17
+    (["10S", "6H"], {"result": "lose", "chance": 75}),         # a 17 or a 19
+])
+def test_a_settled_hand_gets_the_chance_of_its_result_from_the_dealers_up_card(player, stood):
+    assert stood_odds(player, ["9C", "8D"], ["8C", "5D", "KH"]) == stood
+
+
+def test_a_blackjack_pushed_by_the_dealers_blackjack_gets_the_chance_of_the_hole_card_completing_it():
+    # the dealer AD QC replayed from its AD over 5D JC 2H QC: a ten-value hole card is 2 in 4
+    assert stood_odds(["AS", "KH"], ["AD", "QC"], ["5D", "JC", "2H"]) == {"result": "push", "chance": 50}
+
+
+@pytest.mark.parametrize(("player", "dealer", "unseen"), [
+    (["10S", "8H"], ["9C"], ["8C", "5D", "KH"]),               # the dealer is still drawing
+    (["10S", "8H"], ["9C", "BACK"], ["8C", "5D", "KH"]),
+    (["10S", "5H", "9D"], ["9C", "8D"], ["8C", "5D", "KH"]),   # a bust is settled before the dealer plays
+    (["AS", "KH"], ["9C", "8D"], ["8C", "5D", "KH"]),          # a blackjack that was paid
+    (["10S", "8H"], ["9C", "8D"], []),                         # nothing unseen
+])
+def test_a_hand_not_settled_against_the_dealer_has_no_stood_odds(player, dealer, unseen):
+    assert stood_odds(player, dealer, unseen) is None
+
+
+@pytest.mark.parametrize(("dealer", "unseen", "final"), [
+    (["9C", "8D"], ["8C", "5D", "KH"], {"result": "17", "chance": 50}),          # as above
+    # replayed from the 9C over 8C 8D 5D KH: the 5D's 14 busts on any third card
+    (["9C", "5D", "KH"], ["8C", "8D"], {"result": "bust", "chance": 25}),
+    (["AS", "KH"], ["5D", "QC", "2H"], {"result": "blackjack", "chance": 50}),   # QC or KH under the ace
+])
+def test_a_finished_dealer_gets_the_chance_of_its_final_from_its_up_card(dealer, unseen, final):
+    assert dealer_final_chance(dealer, unseen) == final
+
+
+@pytest.mark.parametrize(("dealer", "unseen"), [
+    (["9C"], ["8C", "5D", "KH"]),                               # still drawing
+    (["9C", "BACK"], ["8C", "5D", "KH"]),
+    ([], ["8C", "5D", "KH"]),
+    (["9C", "8D"], []),                                         # nothing unseen
+])
+def test_an_unfinished_dealer_or_nothing_unseen_has_no_final_chance(dealer, unseen):
+    assert dealer_final_chance(dealer, unseen) is None
 
 
 @pytest.mark.parametrize(("unseen", "call"), [

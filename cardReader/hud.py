@@ -1,6 +1,10 @@
 """Draw the reader's overlay on top of the camera feed.
 
-    * seat outlines: the dealer strip and the player arc, with their names. In
+    * seat outlines: the dealer strip and the player arc, each labelled with its
+      display name (else its id), centred just below the midpoint of the zone's
+      top-most edge. It moves down where the zone narrows towards that edge,
+      is shortened with ".." when it still crosses the outline, and is left
+      out of a zone too small for any of it. In
       edit mode (key E) every corner gets a white handle, every edge a '+' to add
       a corner, the zone last clicked is tinted, and the bottom of the sidebar
       explains the mouse controls.
@@ -306,8 +310,8 @@ class Hud:
         preprocess, showing_raw: the preprocess mode, and whether `frame` is the raw camera
         frame rather than the preprocessed one; both are named in the bottom bar.
         sidebar: False returns the video with its overlay and bottom bar only, as wide as the frame.
-        seat_names: display names by seat id (Reader.seat_names) for the Game view; the zone
-        labels on the video keep the seat ids.
+        seat_names: display names by seat id (Reader.seat_names) for the Game view and the zone
+        labels on the video; a seat without one shows its id (DEALER for the dealer).
         splits: the split seats (Reader.table.splits), each shown as two hands in the Game view.
         A split whose seed card has left its seat is dropped from it, as Table.hands does."""
         view = frame.copy()
@@ -318,7 +322,7 @@ class Hud:
         self.r = round(15 * self.s)
 
         editing = editor is not None and editor.active
-        self._seat_outlines(view, layout, editor if editing else None)
+        self._seat_outlines(view, layout, editor if editing else None, seat_names or {})
         bound = bound or []
         for i, det in enumerate(dets):
             card = bound[i] if i < len(bound) else None
@@ -369,13 +373,17 @@ class Hud:
 
     def _fit(self, text: str, max_w: int, scale) -> str:
         """text, or as much of it as fits in max_w pixels followed by "..", keeping at least one character."""
-        if self._size(text, scale)[0] <= max_w:
-            return text
-        for end in range(len(text) - 1, 0, -1):
-            shortened = text[:end].rstrip() + ".."
-            if self._size(shortened, scale)[0] <= max_w:
-                return shortened
+        for cut in self._cuts(text):
+            if self._size(cut, scale)[0] <= max_w:
+                return cut
         return text[:1] + ".."
+
+    @staticmethod
+    def _cuts(text: str):
+        """text, then ever shorter cuts of it ending in "..", down to its first character."""
+        yield text
+        for end in range(len(text) - 1, 0, -1):
+            yield text[:end].rstrip() + ".."
 
     def _panel(self, img, x1, y1, x2, y2, alpha=0.7, colour=PANEL):
         H, W = img.shape[:2]
@@ -416,7 +424,9 @@ class Hud:
         w = self._name(img, card.label, x + 2 * self.r + self.pad // 2, cy, 0.8, colour)
         return 2 * self.r + self.pad // 2 + w
 
-    def _seat_outlines(self, img, layout: SeatLayout, editor: ZoneEditor | None):
+    def _seat_outlines(self, img, layout: SeatLayout, editor: ZoneEditor | None, names: dict[str, str]):
+        """Each zone's outline and its display name (from names, else its id), the name centred
+        under the midpoint of the zone's top-most edge."""
         for i, seat in enumerate(layout.seats):
             colour = AMBER if seat.name == DEALER else SEAT_LINE
             if editor is not None and editor.selected == i:
@@ -426,12 +436,7 @@ class Hud:
                 colour = BADGE
             line = self.thick if editor is not None else max(1, self.thick // 2)
             cv2.polylines(img, [seat.polygon], True, colour, line, cv2.LINE_AA)
-            title = seat_title(seat.name)
-            w, h, _ = self._size(title, 0.6)
-            top = seat.polygon[np.argmin(seat.polygon[:, 1])]
-            x, y = top[0] - w // 2, top[1] + h + self.pad
-            self._panel(img, x - self.pad // 2, y - h - self.pad // 2, x + w + self.pad // 2, y + self.pad // 2, 0.6)
-            self._text(img, title, (x, y), 0.6, colour)
+            self._zone_label(img, seat.polygon, seat_title(seat.name, names), colour)
         if editor is None:
             return
         r = max(6, editor.handle_radius() // 2)  # drawn smaller than the grab area
@@ -444,6 +449,49 @@ class Hud:
             for cx, cy in seat.polygon:  # corners: drag to move, right-click to remove
                 cv2.circle(img, (int(cx), int(cy)), r, (0, 0, 0), -1, cv2.LINE_AA)
                 cv2.circle(img, (int(cx), int(cy)), r - 2, WHITE, -1, cv2.LINE_AA)
+
+    def _zone_label(self, img, polygon: np.ndarray, title: str, colour):
+        """title on a dark panel, centred on the midpoint of the polygon's top-most edge (the edge
+        whose midpoint is highest) and just below it, low enough to clear a tilted edge. Where the
+        outline cuts into the panel (sides closing in, or a notch in an edited zone), the panel
+        moves down, its top at most to the zone's middle height; a title
+        that fits nowhere there is shortened and ends in "..". Nothing is drawn when no cut fits."""
+        starts = polygon.astype(float)
+        ends = np.roll(starts, -1, axis=0)
+        midpoints = (starts + ends) / 2
+        top = int(np.argmin(midpoints[:, 1]))
+        (ax, ay), (bx, by), (mid_x, mid_y) = starts[top], ends[top], midpoints[top]
+        slope = abs(by - ay) / abs(bx - ax) if bx != ax else 0.0
+        lowest_top = (starts[:, 1].min() + starts[:, 1].max()) / 2
+        half_pad = self.pad // 2
+        for cut in self._cuts(title):
+            w, h, _ = self._size(cut, 0.6)
+            x = round(mid_x - w / 2)
+            # start below where the tilted edge crosses the panel's left or right side
+            panel_top = mid_y + slope * (w / 2 + half_pad) + half_pad
+            while True:
+                y = round(panel_top + h + half_pad)
+                panel = (x - half_pad, y - h - half_pad, x + w + half_pad, y + half_pad)
+                if self._inside(polygon, panel):
+                    self._panel(img, *panel, 0.6)
+                    self._text(img, cut, (x, y), 0.6, colour)
+                    return
+                panel_top += self.pad
+                if panel_top > lowest_top:
+                    break
+
+    @staticmethod
+    def _inside(polygon: np.ndarray, rect: tuple) -> bool:
+        """Whether the whole of rect (x1, y1, x2, y2) lies inside or on the polygon, a concave one
+        included: its corners pass the exact point test and every pixel it covers is filled."""
+        x1, y1, x2, y2 = rect
+        contour = polygon.reshape(-1, 1, 2)
+        corners = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+        if not all(cv2.pointPolygonTest(contour, (float(cx), float(cy)), False) >= 0 for cx, cy in corners):
+            return False
+        mask = np.zeros((y2 - y1 + 1, x2 - x1 + 1), np.uint8)
+        cv2.fillPoly(mask, [(polygon - (x1, y1)).astype(np.int32)], 1)
+        return bool(mask.all())
 
     def _bar_height(self) -> int:
         _, kh, base = self._size(KEYS, 0.5)

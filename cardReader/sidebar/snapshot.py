@@ -6,6 +6,7 @@ a window, or a server. Every value is a JSON type. "timing" changes on almost ev
 frame, so the server leaves it out when deciding whether anything changed.
 Each hand carries the figures for its odds tiles (see _hand): the next card's odds and the
 stand odds for a player hand, and the dealer's final totals and an insurance call for the dealer.
+A finished hand carries instead how likely its result was ("was").
 
 A page button posts its action name; read.py presses ACTION_KEYS[name] for it, so a
 button does exactly what its key does. Renaming a seat posts "rename_seat" with the
@@ -26,13 +27,16 @@ from ..blackjack import (
     CARDS_PER_DECK,
     COUNT_SYSTEMS,
     CountSystem,
+    dealer_final_chance,
     dealer_final_odds,
     insurance,
     is_pair,
+    last_card_odds,
     milestone,
     outcome,
     player_odds,
     stand_odds,
+    stood_odds,
 )
 from ..deck import SUITS
 from ..hud import EDIT_HELP, GRID_RANKS, HIGH_RANKS, KEY_LIST, DealtCards, count_cue, seat_title
@@ -160,7 +164,12 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: l
     stand: blackjack.stand_odds for a player hand, {"win", "push", "lose"} if it stands now, else None.
     insurance: blackjack.insurance for the dealer, "take" or "skip" while an ace shows over a
     face-down card, else None. The dealer's finals are cached in blackjack, so the dealer's
-    odds and every player's stand share one computation per frame."""
+    odds and every player's stand share one computation per frame.
+    was: how likely a finished hand's result was, for the page's "Odds were" row. A player:
+    blackjack.last_card_odds with a "stand" entry, blackjack.stood_odds or None, such as
+    {"result": "21", "chance": 8, "stand": {"result": "win", "chance": 42}}. The dealer:
+    blackjack.dealer_final_chance, such as {"result": "19", "chance": 13}. None for OTHER, for
+    an unfinished hand, and when nothing is unseen."""
     kind = {DEALER: "dealer", OTHER: "other"}.get(hand.seat, "player")
     cards = [{"order": card.order, "label": card.label, "hidden": card.hidden} for card in hand.cards]
     unsplit = hand.part is None
@@ -177,6 +186,7 @@ def _hand(hand: Hand, dealer_labels: list[str], names: dict[str, str], unseen: l
         "odds": _odds(kind, hand.labels, dealer_labels, unseen),
         "stand": stand_odds(hand.labels, dealer_labels, unseen) if kind == "player" else None,
         "insurance": insurance(hand.labels, unseen) if kind == "dealer" else None,
+        "was": _was(kind, hand.labels, dealer_labels, unseen),
     }
 
 
@@ -194,3 +204,14 @@ def _odds(kind: str, labels: list[str], dealer_labels: list[str], unseen: list[s
     if kind == "dealer":
         return dealer_final_odds(labels, unseen)
     return None
+
+
+def _was(kind: str, labels: list[str], dealer_labels: list[str], unseen: list[str]) -> dict | None:
+    if kind == "dealer":
+        return dealer_final_chance(labels, unseen)
+    if kind != "player":
+        return None
+    last_card = last_card_odds(labels, dealer_labels, unseen)
+    if last_card is None:
+        return None
+    return last_card | {"stand": stood_odds(labels, dealer_labels, unseen)}
