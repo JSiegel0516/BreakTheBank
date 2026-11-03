@@ -24,7 +24,8 @@ the Game view, each seat's hand.
 
 With --web the window shows the video and the bottom bar only, and a page served
 on WEB_PORT in settings.py (cardReader/sidebar/) shows the count, the Cards Left
-grid, every seat's hand with a basic strategy hint and a row of odds from the
+grid, every seat's hand with a tip (tips.py: the play the unseen cards favour,
+or a bet tip on an empty seat) and a row of odds from the
 unseen cards (blackjack.player_odds, dealer_odds), the keys, and the status. It
 updates as the reader runs. Most keys also have a button on the page (all but E, V,
 L, and S; Shift+1-5 has its buttons on the hands), which does exactly what the key
@@ -47,7 +48,7 @@ cards already seen; there is no key for it.
 
 A player holding a pair can split it: the split button on the page's hand, or
 Shift+1-5 in the window for P1-P5. The seat then shows two hands, its name followed
-by 1 and 2, each with its own total and hint; a later card joins the hand whose
+by 1 and 2, each with its own total and tip; a later card joins the hand whose
 first card lies nearest. The join button, or the same key again, makes one hand.
 r, x, Shift+R, a player count change, and the end of a round clear every split.
 The terminal and --log keep the seat id.
@@ -492,7 +493,7 @@ def main():
             count = reader.count
             print("counted this shoe:", " ".join(tracker.shoe_seen) or "-")
             print(f"{COUNT_SYSTEMS[count.system].name} running count {count.running:+d}, "
-                  f"true count {count.true:+.1f}, {count.cards_left} cards left")
+                  f"true count {count.true:+.1f}, {reader.cards_left_text()}")
             print(f"average time per frame: {timer.summary()}")
             run_seconds = time.perf_counter() - run_start
             note = fps_note(frames_processed / run_seconds, settings.FPS) if frames_processed else ""

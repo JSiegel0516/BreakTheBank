@@ -11,7 +11,7 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 |---|---|
 | Seat outlines | the dealer strip at the top and the player seats on an arc below it (`cardReader/seats.py`), each labelled with the seat's display name (`P1` or `DEALER` until renamed), centred just below the middle of the zone's top-most edge |
 | Sidebar, top | tabs naming the two views, `CARDS LEFT` and `GAME`: the current one is filled in yellow, and `[V]` beside them is the key that switches (see below) |
-| Sidebar, under the tabs | `TRUE COUNT` followed by the counting system's name (`Hi-Lo` unless [switched on the page](#browser-dashboard)), the true count in large type, beside it what the count means and whom it favours (`high cards left` over `favours player`, `low cards left` over `favours dealer`, or `even deck`), then the running count and cards left out of the shoe (`38/52`, or `90/104` with two decks) |
+| Sidebar, under the tabs | `TRUE COUNT` followed by the counting system's name (`Hi-Lo` unless [switched on the page](#browser-dashboard)), the true count in large type, beside it what the count means and whom it favours (`high cards left` over `favours player`, `low cards left` over `favours dealer`, or `even deck`), then the running count and cards left out of the shoe (`38/52`, or `90/104` with two decks), the same figure as the page (see [Cards left](#seats-hands-and-the-count)), followed in grey by the face-down cards never revealed (`99/104 2 face down`) when there are any. On a video narrower than about 960 pixels the note moves to a line of its own under `left` |
 | Sidebar, below | the Cards Left view or the Game view (see below) |
 | Name on a card | that card's name: the rank followed by the suit's shape (`BACK` for a face-down card). `N` adds its placement number in a yellow badge before the name |
 | Grey name | a hidden card: covered right now, but still in its hand until it is removed (see [Rules the tracker assumes](#rules-the-tracker-assumes)), and in the count |
@@ -165,8 +165,9 @@ out of the count, then reads the cards on the table again, numbered from 1.
 Names counted in earlier rounds stay counted. Pressing `R` instead locks the
 wrong name into the count. A rescan cannot undo a round that has already ended,
 whether by `R` or by clearing the table. A card left on the table from an
-earlier round is placed again after a rescan, so it shows as a `duplicate`
-(face up) or is taken off cards left a second time (face down).
+earlier round is placed again after a rescan. Face up, it shows as a
+`duplicate`. Face down, it is not added to the face-down count again, as long
+as it lies near where it was when the round began.
 
 - `--source 0` picks the camera. With an iPhone as a Continuity Camera, OpenCV
   usually numbers it 0 and the built-in camera 1; try the other number if the
@@ -215,9 +216,9 @@ grey-green at 0, and brown below, deeper for bigger values:
 
 | On the page | Meaning |
 |---|---|
-| True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`High cards left · favours player`, `Low cards left · favours dealer`, or `Even deck`), then the running count, cards left (`Left 39/52`, or `90/104` with two decks), tens and aces left (`Tens & aces 17/20`, out of 40 with two decks), and aces left (`Aces 3/4`, out of 8 with two decks). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
+| True count | the title names the counting system (`TRUE COUNT · Hi-Lo`); below it the true count in large type with what it means and whom it favours (`High cards left · favours player`, `Low cards left · favours dealer`, or `Even deck`), then the running count, cards left (`Left 39/52`, or `90/104` with two decks), tens and aces left (`Tens & aces 17/20`, out of 40 with two decks), and aces left (`Aces 3/4`, out of 8 with two decks). Labels are grey; values are bold, and the three fractions stack the count over a thin line over the total. Cards left is the sum of the Cards Left grid's right-hand column, and while face-down cards are still unrevealed a light grey note follows it (`Left 99/104 · 2 face down`). Tens and aces are 10, J, Q, K, and A; both figures match the Cards Left grid |
 | Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. With two or three decks a card with copies left is dimmed from the left by the share seen, and its hover text says so (`KH: 1 of 2 seen, locked`); the column on the right counts copies. Below it: the face-down cards never revealed |
-| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat the [basic strategy hint](#basic-strategy-hints). A covered card is greyed out. A player holding a pair has a `Split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `Join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A row of tiles under a hand gives its odds from the unseen cards (see Odds row below) |
+| Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat a [tip](#tips): the play the unseen cards favour, how strongly, and its lead in hundredths of a bet, or a bet tip on an empty seat. A covered card is greyed out. A player holding a pair has a `Split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `Join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A row of tiles under a hand gives its odds from the unseen cards (see Odds row below) |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
 | Keys | first a `Model` dropdown and a `Count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `Showing raw`, `No signal`, and the messages the window flashes, with a capital first letter (`New round`, `Camera turned ...`) |
@@ -372,7 +373,8 @@ also start a new shoe or quit the reader.
 The reader starts with `DECKS` decks in the shoe, from `settings.py`: 1, 2, or
 3. The browser page's decks button, at the end of the table row of the Keys
 section, shows the current number and cycles 1, 2, 3, 1 on each click. The
-terminal prints `--- 2 decks: running count +1, 103 cards left ---`, and both
+terminal prints `--- 2 decks: running count +1, 103 cards left ---` (with
+`, 2 face down` before the dashes while face-down cards are unrevealed), and both
 the page and the window flash `2 decks`. The window has no key for it.
 
 Changing the number recounts the cards already seen against the new shoe.
@@ -559,7 +561,7 @@ hold exactly two cards, both face up and of equal value; anything else is refuse
 with a message and nothing changes. The seat then shows two lines, its name
 followed by `1` and `2`; hand 1 starts from the card further left in the image.
 Every later card in the seat joins the hand whose first card lies nearest. Each
-hand has its own total and hint.
+hand has its own total and [tip](#tips).
 
 - The same key or the `Join` button makes one hand again.
 - `R`, `X`, `Shift+R`, a new player count, and the end of a round clear every split.
@@ -598,29 +600,87 @@ which favours the player. A negative one means low cards are left, which
 favours the dealer.
 
 - **Cards left** is 52 per deck in the shoe (see [Decks in the shoe](#decks-in-the-shoe))
-  minus the face cards seen, minus the face-down cards that were dealt and never
-  turned up (swept away face down, for example). Those are gone from the shoe,
-  but nobody saw them, so they do not change the running count.
+  minus the face cards seen: the unseen copies, one per card per deck. It is
+  the same figure everywhere: the page's `Left`, the sum of the Cards Left
+  grid's right-hand column, the window's count line, the terminal, and the pool
+  the odds draw from. Face-down cards that were dealt and never turned up (swept
+  away face down, for example) stay in it, since any of them could be any unseen
+  card; the page, the window, and the terminal name them beside it
+  (`Left 99/104 · 2 face down`). They do not change the running count.
+- **The true count's decks left** leaves those face-down cards out: they are gone
+  from the shoe. With 99 unseen and 2 face down, it divides by 97 cards.
 - Face-down cards are counted when they are turned up, and then stop being
   "never turned up". A face-down card still on the table when you press `R`
-  (new round, lowercase r) gets a new number, but is not taken off cards left a
-  second time. `Shift+R` (new shoe) resets all of this.
+  (new round, lowercase r) gets a new number, but is not counted as face down a
+  second time. Nor is one picked up and put back near where it was in the same
+  round (see Hidden too long below), or one that was on the table as the round
+  began and is read again after `X` (rescan). `Shift+R` (new shoe) resets all of this.
 - **Decks left never drops below a quarter deck** (13 cards, which is half a
   half-deck for Uston APC). Near the end of the deck, dividing by a sliver of a
   deck would make the true count huge: in Hi-Lo, with one card left and a
   running count of -1 it reads -4, not -52.
 
-### Basic strategy hints
+### Tips
 
-`cardReader/strategy.py` suggests a play for each player hand against the
-dealer's up card: `hit`, `stand`, `double` or `split`. The
-[browser dashboard](#browser-dashboard) shows it at the end of each player seat's line. The up card is the
-dealer's first face-up card. There is no hint when the hand has a face-down
-card, fewer than two cards, is bust or is a blackjack, or when the dealer has no
-face-up card. After a split each hand gets its own hint. Resplitting is not
-allowed, so a split hand never shows `split`: a second pair is played as its hard
-or soft total (8, 8 is hard 16, A, A is soft 12, always hit). Split aces get the
-ordinary tables, with no stop after one card.
+The [browser dashboard](#browser-dashboard) ends each player seat's line with a
+tip, a coloured pill: amber for hit, green for stand, blue for double, purple
+for split. The window shows no tips.
+
+**Plays.** `cardReader/tips.py` works out what each play is worth on average,
+in bets, against the unseen cards (the same cards the odds use):
+
+- **Stand**: the chance to win minus the chance to lose against the dealer's
+  finals, played out from the dealer's cards.
+- **Hit**: one card drawn from the unseen cards, then the better of standing
+  and hitting again; a bust loses the bet. The dealer's finals are not worked
+  out again for the cards the player draws, which keeps it quick.
+- **Double**: twice the value of one card, then standing. Two cards only.
+
+A dealer with a card face down has checked for blackjack before you play, so the
+values leave a dealer blackjack out. The tip is the play worth most. How far it is
+ahead of the next best play sets its tone:
+
+| Lead over the next best play | Pill | Example |
+|---|---|---|
+| 0.10 of a bet or more | firm: filled, bold capitals, a full stop | `STAND.` |
+| 0.03 to 0.10 | normal: filled, sentence case | `Hit` |
+| under 0.03 | close: outlined in the play's colour | `Close: hit` |
+
+The small number beside the pill is that lead in hundredths of a bet (`+12`).
+Hovering over the pill gives it in words: `stand +0.12 over hit, against 99
+unseen cards`.
+
+**Split and the fallback.** Splitting has no value here. When basic strategy
+(below) says split, the tip is `Split`, normal, with no number. When the unseen
+cards cannot play the dealer out (near the end of the shoe), the tip is the basic
+strategy play, normal, with no number; its hover says so.
+
+There is no tip when the hand has a face-down card, fewer than two cards, is bust
+or is a blackjack, or when the dealer has no face-up card. The dealer's line and
+loose cards (OTHER) never get one. After a split each hand gets its own tip.
+Resplitting is not allowed, so a split hand never shows `split`.
+
+**Bet tips.** An empty player seat shows a bet tip from the true count, before
+the deal:
+
+| Counting system | `Bet more` (green) at or above | `Bet less` (red) at or below |
+|---|---|---|
+| Hi-Lo | +2 | -1 |
+| Hi-Opt II | +4 | -2 |
+| Uston APC (per half-deck) | +3 | -2 |
+
+At double either threshold the tip is firm: `BET MORE.` or `BET LESS.`.
+Between them it reads `Bet flat` (grey). The thresholds are starting values,
+kept as `bet_more_at` and `bet_less_at` on each system in `cardReader/blackjack.py`.
+
+### Basic strategy
+
+`cardReader/strategy.py` gives the basic strategy play for a player hand against
+the dealer's up card: `hit`, `stand`, `double` or `split`. Tips use it for
+splits and as the fallback. The up card is the dealer's first face-up card. A
+split hand's second pair is played as its hard or soft total (8, 8 is hard 16,
+A, A is soft 12, always hit). Split aces get the ordinary tables, with no stop
+after one card.
 
 The table is the common multi-deck one, with these rules:
 
@@ -708,7 +768,9 @@ doubles in single deck.
   leaves the round and its hand, and prints as `removed`, but stays in the count.
   Its number is never given to another card. If it comes back later it is placed
   under a new number and is not counted again. A face-down card that comes back
-  this way is taken off cards left a second time. `HIDDEN_SECONDS = 0` removes a
+  this way in the same round, within three `MATCH_DISTANCE`s of where it was, is
+  not counted as face down a second time; farther away, or in a later round, it is
+  another face-down card. `HIDDEN_SECONDS = 0` removes a
   card as soon as it is hidden.
 - **The round ends when the table is cleared.** If no card is visible for
   `ROUND_END_SECONDS` (3 s, 37 frames), the round is over and numbering

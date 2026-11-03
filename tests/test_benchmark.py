@@ -1,4 +1,7 @@
 """benchmark.py: scoring, the level x mode loop, and the confusion listing, with the detector faked."""
+import argparse
+import csv
+from argparse import Namespace
 from pathlib import Path
 
 import cv2
@@ -7,12 +10,16 @@ import pytest
 
 import settings
 from benchmark import (
+    CONFUSION_COLUMNS,
     Corner,
     Label,
     Tally,
     aspect_bucket,
     confusion_summary,
     default_confusions_csv,
+    focus_arg,
+    focus_table,
+    list_confusions,
     parse_level,
     rank_swaps,
     read_corners,
@@ -188,6 +195,51 @@ def test_summary_gives_totals_swaps_and_wrong_name_rates_by_aspect_and_width():
     assert lines["narrow"][0] == "20-20"                                    # widths 20 20 | 30 30 | 40 60
     assert lines["narrow"][1:] == ["2", "2", "1", "50.0%", "0"]
     assert lines["wide"][0] == "40-60"
+
+
+def test_focus_table_gives_each_focus_card_its_counts_and_what_it_was_read_as():
+    corners = [corner("AD", "AD"), corner("AD", "AH"), corner("AD", None),
+               corner("9S", "6S"), corner("9S", "9C"), corner("9S", "6S"), corner("KH", "QH")]
+    lines = [line.split() for line in focus_table(corners, ["AD", "9S", "4C"]).splitlines()]
+    assert lines[0] == ["class", "labelled", "found", "wrong", "missed", "read", "as"]
+    assert lines[1] == ["AD", "3", "2", "1", "1", "AH", "1"]
+    assert lines[2] == ["9S", "3", "3", "3", "0", "6S", "2,", "9C", "1"]   # most often first
+    assert lines[3] == ["4C", "0", "0", "0", "0", "-"]                      # a row even with none labelled
+    assert len(lines) == 4                                                   # KH is not a focus card
+
+
+def labelled_val_set(root):
+    """A realVal.yaml listing two 200 x 100 photos: a.jpg with an AD and a 9S corner, b.jpg with a 9S."""
+    (root / "images" / "val").mkdir(parents=True)
+    (root / "labels" / "val").mkdir(parents=True)
+    for name in ("a", "b"):
+        cv2.imwrite(str(root / "images" / "val" / f"{name}.jpg"), np.zeros((100, 200, 3), np.uint8))
+    (root / "labels" / "val" / "a.txt").write_text("0 0.25 0.5 0.1 0.2\n1 0.75 0.5 0.1 0.2\n")
+    (root / "labels" / "val" / "b.txt").write_text("1 0.5 0.5 0.1 0.2\n")
+    (root / "realVal.txt").write_text("".join(f"{root / 'images' / 'val' / n}.jpg\n" for n in ("a", "b")))
+    data = root / "realVal.yaml"
+    data.write_text(f"path: {root}\ntrain: images/train\nval: realVal.txt\nnames:\n  0: AD\n  1: 9S\n")
+    return data
+
+
+def test_listing_confusions_prints_the_focus_table_after_the_summary_with_a_faked_detector(tmp_path, capsys):
+    data = labelled_val_set(tmp_path)
+    reads = iter([[det("AD", 50, 50), det("6S", 150, 50)], [det("9S", 100, 50)]])   # a.jpg, then b.jpg
+    args = Namespace(model="models/run/weights/best.pt", imgsz=640, data=str(data), limit=None,
+                     csv=str(tmp_path / "wrong.csv"), focus=["9S", "AD"])
+    list_confusions(args, lambda image: next(reads))
+    printed = capsys.readouterr().out
+    assert printed.index("rank swaps") < printed.index("class  labelled")
+    rows = {line.split()[0]: line.split()[1:] for line in printed.splitlines() if line.split()[:1] in (["9S"], ["AD"])}
+    assert rows["9S"] == ["2", "2", "1", "0", "6S", "1"] and rows["AD"] == ["1", "1", "0", "0", "-"]
+    with open(tmp_path / "wrong.csv") as f:
+        assert next(csv.reader(f)) == CONFUSION_COLUMNS                     # the CSV is unchanged
+
+
+def test_the_focus_option_takes_comma_separated_card_names():
+    assert focus_arg("AD,9s, back") == ["AD", "9S", "BACK"]
+    with pytest.raises(argparse.ArgumentTypeError, match="ZZ"):
+        focus_arg("AD,ZZ")
 
 
 def test_confusions_csv_defaults_to_the_models_run_folder():

@@ -69,8 +69,20 @@
   .favours-player { color: var(--green); }
   .favours-dealer { color: var(--red); }
   .favours-neither { color: var(--text); }
-  .figures { display: flex; gap: .3rem 2rem; margin-top: .6rem; font-size: 1.3rem; flex-wrap: wrap; }
-  .figures span { color: var(--grey); margin-right: .4rem; }
+  /* each figure: a grey label beside a bold value; a fraction stacks its count over a thin
+     line over its total, and Left may end in a grey face-down note */
+  .figures { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.8rem; margin-top: .6rem; font-size: 1.3rem; }
+  .figure { display: flex; align-items: center; gap: .45rem; }
+  .figure .label { color: var(--grey); font-weight: 400; }
+  .figure .value { font-size: 1.2em; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .fraction { position: relative; display: inline-flex; flex-direction: column; align-items: center; }
+  .fraction .whole {
+    margin-top: .12em; padding-top: .12em; border-top: 1px solid var(--grey);
+    font-size: .55em; font-weight: 400; color: var(--grey);
+  }
+  /* the slash is for copied text and screen readers ("99/104"); the line stands in for it on screen */
+  .fraction .slash { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .facedown { color: var(--grey); font-size: .75em; white-space: nowrap; }
 
   #deck { grid-area: deck; container-type: inline-size; }
   /* the grid is about 10 rows wide (labels, gaps, four tiles wide enough for "10"), so a row
@@ -186,15 +198,25 @@
   .chip.hidden .name { color: var(--grey); }
   .total { font-weight: 700; text-align: right; white-space: nowrap; }
   .total.empty { color: var(--dim); font-weight: 400; }
+  /* tip pills (tips.py): the play's colour (--tip) fills the pill; a firm tip is bold capitals,
+     a normal one sentence case, and a close one only outlined, its text in the colour */
   .hint {
-    min-width: 4.6em; padding: .15em .5em; border-radius: .4em;
-    text-align: center; font-weight: 700; text-transform: uppercase; color: #000;
+    --tip: var(--dim);
+    min-width: 4.6em; padding: .15em .5em; border: 2px solid var(--tip); border-radius: .4em;
+    background: var(--tip); color: #000; text-align: center; white-space: nowrap;
   }
+  .hint.firm { font-weight: 700; text-transform: uppercase; }
+  .hint.close { background: none; color: var(--tip); }
   .hint.none { visibility: hidden; }
-  .hint.hit { background: var(--amber); }
-  .hint.stand { background: var(--green); }
-  .hint.double { background: var(--seat); }
-  .hint.split { background: var(--duplicate); }
+  .hint.hit { --tip: var(--amber); }
+  .hint.stand { --tip: var(--green); }
+  .hint.double { --tip: var(--seat); }
+  .hint.split { --tip: var(--duplicate); }
+  .hint.bet-more { --tip: var(--green); }
+  .hint.bet-less { --tip: var(--red); }
+  .hint.bet-flat { --tip: var(--dim); }
+  /* the tip's lead over the next best play, in hundredths of a bet */
+  .gap { font-size: .7em; color: var(--grey); font-variant-numeric: tabular-nums; }
   /* Outcome cues. The glows are static: Hands is rewritten whenever any hand changes, and
      a fresh row would replay an animation. Only the dealer's slow pulse animates. */
   .hand.player.outcome-blackjack { box-shadow: 0 0 0 2px var(--badge), 0 0 1.2rem .3rem rgba(255, 220, 0, .6); }
@@ -359,16 +381,24 @@
     return esc(label.slice(0, -1)) + SUIT[label.slice(-1)];
   }
 
-  function renderCount(count) {
+  // a stacked fraction: the bold count over a thin line over the small total
+  function fraction(part, whole) {
+    return `<span class="value fraction"><span class="part">${part}</span><span class="slash">/</span>`
+      + `<span class="whole">${whole}</span></span>`;
+  }
+
+  // unrevealed: face-down cards never turned over, which cards_left keeps; named after it when any
+  function renderCount(count, unrevealed) {
     const tone = CUE_CLASS[count.cue];
+    const faceDown = unrevealed ? `<span class="facedown">\u00b7 ${unrevealed} face down</span>` : "";
     return `
       <div class="headline ${tone}"><span class="true">${esc(count.headline)}</span>
         <span class="cue">${esc(sentence(count.cue))}</span></div>
       <div class="figures">
-        <div><span>Running</span>${esc(count.running)}</div>
-        <div><span>Left</span>${count.cards_left}/${count.deck_size}</div>
-        <div><span>Tens &amp; aces</span>${count.high_left}/${count.high_total}</div>
-        <div><span>Aces</span>${count.aces_left}/${count.aces_total}</div>
+        <div class="figure"><span class="label">Running</span><span class="value">${esc(count.running)}</span></div>
+        <div class="figure"><span class="label">Left</span>${fraction(count.cards_left, count.deck_size)}${faceDown}</div>
+        <div class="figure"><span class="label">Tens &amp; aces</span>${fraction(count.high_left, count.high_total)}</div>
+        <div class="figure"><span class="label">Aces</span>${fraction(count.aces_left, count.aces_total)}</div>
       </div>`;
   }
 
@@ -434,7 +464,7 @@
         <div class="seat"${renamable}>${esc(title)}</div>
         <div class="cards">${hand.cards.map(renderChip).join("")}</div>
         <div class="total${empty ? " empty" : ""}">${esc(sentence(hand.total))}${outcomeTag(hand)}</div>
-        <div class="play">${splitButton(hand)}<div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div></div>
+        <div class="play">${splitButton(hand)}${renderTip(hand)}</div>
         ${renderOdds(hand)}
       </div>`;
     }
@@ -515,6 +545,16 @@
     if (hand.can_split) return `<button data-action="split_seat" data-seat="${seat}" title="Split into two hands">Split</button>`;
     if (hand.part) return `<button data-action="join_seat" data-seat="${seat}" title="Make one hand again">Join</button>`;
     return "";
+  }
+
+  // The tip pill in its play's colour (hand.hint) and tone, with its hover sentence, then the
+  // play's lead in hundredths of a bet when the tip has one. A hidden placeholder for no tip.
+  function renderTip(hand) {
+    const tip = hand.tip;
+    if (!tip) return `<div class="hint none">-</div>`;
+    const pill = `<div class="hint ${esc(hand.hint)} ${esc(tip.tone)}" title="${esc(tip.title)}">${esc(tip.text)}</div>`;
+    if (tip.gap === null) return pill;
+    return pill + `<span class="gap" title="${esc(tip.title)}">${tip.gap >= 0 ? "+" : ""}${tip.gap}</span>`;
   }
 
   // One row per group of keys, in the order the snapshot lists them (a group's keys are consecutive).
@@ -632,7 +672,7 @@
     setHtml("status", renderStatus(latest));
     if (!latest) return;
     document.getElementById("countTitle").textContent = `TRUE COUNT \u00b7 ${systemName(latest.count_system)}`;
-    setHtml("countBody", renderCount(latest.count));
+    setHtml("countBody", renderCount(latest.count, latest.unrevealed));
     setHtml("deckBody", renderDeck(latest.grid, latest.unrevealed));
     document.getElementById("seatsTitle").textContent = `HANDS (${latest.players} player${latest.players > 1 ? "s" : ""})`;
     if (!renaming) setHtml("seatsBody", renderSeats(latest));  // rewriting would drop the name being typed

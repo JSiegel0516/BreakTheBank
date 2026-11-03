@@ -8,7 +8,8 @@ Reading (read.py):
     table.py     -> which seat each card is in, and the hand at every seat
     reader.py    -> what happens per frame and per key press
     hud.py       -> the overlay
-    strategy.py  -> the basic strategy hint for each hand
+    strategy.py  -> the basic strategy play for each hand
+    tips.py      -> the page's tips: the play the unseen cards favour, and bet tips for empty seats
     sidebar/     -> the browser dashboard (read.py --web): the count, grid, and hands on a web page
     cards.py holds the Detection, Card and Event types these pass around.
 

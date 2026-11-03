@@ -76,7 +76,13 @@ Memory, so a card is never counted twice:
     renamed to a face (a hole card swept face down, say). They have left the
     deck, so shoe_count subtracts them from cards_left, but they add nothing to
     the running count. A face-down card still on the table across new_round()
-    gets a new number but is not added again.
+    gets a new number but is not added again. Nor is a removed face-down card
+    placed again in the same round within 3 * match_dist of where it lay: it
+    gets a new number, as any removed card does, but is the card already dealt.
+    Each spot stands for one card, so a second face-down card there is added.
+    Cards put back close together are matched to spots one to one, nearest
+    first, and an earlier match moves to another spot in its reach if that
+    lets a later card keep the only spot it can reach.
   * shoe_pending and shoe_locked split shoe_seen in two, copy by copy. A copy
     counted this round is pending: a rename can still take it back. A copy
     counted before this round began is locked: it stays counted until the
@@ -97,9 +103,10 @@ Memory, so a card is never counted twice:
     pending names leave the count. The cards on the table are then confirmed
     again from scratch and numbered from 1. A round that already ended is
     locked: rescan cannot reach back into it. A card still on the table from
-    an earlier round is placed again after a rescan, so it is counted again
-    as another copy while the deck count allows, then reported as a duplicate
-    (face up), or added to shoe_unrevealed again (face down).
+    an earlier round is placed again after a rescan. Face up, it is counted
+    again as another copy while the deck count allows, then reported as a
+    duplicate. Face down, within 3 * match_dist of where it lay as the round
+    began, it is not added to shoe_unrevealed again: the restored total holds it.
   * new_shoe() clears shoe_seen, shoe_unrevealed, and shoe_duplicates after a
     reshuffle.
 
@@ -186,6 +193,11 @@ class CardTracker:
         the card already dealt: it is not reported as a duplicate, and a
         face-down one is not added to shoe_unrevealed twice."""
         self._dealt_backs |= {track_id for track_id, card in self._card_of.items() if card.label == BACK}
+        # where the face-down cards still on the table as the round began lay, for rescan()
+        carried_backs = {card.order: card for card in self._card_of.values() if card.label == BACK}
+        self._carried_back_spots = [(card.x, card.y) for card in carried_backs.values()]
+        self._dealt_back_spots: list[tuple[float, float]] = []  # face-down cards in shoe_unrevealed, off the table
+        self._back_spot_holders: dict[int, tuple[float, float]] = {}  # spot index -> where the card put back lies
         # track id -> name its card was counted under, for cards still on the table as the round began
         self._carried_tracks = {track_id: card.label for track_id, card in self._card_of.items()}
         self._seen_before_round = list(self.shoe_seen)  # the locked copies: shoe_seen always starts with them
@@ -205,13 +217,16 @@ class CardTracker:
         self.new_round()
         self._carried_tracks = dict.fromkeys(self._carried_tracks)  # still not duplicates, but counted afresh
         self._dealt_backs = set()
+        self._carried_back_spots = []
 
     def rescan(self) -> bool:
         """Look at the table again: forget every card and track of this round, keep the rounds before it.
 
         Names first counted this round leave the count; names counted earlier stay, in order.
         shoe_unrevealed and shoe_duplicates go back to their values when the round began.
-        Cards on the table are confirmed again from scratch and numbered from 1.
+        Cards on the table are confirmed again from scratch and numbered from 1. A face-down
+        card that was on the table as the round began is already in shoe_unrevealed, so one
+        placed again near where it lay then is not added to it again.
         Returns True when this round had placed a card, even one since removed: only then
         was there anything to take back."""
         placed_this_round = self._next_order > 1
@@ -221,6 +236,8 @@ class CardTracker:
         self.tracks = {}
         self._card_of = {}
         self._dealt_backs = set()
+        self._dealt_back_spots = list(self._carried_back_spots)
+        self._back_spot_holders = {}
         self._carried_tracks = {}
         self._carried_cards = {}
         self.bound = []
@@ -287,7 +304,7 @@ class CardTracker:
                         self._carried_cards[card.order] = carried_label
                     if not self._holds_locked_copy(card):
                         self._count(card)
-                    if card.label == BACK and track.id not in self._dealt_backs:
+                    if card.label == BACK and not self._already_dealt_back(track):
                         self.shoe_unrevealed += 1
                     events.append(Event("placed", card, self.frame))
                     same_name = sum(1 for other in self.round if other is not card and other.label == card.label
@@ -349,6 +366,10 @@ class CardTracker:
                 track.hits = deque(turned_hits, maxlen=track.hits.maxlen)
             for card in self.round:
                 card.x, card.y = _quarter_turn(card.x, card.y, height)
+            self._dealt_back_spots = [_quarter_turn(x, y, height) for x, y in self._dealt_back_spots]
+            self._carried_back_spots = [_quarter_turn(x, y, height) for x, y in self._carried_back_spots]
+            self._back_spot_holders = {index: _quarter_turn(x, y, height)
+                                       for index, (x, y) in self._back_spot_holders.items()}
             still = self.cfg.still_distance
             self.cfg = replace(self.cfg, match_dist=self.cfg.match_dist * height / width,
                                still_distance=None if still is None else still * height / width)
@@ -412,6 +433,31 @@ class CardTracker:
                 best, best_dist = card, dist
         return best
 
+    def _already_dealt_back(self, track: Track) -> bool:
+        """Whether a face-down card placed from this track is one shoe_unrevealed already holds:
+        a card carried into the round on this track, or one off the table (removed this round, or
+        carried in before a rescan) whose spot lies within 3 match distances. See _claim_back_spot."""
+        return track.id in self._dealt_backs or self._claim_back_spot((track.cx, track.cy), set())
+
+    def _claim_back_spot(self, point: tuple[float, float], tried: set[int]) -> bool:
+        """Give the face-down card placed at point a spot of _dealt_back_spots within 3 match
+        distances, nearest first. Each spot takes one card: a spot already taken is given up when
+        the card holding it can take another in its own reach, so cards put back close together
+        each find one. tried: spots already considered in this search. Returns whether one was found."""
+        limit = 3 * self.cfg.match_dist
+        in_reach = []
+        for index, (x, y) in enumerate(self._dealt_back_spots):
+            dist = ((x - point[0]) ** 2 + (y - point[1]) ** 2) ** 0.5
+            if dist <= limit and index not in tried:
+                in_reach.append((dist, index))
+        for _, index in sorted(in_reach):
+            tried.add(index)
+            holder = self._back_spot_holders.get(index)
+            if holder is None or self._claim_back_spot(holder, tried):
+                self._back_spot_holders[index] = point
+                return True
+        return False
+
     def _expired_cards(self) -> list[Card]:
         """Cards of the round hidden for at least hidden_frames, in placement order."""
         limit = self.cfg.hidden_frames
@@ -423,8 +469,11 @@ class CardTracker:
         """Take a card off the table. Its name stays in the shoe count.
 
         A counted card hands the count to a card of the round with its name that
-        holds no copy yet, if there is one, so a later rename of that card still corrects it."""
+        holds no copy yet, if there is one, so a later rename of that card still corrects it.
+        A face-down card stays in shoe_unrevealed, and its spot is kept for _already_dealt_back."""
         self.round.remove(card)
+        if card.label == BACK:
+            self._dealt_back_spots.append((card.x, card.y))
         if card.counted:
             card.counted = False
             holder = next((c for c in self.round if c.label == card.label and self._can_take_copy(c)), None)

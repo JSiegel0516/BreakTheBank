@@ -405,6 +405,81 @@ into `models/cards/` and writes `models/cards/LIVE.txt` naming the run, which
 `read.py` prints at start-up. Commit `models/cards/` afterwards so everyone gets
 the new live model with `git pull`.
 
+### Targeting misread cards (model 6)
+
+A few cards cause most of the live model's mistakes: they are over-counted or
+read as another card. They are listed in `settings.py`:
+
+```python
+FOCUS_CLASSES = ("AD", "2D", "6D", "BACK", "9S", "4C", "4H", "2H")
+FOCUS_EXTRA_COPIES = 2
+```
+
+`train.py --rebuild` adds every real train photo that holds any of these cards
+`FOCUS_EXTRA_COPIES` more times, together with each of its rotated copies. The
+copies are named `f1_`, `f2_`, and so on, before the photo's name. They are
+identical files, so the model sees those cards more often in each epoch.
+Training's random colour and angle changes still make every pass different. The
+copies go to train only, so `realVal.yaml` stays the same exam. The summary line
+gives their number, in the form `dataset: train 7100 (3068 rotated copies, 812
+focus copies), val 633` (numbers for illustration). `FOCUS_EXTRA_COPIES = 0` turns them off, and `FOCUS_CLASSES = ()` does
+too. `train.py` stops with a message if a name is not one of the 53 classes in
+`cardReader/deck.py` or is listed twice.
+
+**Train model 6.** Use the settings above and put that day's date in the run's
+name. `caffeinate` (macOS only) keeps the Mac awake; leave it out on Linux or
+Windows, or use the [Colab steps](#training-on-google-colab) with this name:
+
+```bash
+caffeinate -i python train.py --rebuild --epochs 150 --name model_6_<date>_n150focus
+```
+
+**Compare it with the live model.** Read the same real photos with both models:
+
+```bash
+python benchmark.py --confusions
+python benchmark.py --confusions --model models/model_6_<date>_n150focus/weights/best.pt
+python benchmark.py --confusions --focus AD,9S   # the focus table for these cards only
+```
+
+After the totals, the rank swaps, and the aspect and width tables, each run
+prints a focus table. It has one row per focus card: labelled, found, wrong,
+missed, and `read as`, which lists every wrong name with its count:
+
+```text
+focus cards:
+class  labelled  found  wrong  missed     read as
+   AD        41     40      2       1        AH 2
+   9S        38     37      3       1  6S 2, 9C 1
+```
+
+Those numbers are only an illustration. The CSV of wrong-name boxes is the same
+as before. Write both runs' focus tables into the model's `notes.txt` and into
+[results.md](results.md).
+
+**Promotion rule.** It is the same as for every model: promote model 6 only if
+its wrong names and its missed corners on the real photos are each no higher
+than the live model's. A better focus table alone is not enough. Then run
+`python train.py --promote models/model_6_<date>_n150focus` and commit, as in
+[Comparing models](#comparing-models).
+
+**The BACK data gap.** No real training photo shows a face-down card today.
+Every `BACK` example is synthetic (see [The data it learns from](#the-data-it-learns-from)),
+so the focus copies add nothing for `BACK` yet, and its focus row counts only
+the validation photos. To give the model real card backs:
+
+1. Deal hands with face-down cards: dealer hole cards, and cards from the shoe
+   turned over. Vary the lighting and the angle.
+2. Run `python read.py` and press `s` to save frames to `data/raw/frames/`.
+3. Upload them to Roboflow. Box every face-up corner index as usual, and box
+   each face-down card once, around the whole card, named `BACK`.
+4. Keep the face-up corners in the same photos. An export whose boxes are mostly
+   whole cards is skipped (`skip ...: boxes are whole cards`).
+5. Export as YOLOv11 (no resize, no augmentation) into a new folder in
+   `data/raw/labeled/`, and train model 6 with `--rebuild`.
+6. If the new model is promoted, run `python train.py --manifest` and commit the
+   manifest with it (see [1. Check your data](#1-check-your-data)).
+
 ### Using your own deck for synthetic images
 
 The 2,000 synthetic images are made by pasting card pictures from

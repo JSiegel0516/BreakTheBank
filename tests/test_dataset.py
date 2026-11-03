@@ -150,7 +150,34 @@ def test_rotated_copies_of_real_train_photos_have_turned_pixels_and_boxes(tmp_pa
     assert [float(v) for v in labels["e0_r90_t.txt"][1:]] == pytest.approx([0.75, 0.125, 0.04, 0.04])
     assert [float(v) for v in labels["e0_r270_t.txt"][1:]] == pytest.approx([0.25, 0.875, 0.04, 0.04])
     printed = capsys.readouterr().out
-    assert "rotated copies 2" in printed and "train 3 (2 rotated copies), val 1" in printed
+    assert "rotated copies 2" in printed and "train 3 (2 rotated copies, 0 focus copies), val 1" in printed
+
+
+def test_a_train_photo_holding_a_focus_card_gets_extra_copies_of_itself_and_its_rotations(tmp_path, capsys):
+    photo_export(tmp_path / "raw")                              # an AS in train and in val
+    out = tmp_path / "out"
+    dataset.build(out, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 0, 0.15, rotated_copies=(90,),
+                  focus_classes=("AS", "BACK"), focus_copies=2)
+    labels = read_labels(out, "train")
+    assert set(labels) == {"e0_t.txt", "e0_r90_t.txt", "e0_f1_t.txt", "e0_f2_t.txt",
+                           "e0_f1_r90_t.txt", "e0_f2_r90_t.txt"}
+    assert labels["e0_f1_t.txt"] == labels["e0_t.txt"] and labels["e0_f2_r90_t.txt"] == labels["e0_r90_t.txt"]
+    images = out / "images" / "train"
+    assert (images / "e0_f1_t.png").read_bytes() == (images / "e0_t.png").read_bytes()
+    assert (images / "e0_f2_r90_t.png").read_bytes() == (images / "e0_r90_t.png").read_bytes()
+    assert set(read_labels(out, "val")) == {"e0_v.txt"}         # val is never copied
+    printed = capsys.readouterr().out
+    assert "focus copies 4" in printed and "train 6 (1 rotated copies, 4 focus copies), val 1" in printed
+
+
+def test_photos_without_a_focus_card_or_with_no_copies_asked_for_get_none(tmp_path):
+    photo_export(tmp_path / "raw")
+    for focus_classes, focus_copies in [(("AD", "9S"), 2), (("AS",), 0)]:
+        out = tmp_path / f"out{focus_copies}"
+        dataset.build(out, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 0, 0.15,
+                      focus_classes=focus_classes, focus_copies=focus_copies)
+        assert set(read_labels(out, "train")) == {"e0_t.txt"}
+        assert set(read_labels(out, "val")) == {"e0_v.txt"}
 
 
 def test_rotated_copies_skip_val_and_synthetic_images_and_leave_real_val_unchanged(tmp_path):

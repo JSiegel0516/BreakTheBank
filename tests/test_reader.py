@@ -213,7 +213,18 @@ def test_face_down_card_takes_one_card_off_cards_left(tmp_path):
     dets = [Detection("BACK", 0.9, 100, 100), Detection("5H", 0.9, 300, 100)]
     r.process(frame(), dets)
     r.process(frame(), dets)
-    assert (r.count.running, r.count.cards_left) == (1, 50)
+    assert (r.count.running, r.count.cards_left) == (1, 50)   # the true count's divisor: cards still in the shoe
+    assert r.cards_left_text() == "51 cards left, 1 face down"  # unseen copies, as the grid and the page show
+
+
+def test_the_terminal_gives_cards_left_as_the_grid_counts_them(tmp_path, capsys):
+    r = make_reader(tmp_path)
+    assert r.cards_left_text() == "52 cards left"
+    dets = [Detection("BACK", 0.9, 100, 100), Detection("5H", 0.9, 300, 100)]
+    r.process(frame(), dets)
+    r.process(frame(), dets)
+    r.cycle_decks()
+    assert "--- 2 decks: running count +1, 103 cards left, 1 face down ---" in capsys.readouterr().out
 
 
 def test_frame_of_another_size_rescales_the_layout(tmp_path):

@@ -14,6 +14,11 @@
   * Each real train photo can also be added turned by 90, 180 or 270 degrees,
     with its boxes turned to match (TRAIN_ROTATED_COPIES in settings.py). These
     copies are written as new files and never go to val.
+  * A real train photo whose labels include a focus class (FOCUS_CLASSES, the
+    cards most often misread) is added FOCUS_EXTRA_COPIES more times, and so is
+    each of its rotated copies, as prefix + f<k>_ + its name (k from 1), so the
+    model sees those cards more often. The copies are identical files; training's
+    random augmentation makes each pass over them differ. They never go to val.
 """
 from __future__ import annotations
 
@@ -33,15 +38,19 @@ ROTATIONS = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_9
 
 
 def build(out: Path, labeled_dir: Path, card_art_dir: Path, backgrounds_dir: Path,
-          n_synthetic: int, val_frac: float, rotated_copies: tuple[int, ...] = ()):
+          n_synthetic: int, val_frac: float, rotated_copies: tuple[int, ...] = (),
+          focus_classes: tuple[str, ...] = (), focus_copies: int = 0):
     """Rebuild `out` from every export in labeled_dir plus n_synthetic synthetic images.
 
     Deletes `out` first. Writes images/ and labels/ for train and val, data.yaml,
     and realVal.yaml (the val images without synthetic ones). val_frac is the
     share of images held out when an export has no split of its own.
     rotated_copies: angles from ROTATIONS; every real train photo is added again
-    turned by each (see add_rotated_copies). Exits with a message if the train
-    split ends up empty."""
+    turned by each (see add_rotated_copies).
+    focus_classes, focus_copies: a real train photo holding any of these class names is
+    added focus_copies more times, with its rotated copies (see add_focus_copies).
+    Prints a summary line with the rotated and focus copies. Exits with a message if
+    the train split ends up empty."""
     if out.exists():
         shutil.rmtree(out)
     for split in ("train", "val"):
@@ -49,9 +58,12 @@ def build(out: Path, labeled_dir: Path, card_art_dir: Path, backgrounds_dir: Pat
         (out / "labels" / split).mkdir(parents=True)
 
     exports = sorted(d for d in labeled_dir.iterdir() if (d / "data.yaml").exists()) if labeled_dir.is_dir() else []
-    rotated = 0
+    rotated = focused = 0
     for i, export in enumerate(exports):
-        rotated += import_export(export, out, f"e{i}_", val_frac, rotated_copies)
+        export_rotated, export_focused = import_export(export, out, f"e{i}_", val_frac, rotated_copies,
+                                                       focus_classes, focus_copies)
+        rotated += export_rotated
+        focused += export_focused
     if n_synthetic:
         synthetic.generate(out, n_synthetic, card_art_dir, backgrounds_dir, val_frac)
 
@@ -64,17 +76,21 @@ def build(out: Path, labeled_dir: Path, card_art_dir: Path, backgrounds_dir: Pat
     counts = {s: sum(1 for _ in (out / "images" / s).iterdir()) for s in ("train", "val")}
     if not counts["train"]:
         raise SystemExit(f"dataset is empty: put exports in {labeled_dir} or set SYNTHETIC_IMAGES")
-    print(f"dataset: train {counts['train']} ({rotated} rotated copies), val {counts['val']} -> {out}")
+    print(f"dataset: train {counts['train']} ({rotated} rotated copies, {focused} focus copies), "
+          f"val {counts['val']} -> {out}")
 
 
-def import_export(export: Path, out: Path, prefix: str, val_frac: float, rotated_copies: tuple[int, ...] = ()) -> int:
+def import_export(export: Path, out: Path, prefix: str, val_frac: float, rotated_copies: tuple[int, ...] = (),
+                  focus_classes: tuple[str, ...] = (), focus_copies: int = 0) -> tuple[int, int]:
     """Add one labelled export to the dataset at `out`, with class ids remapped to deck.py.
 
     File names get `prefix` so exports cannot collide. Skips the export with a
     message if most of its classes are not cards or its boxes are whole cards.
     Images with no card boxes left after remapping are skipped and counted.
-    Each image that lands in train also gets a copy per angle in rotated_copies.
-    Returns the number of rotated copies written."""
+    Each image that lands in train also gets a copy per angle in rotated_copies,
+    and, when its labels hold a class in focus_classes, focus_copies more copies of
+    itself and of each rotated copy. Returns (rotated copies, focus copies) written."""
+    focus_ids = {str(CLASS_TO_ID[name]) for name in focus_classes}
     names = yaml.safe_load((export / "data.yaml").read_text())["names"]
     if isinstance(names, dict):
         names = [names[k] for k in sorted(names)]
@@ -82,7 +98,7 @@ def import_export(export: Path, out: Path, prefix: str, val_frac: float, rotated
     remap = {i: CLASS_TO_ID[n] for i, n in enumerate(names) if n in CLASS_TO_ID}
     if len(remap) < len(names) / 2:
         print(f"skip {export.name}: its classes are not card names ({names[:5]} ...)")
-        return 0
+        return 0, 0
     widths = []
     for label_path in export.glob("*/labels/*.txt"):
         boxes = [line.split() for line in label_path.read_text().splitlines()]
@@ -90,7 +106,7 @@ def import_export(export: Path, out: Path, prefix: str, val_frac: float, rotated
     median_width = sorted(widths)[len(widths) // 2] if widths else 0.0
     if median_width > WHOLE_CARD_WIDTH:
         print(f"skip {export.name}: boxes are whole cards, not corner indices")
-        return 0
+        return 0, 0
     dropped = [n for n in names if n not in CLASS_TO_ID]
     if dropped:
         print(f"  {export.name}: dropping classes not in the deck: {dropped}")
@@ -98,7 +114,7 @@ def import_export(export: Path, out: Path, prefix: str, val_frac: float, rotated
     split_names = ("train", "valid", "val", "test")
     splits = {split: export / split / "images" for split in split_names if (export / split / "images").is_dir()}
     has_val = any(split != "train" for split in splits)
-    counts = {"train": 0, "val": 0, "rotated": 0, "empty": 0}
+    counts = {"train": 0, "val": 0, "rotated": 0, "focus": 0, "empty": 0}
     for split, img_dir in splits.items():
         for img in sorted(img_dir.iterdir()):
             if img.suffix.lower() not in IMG_EXT:
@@ -119,18 +135,44 @@ def import_export(export: Path, out: Path, prefix: str, val_frac: float, rotated
                 bucket = int(hashlib.md5(img.name.encode()).hexdigest(), 16) % 1000
                 target = "val" if bucket < val_frac * 1000 else "train"
             stem = prefix + img.stem
-            dst = out / "images" / target / (stem + img.suffix.lower())
-            try:
-                dst.hardlink_to(img)
-            except OSError:
-                shutil.copy2(img, dst)
+            _link(img, out / "images" / target / (stem + img.suffix.lower()))
             (out / "labels" / target / (stem + ".txt")).write_text("\n".join(lines) + "\n")
             counts[target] += 1
             if target == "train":
                 counts["rotated"] += add_rotated_copies(img, lines, out, prefix, rotated_copies)
+                if any(line.split()[0] in focus_ids for line in lines):
+                    names_in_train = [img.stem] + [f"r{degrees}_{img.stem}" for degrees in rotated_copies]
+                    counts["focus"] += add_focus_copies(out, prefix, names_in_train, img.suffix.lower(),
+                                                        focus_copies)
     print(f"  {export.name}: train {counts['train']}, val {counts['val']}, rotated copies {counts['rotated']}, "
-          f"skipped (no boxes) {counts['empty']}")
-    return counts["rotated"]
+          f"focus copies {counts['focus']}, skipped (no boxes) {counts['empty']}")
+    return counts["rotated"], counts["focus"]
+
+
+def _link(src: Path, dst: Path):
+    """dst as a hard link to src, or a copy where the file system cannot link."""
+    try:
+        dst.hardlink_to(src)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def add_focus_copies(out: Path, prefix: str, names: list[str], suffix: str, copies: int) -> int:
+    """Add `copies` more of each train image prefix + name + suffix already in out, with its label,
+    as prefix + f<k>_ + name for k from 1. A name not in train (a rotated copy that could not be
+    read) is passed over. Returns the number of copies written."""
+    images, labels = out / "images" / "train", out / "labels" / "train"
+    written = 0
+    for name in names:
+        image = images / f"{prefix}{name}{suffix}"
+        if not image.exists():
+            continue
+        label = (labels / f"{prefix}{name}.txt").read_text()
+        for k in range(1, copies + 1):
+            _link(image, images / f"{prefix}f{k}_{name}{suffix}")
+            (labels / f"{prefix}f{k}_{name}.txt").write_text(label)
+            written += 1
+    return written
 
 
 def rotate_box(cx: float, cy: float, w: float, h: float, degrees: int) -> tuple[float, float, float, float]:

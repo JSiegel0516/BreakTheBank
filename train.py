@@ -75,7 +75,7 @@ def main():
                   " run `python train.py --manifest` afterwards if this data is what the model should learn from.")
         dataset.build(data_dir, ROOT / settings.LABELED_DIR, ROOT / settings.CARD_ART_DIR,
                       ROOT / settings.BACKGROUNDS_DIR, args.synthetic, settings.VAL_FRACTION,
-                      settings.TRAIN_ROTATED_COPIES)
+                      settings.TRAIN_ROTATED_COPIES, settings.FOCUS_CLASSES, settings.FOCUS_EXTRA_COPIES)
 
     import torch
     from ultralytics import YOLO
