@@ -39,7 +39,10 @@ Events are printed as they happen and appended to the CSV log as
 A duplicate event (a card whose name already has every copy dealt, one per
 deck; see tracker.py for the placement and rename rules) and a removed
 event (a card hidden too long) are logged like the rest, with the card's seat
-where it was last seen; neither changes the count. Key X (rescan) logs one
+where it was last seen; neither changes the count. With more than one deck,
+a held event follows the placed event of a second copy beside a card of its
+name: it is on the table but not in the count. A counted event, printed with
+the running count, marks it counted at last. Key X (rescan) logs one
 rescan row, with the running count after the rescan and no card, so
 evaluate.py reads the round again under the same number. A rescan before the
 round's first card logs nothing, since there is nothing to read again.
@@ -169,7 +172,7 @@ class Reader:
             card = event.card
             seat = self.table.seat_of(card) if card else None
             seat_text = f"({seat})" if seat else ""
-            count_text = f"count {self.count.running:+d}" if event.kind in ("placed", "renamed") else ""
+            count_text = f"count {self.count.running:+d}" if event.kind in ("placed", "renamed", "counted") else ""
             print(event, seat_text, count_text)
             if event.kind == "round_over":
                 self.table.clear_splits()

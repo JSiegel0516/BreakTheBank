@@ -42,6 +42,7 @@ def test_focus_defaults_are_the_eight_misread_cards_with_two_extra_copies_and_no
     ("LABEL_WINDOW_SECONDS", 0, "number above 0"),
     ("ROUND_END_SECONDS", -3.0, "number above 0"),
     ("HIDDEN_SECONDS", -1, "number of 0 or more"),
+    ("COPY_HOLD_SECONDS", -0.5, "number of 0 or more"),
     ("PLAYERS", 6, "whole number from 1 to 5"),
     ("CONFIDENCE", 1.5, "number from 0 to 1"),
     ("CONFIRM_CONFIDENCE", -0.1, "number from 0 to 1"),
@@ -96,6 +97,10 @@ def test_confirm_time_cannot_exceed_the_window_it_is_counted_in():
 
 def test_hidden_seconds_zero_is_allowed():
     settings.validate(shipped(HIDDEN_SECONDS=0))
+
+
+def test_copy_hold_seconds_zero_is_allowed():
+    settings.validate(shipped(COPY_HOLD_SECONDS=0))
 
 
 def test_auto_dark_threshold_must_be_below_the_bright_one():

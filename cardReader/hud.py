@@ -15,7 +15,9 @@
     * a tag on each card of the round: its name, the rank followed by the
       suit's shape, or BACK for a face-down card. Key N (Hud.show_order, off
       at start) puts its placement number in a yellow badge before the name.
-      A hidden (covered) card keeps a grey tag where it was last seen.
+      A hidden (covered) card keeps a grey tag where it was last seen. With
+      two or three decks, a held copy (placed beside a card of its name, not
+      counted yet) has a magenta "?" after its name.
     * a sidebar to the right of the video, so nothing covers the table. It
       starts with a tab strip naming the two views, CARDS LEFT and GAME, with
       the current one highlighted and a [V] hint (key V switches). Below it is
@@ -89,6 +91,7 @@ AMBER = (0, 190, 255)
 BADGE = (0, 220, 255)
 SEAT_LINE = (255, 220, 120)
 DUPLICATE = (255, 60, 255)
+HELD_MARK = "?"  # drawn in DUPLICATE after the name, a space apart, on the video tag of a held copy
 PENDING_FILL = (0, 140, 165)  # the seen share of a mini card with copies left, counted this round: a dim yellow
 SIDEBAR = 0.30  # sidebar width as a fraction of the video width
 NAME_COLUMN = 0.40  # the Game view's seat names take at most this fraction of the sidebar width
@@ -107,11 +110,12 @@ NO_SIGNAL = "no signal: press C to reconnect"
 CUE_SEPARATOR = " \u00b7 "  # a middle dot between the count cue's halves; the window draws them on two lines
 VIEWS = {"cards_left": "Cards Left", "game": "Game"}  # sidebar view id -> name, in tab order
 # Legend entries per view: (swatch kind, colour, meaning). Kinds are drawn by Hud._swatch;
-# a "name" entry gives a sample card name in place of the colour.
+# a "name" entry gives a sample card name, or HELD_MARK, in place of the colour.
 PLACEMENT_ENTRY = ("badge", BADGE, "placement number")  # in GAME_LEGEND only while Hud.show_order is set
 GAME_LEGEND = [("name", "KH", "hearts, diamonds"), ("name", "KS", "spades, clubs"),
                 ("box", AMBER, "face down"), ("thin", GREY, "not matched to a card"),
                 PLACEMENT_ENTRY, ("badge", DIM, "covered, still counted"),
+                ("name", HELD_MARK, "copy held, not counted"),
                 ("line", AMBER, "dealer zone"), ("line", SEAT_LINE, "player zone")]
 # The Cards Left legend: these, then one "shade" entry per count value (value_legend), whose
 # colour slot holds the value.
@@ -422,6 +426,12 @@ class Hud:
         self._suit_glyph(img, suit_of(label), round(x + width - h / 2), round(cy), r, colour)
         return width
 
+    def _held_mark(self, img, x, cy, scale) -> int:
+        """HELD_MARK in DUPLICATE from x, centred vertically on cy. Returns its width."""
+        w, h, _ = self._size(HELD_MARK, scale)
+        self._text(img, HELD_MARK, (x, cy + h // 2), scale, DUPLICATE)
+        return w
+
     def _chip(self, img, card: Card, x, cy):
         """Badge + card name at (x, centre y). Hidden cards are drawn greyed out. Returns its width."""
         badge, colour = (DIM, GREY) if card.hidden else (BADGE, card_colour(card.label))
@@ -558,10 +568,12 @@ class Hud:
 
     def _swatch(self, side, kind: str, colour, x: int, cy: int, w: int, th: int):
         """A legend sample of width w centred vertically on cy; th is the legend's text height.
-        For "name", colour is the card name to draw; for "shade", the count value (value_shade)."""
+        For "name", colour is the card name to draw, or HELD_MARK; for "shade", the count value (value_shade)."""
         y1, y2 = cy - th // 2 - 2, cy + th // 2 + 2
         card_h = th + self.pad  # a mini card sample, as tall as a legend row allows
-        if kind == "name":
+        if kind == "name" and colour == HELD_MARK:
+            self._held_mark(side, x, cy, 0.45)
+        elif kind == "name":
             self._name(side, colour, x, cy, 0.45, card_colour(colour))
         elif kind == "box":
             cv2.rectangle(side, (x, y1), (x + w, y2), colour, self.thick)
@@ -847,13 +859,16 @@ class Hud:
         return min(mine, key=lambda det: det.box[1]).box
 
     def _card_tag(self, img, card: Card, box, tags):
-        """The card's name, after its placement badge while show_order is set, just above the
-        card's topmost corner index (below it if there is no room).
+        """The card's name, after its placement badge while show_order is set and followed by
+        HELD_MARK while the card is held, just above the card's topmost corner index (below it
+        if there is no room).
         tags: tags already drawn; this one stacks above any it would cover. Returns its rectangle."""
         H, W = img.shape[:2]
         w, h, base = self._name_size(card.label, 0.8)
         badge_w = 2 * self.r + self.pad // 2 if self.show_order else 0
-        tag_w = self.pad // 2 + badge_w + w + self.pad
+        space_w = self._size(" ", 0.8)[0]
+        mark_w = space_w + self._size(HELD_MARK, 0.8)[0] if card.held else 0
+        tag_w = self.pad // 2 + badge_w + w + mark_w + self.pad
         tag_h = max(2 * self.r, h + base) + self.pad
         gap = self.pad // 2
         if box is None:  # hidden, or not detected this frame: use the last known position
@@ -874,10 +889,12 @@ class Hud:
         y = int(min(max(y, 0), H - tag_h))
         self._panel(img, x, y, x + tag_w, y + tag_h, alpha=0.8)
         if self.show_order:
-            self._chip(img, card, x + self.pad // 2, y + tag_h // 2)
+            drawn_w = self._chip(img, card, x + self.pad // 2, y + tag_h // 2)
         else:
             colour = GREY if card.hidden else card_colour(card.label)
-            self._name(img, card.label, x + self.pad // 2, y + tag_h // 2, 0.8, colour)
+            drawn_w = self._name(img, card.label, x + self.pad // 2, y + tag_h // 2, 0.8, colour)
+        if card.held:
+            self._held_mark(img, x + self.pad // 2 + drawn_w + space_w, y + tag_h // 2, 0.8)
         return x, y, x + tag_w, y + tag_h
 
     def _no_signal(self, img):

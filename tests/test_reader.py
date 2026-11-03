@@ -131,6 +131,25 @@ def test_removed_card_is_printed_and_logged_and_leaves_the_count(tmp_path, capsy
     assert rows[-1][2:7] == ["removed", "1", "KD", "P1", "-1"]
 
 
+def test_a_held_copy_is_printed_and_logged_and_its_count_follows_when_counted(tmp_path, capsys):
+    buf = io.StringIO()
+    tracker = CardTracker(confirm_frames=2, drop_frames=5, match_dist=20, decks=2, copy_hold_frames=2)
+    r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               log=csv.writer(buf))
+    x, y = map(float, r.layout.seats[1].polygon.mean(axis=0))  # inside P1
+    first = [Detection("KH", 0.9, x, y), Detection("KH", 0.9, x + 30, y + 40)]  # both corners of a KH
+    copy = Detection("KH", 0.9, x + 40, y)                     # a second KH fanned over it
+    for _ in range(2):
+        r.process(frame(), first)
+    events = [e.kind for _ in range(3) for e in r.process(frame(), [*first, copy])]
+    assert events == ["placed", "held", "counted"]
+    out = capsys.readouterr().out
+    assert "held     #2   KH (P1)" in out and "counted  #2   KH (P1) count -2" in out
+    rows = list(csv.reader(io.StringIO(buf.getvalue())))
+    assert [row[2:7] for row in rows[-3:]] == [["placed", "2", "KH", "P1", "-1"], ["held", "2", "KH", "P1", "-1"],
+                                               ["counted", "2", "KH", "P1", "-2"]]
+
+
 def test_switching_the_counting_system_recounts_the_shoe_and_the_log_follows(tmp_path, capsys):
     buf = io.StringIO()
     r = make_reader(tmp_path, log=csv.writer(buf))

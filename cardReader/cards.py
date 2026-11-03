@@ -4,7 +4,9 @@
     Card        one physical card of the current round, with its placement number
     Event       something that changed: placed, hidden, returned, removed (hidden
                 too long, taken off the table), renamed, duplicate (a name
-                already counted in an earlier round), round_over
+                already counted in an earlier round), held (a second copy
+                placed beside a card of its name, not counted yet), counted (a
+                held copy counted at last), round_over
 
 detector.py makes Detections, tracker.py turns them into Cards and Events,
 table.py groups Cards into hands, hud.py draws all three.
@@ -33,11 +35,14 @@ class Card:
     hidden: bool = False            # not visible right now, but still on the table
     hidden_since: int = 0           # the frame it went hidden, while hidden
     counted: bool = False           # this card added its label to the shoe count
+    held: bool = False              # a copy beside a card of its name: not counted until both are seen together
+    held_frames: int = 0            # while held: frames this card and that card were both seen
 
 
 @dataclass
 class Event:
-    kind: str  # "placed" | "hidden" | "returned" | "removed" | "renamed" | "duplicate" | "round_over"
+    # "placed" | "hidden" | "returned" | "removed" | "renamed" | "duplicate" | "held" | "counted" | "round_over"
+    kind: str
     card: Card | None
     frame: int
     was: str | None = None  # renamed: the label before
