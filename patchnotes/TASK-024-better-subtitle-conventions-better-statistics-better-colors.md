@@ -1,5 +1,5 @@
 # Patch notes: Seat labels, finished-hand odds, and dashboard styling
-Task TASK-001 · branch orch/task-001 · 2026-11-02
+Task TASK-024 · branch orch/task-001 · 2026-11-02
 
 ## For users
 Live video labels show custom seat names inside their zones.

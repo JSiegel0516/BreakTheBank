@@ -1,5 +1,5 @@
 # Patch notes: Consistent counts, play tips, and accuracy tooling
-Task TASK-002 · branch orch/task-002 · 2026-11-02
+Task TASK-025 · branch orch/task-002 · 2026-11-02
 
 ## For users
 Shows the same unseen-card count across the dashboard, window, and terminal.
