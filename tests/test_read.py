@@ -47,12 +47,19 @@ def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args, make_detector=No
     """Run read.main() on a fake camera and detector with no real window, pressing one of `keys` per frame.
     args: extra command-line arguments. Saved frames go to tmp_path / "frames". Every model load
     returns detect, unless make_detector is given: then each load calls make_detector(weights).
-    The camera runs at the tracker's nominal rate: read n is captured at n * FRAME seconds."""
+    The camera runs at the tracker's nominal rate: read n is captured at n * FRAME seconds.
+    Returns the arguments of every Detector built, in order."""
     monkeypatch.setattr(read, "Camera", lambda *a: cam)
     monkeypatch.setattr(read, "capture_time", lambda camera: camera.reads * FRAME)
     detect.device_used = "mps"
+    built = []
+
+    def build(weights, *a):
+        built.append((weights, *a))
+        return make_detector(weights) if make_detector else detect
+
     detector = ModuleType("cardReader.detector")
-    detector.Detector = (lambda weights, *a: make_detector(weights)) if make_detector else (lambda *a: detect)
+    detector.Detector = build
     monkeypatch.setitem(sys.modules, "cardReader.detector", detector)
     monkeypatch.setattr(read, "live_model", lambda path: None)
     monkeypatch.setattr(read.SeatLayout, "load", staticmethod(lambda *a: None))
@@ -64,6 +71,29 @@ def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args, make_detector=No
     (tmp_path / "x.pt").touch()
     monkeypatch.setattr(sys, "argv", ["read.py", "--model", str(tmp_path / "x.pt"), "--players", "3", *args])
     read.main()
+    return built
+
+
+@pytest.mark.parametrize(("args", "start", "floor"), [((), 0.6, 0.4), (("--conf", "0.7"), 0.7, 0.4),
+                                                      (("--conf", "0.3"), 0.3, 0.3)])
+def test_the_detector_keeps_boxes_down_to_the_sustain_floor_and_only_conf_starts_a_track(monkeypatch, tmp_path,
+                                                                                          args, start, floor):
+    monkeypatch.setattr(read.settings, "CONFIDENCE", 0.6)
+    monkeypatch.setattr(read.settings, "SUSTAIN_CONFIDENCE", 0.4)
+    built = {}
+    for cls in (read.CardTracker, read.Hud):
+        init = cls.__init__
+
+        def watched_init(self, *a, _init=init, **kw):
+            _init(self, *a, **kw)
+            built[type(self).__name__] = self
+
+        monkeypatch.setattr(cls, "__init__", watched_init)
+    detectors = run_reader(monkeypatch, tmp_path, FakeCamera(), [ord("q")], lambda frame: [], *args)
+
+    assert [conf for _, _, conf, _ in detectors] == [floor]
+    assert built["CardTracker"].cfg.start_confidence == start
+    assert built["Hud"].start_confidence == start
 
 
 def test_stale_camera_shows_no_signal_feeds_nothing_to_the_tracker_and_c_reconnects(monkeypatch, capsys, tmp_path):

@@ -5,6 +5,7 @@
     python read.py --source round1.mp4 --log round1.csv --no-display
     python read.py --list-cameras                    # which number is which camera?
     python read.py --preprocess auto                 # contrast help for a dim or washed-out table
+    python read.py --conf 0.7                        # only boxes scoring 0.7 or more start a track
     python read.py --web                             # the sidebar moves to a browser page; open the printed URL
     python read.py --web --web-host 0.0.0.0          # ... which a phone on the same network can open too
     python read.py --no-display --web                # no window: the page shows everything and has the buttons
@@ -232,7 +233,8 @@ def reconnect(cam: Camera, hud: Hud, source):
 class LiveDetector:
     """The detector read.py runs, and the models the page can switch it to.
 
-    load: weights path (str) -> detector, built with the command line's size, confidence, and device.
+    load: weights path (str) -> detector, built with the command line's size and device, keeping boxes
+    down to SUSTAIN_CONFIDENCE (or --conf, if lower).
     models_dir: the folder whose runs can be chosen (MODELS_DIR); any other path is refused.
     detector, path: the model loaded at start-up and its weights, or None for capture mode."""
 
@@ -345,7 +347,9 @@ def main():
     ap.add_argument("--model", default=settings.MODEL_PATH,
                     help="trained .pt weights; capture mode if the file is missing")
     ap.add_argument("--imgsz", type=int, default=settings.INPUT_SIZE)
-    ap.add_argument("--conf", type=float, default=settings.CONFIDENCE)
+    ap.add_argument("--conf", type=float, default=settings.CONFIDENCE,
+                    help="score a box needs to start a track (default: CONFIDENCE in settings.py); "
+                         "weaker boxes down to SUSTAIN_CONFIDENCE only keep tracks seen")
     ap.add_argument("--device", default=None, help="mps, cuda, or cpu (auto if omitted)")
     ap.add_argument("--width", type=int, default=settings.CAMERA_WIDTH)
     ap.add_argument("--height", type=int, default=settings.CAMERA_HEIGHT)
@@ -373,7 +377,7 @@ def main():
 
     def load(weights: str):
         from cardReader.detector import Detector  # slow import, only paid when a model is used
-        return Detector(weights, args.imgsz, args.conf, args.device)
+        return Detector(weights, args.imgsz, min(settings.SUSTAIN_CONFIDENCE, args.conf), args.device)
 
     detector = None
     if Path(args.model).exists():
@@ -405,8 +409,9 @@ def main():
             if new_file:
                 log.writerow(LOG_HEADER)
 
-        tracker = CardTracker(TrackerConfig.from_settings(settings, view_w), decks=settings.DECKS)
-        hud = Hud()
+        tracker = CardTracker(TrackerConfig.from_settings(settings, view_w), decks=settings.DECKS,
+                              start_confidence=args.conf)
+        hud = Hud(start_confidence=args.conf)
         reader = Reader(tracker, layout, hud, seats_file, settings.PROJECT_ROOT / settings.FRAMES_DIR, log=log,
                         preprocess=args.preprocess, rotation=rotation, count_system=settings.COUNT_SYSTEM)
         preprocess_config = PreprocessConfig.from_settings(settings)

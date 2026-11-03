@@ -624,7 +624,7 @@ by putting `uv run` in front of each command.
 - **Label file**: one text line per box, `class_id cx cy w h`, as fractions of the image size. This is the YOLO format.
 - **Detector**: a model that outputs boxes and classes for an image. YOLO is the family used here, via the Ultralytics library.
 - **Pretrained weights**: a model already trained on everyday photos (`yolo11n.pt`). Training starts from it rather than from scratch, so it needs far less data.
-- **Confidence**: the model's score for a box, 0 to 1. Boxes under `CONFIDENCE` in `settings.py` are ignored.
+- **Confidence**: the model's score for a box, 0 to 1. Only boxes scoring at least `CONFIDENCE` in `settings.py` start a track in `read.py`; weaker ones down to `SUSTAIN_CONFIDENCE` only keep a track seen, and the rest are ignored.
 - **Inference**: running the trained model on a new image.
 - **Synthetic data**: images rendered by `cardReader/synthetic.py` by pasting card art onto backgrounds, with labels known exactly.
 - **Augmentation**: random changes to training images (rotation, brightness, blur) so the model generalises. Ultralytics does this during training; do not also do it in Roboflow.

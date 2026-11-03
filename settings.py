@@ -41,7 +41,10 @@ CAMERA_HEIGHT = None       # e.g. 2160
 CAMERA_ROTATION = 0        # degrees the frame is turned clockwise before anything else: 0, 90, 180, or 270.
                            # For a camera mounted sideways or upside down; keys < and > in read.py turn it live.
 INPUT_SIZE = 1280          # frame is resized to this width before detection. Bigger = reads smaller indices, slower.
-CONFIDENCE = 0.6           # detections below this score are ignored
+CONFIDENCE = 0.6           # a detection must score at least this to start a track (a new corner)
+SUSTAIN_CONFIDENCE = 0.4   # weaker detections down to this only keep an existing track seen: they move it and stop
+                           # it missing, but add nothing to its name vote or its confirmation. At most CONFIDENCE;
+                           # equal to it turns this off. benchmark.py scores the model at CONFIDENCE.
 # Every *_SECONDS below is real time: the tracker times each frame by when it was captured, at any frame rate.
 CONFIRM_SECONDS = 0.5      # a card must be seen for this long in total ...
 CONFIRM_WINDOW_SECONDS = 0.7  # ... within the last this long, so flicker never adds up
@@ -117,7 +120,7 @@ def validate(config) -> None:
         (("TRAIN_ROTATED_COPIES",),
          lambda v: isinstance(v, tuple) and all(_is_whole(d) and d in ROTATIONS for d in v) and len(set(v)) == len(v),
          "a tuple of different angles from 90, 180, 270, or () for none"),
-        (("CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
+        (("CONFIDENCE", "SUSTAIN_CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
         (("DECKS",), lambda v: _is_whole(v) and 1 <= v <= MAX_DECKS, f"a whole number from 1 to {MAX_DECKS}"),
@@ -142,6 +145,10 @@ def validate(config) -> None:
     if _is_number(confirm) and _is_number(window) and confirm > window:
         problems.append(f"CONFIRM_SECONDS = {confirm} must be at most CONFIRM_WINDOW_SECONDS = {window}, "
                         "the time it is counted in")
+    sustain, start = config.SUSTAIN_CONFIDENCE, config.CONFIDENCE
+    if _is_number(sustain) and _is_number(start) and sustain > start:
+        problems.append(f"SUSTAIN_CONFIDENCE = {sustain} must be at most CONFIDENCE = {start}, "
+                        "the score that starts a track")
     dark, bright = config.PREPROCESS_DARK_BELOW, config.PREPROCESS_BRIGHT_ABOVE
     if _is_number(dark) and _is_number(bright) and dark >= bright:
         problems.append(f"PREPROCESS_DARK_BELOW = {dark} must be below PREPROCESS_BRIGHT_ABOVE = {bright}")

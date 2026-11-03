@@ -11,7 +11,8 @@ class Detector:
 
     weights: path to a .pt file. imgsz: inference size in pixels; each frame is
     scaled, keeping its aspect ratio, so its longer side fits imgsz, then padded.
-    conf: boxes scoring below this are dropped. device: mps, cuda, or cpu; None
+    conf: boxes scoring below this are dropped; read.py passes SUSTAIN_CONFIDENCE, below
+    CONFIDENCE, and the tracker decides which boxes may start a track. device: mps, cuda, or cpu; None
     lets ultralytics choose.
 
     Overlapping boxes are merged whatever their names (agnostic NMS, non-maximum

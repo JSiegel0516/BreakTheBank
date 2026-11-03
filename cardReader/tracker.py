@@ -6,6 +6,12 @@ The tracker smooths that out and remembers the order cards arrived in:
 
   * Each box is matched to the nearest existing track (one physical corner
     index followed across frames), or starts a new track.
+  * A box scoring below start_confidence is weak (read.py runs the detector
+    down to SUSTAIN_CONFIDENCE). It is matched only to a track no confident box
+    hit this frame, and only keeps it seen: the track moves with it and does not
+    miss, so a corner that scores low for a few frames is not dropped and
+    started again. A weak box adds nothing to the name vote or to the
+    confirmation checks below, and never starts a track.
   * A track must pass every confirmation check before it counts as a card:
       - seen steadily: for confirm_seconds in total within the last
         confirm_window_seconds, so a detection that flickers on and off never
@@ -21,8 +27,9 @@ The tracker smooths that out and remembers the order cards arrived in:
       - held still: the corner has moved less than still_distance over those
         frames, so a card being slid across the table is counted where it lands
     A track that passes once stays confirmed.
-  * A track is only dropped once it has gone unseen for drop_seconds, so a
-    hand passing over the table does not erase a card straight away.
+  * A track is only dropped once it has gone unseen for drop_seconds, weak
+    sightings counting as seen, so a hand passing over the table does not
+    erase a card straight away.
   * A track's label is a vote over its reads in the last label_window_seconds,
     so one misread frame does not flip it, but a card turned face up in place
     (a dealer's hole card) does change from BACK to its name after about half
@@ -197,19 +204,20 @@ class TrackerConfig:
     copy_hold_seconds: float = 0.0     # with decks > 1: time a copy beside a card of its name waits (0: none)
     nominal_fps: float = 12.4          # the reader's usual frame rate: an update() given no time is one frame
                                        # at it, and its times are compared to the nearest such frame
+    start_confidence: float = 0.0      # a detection scoring less is weak: it only keeps a track seen (see _match)
 
     @classmethod
     def from_settings(cls, s, frame_width: int) -> TrackerConfig:
         """From settings.py: distances are fractions of the frame width, times are seconds.
         decks keeps its default; pass settings.DECKS to CardTracker as a keyword.
         HIDDEN_SECONDS = 0 removes a card on the frame it is hidden; COPY_HOLD_SECONDS = 0
-        counts a copy at once."""
+        counts a copy at once. CONFIDENCE becomes start_confidence."""
         return cls(confirm_seconds=s.CONFIRM_SECONDS, confirm_window_seconds=s.CONFIRM_WINDOW_SECONDS,
                    confirm_agreement=s.CONFIRM_AGREEMENT, confirm_confidence=s.CONFIRM_CONFIDENCE,
                    still_distance=s.STILL_DISTANCE * frame_width, drop_seconds=s.DROP_SECONDS,
                    match_dist=s.MATCH_DISTANCE * frame_width, round_end_seconds=s.ROUND_END_SECONDS,
                    label_window_seconds=s.LABEL_WINDOW_SECONDS, hidden_seconds=s.HIDDEN_SECONDS,
-                   copy_hold_seconds=s.COPY_HOLD_SECONDS)
+                   copy_hold_seconds=s.COPY_HOLD_SECONDS, start_confidence=s.CONFIDENCE)
 
 
 class Hit(NamedTuple):
@@ -230,8 +238,9 @@ class Track:
     hits: deque = field(default_factory=deque)  # Hit of each sighting its windows still need, oldest first
     votes: Counter = field(default_factory=Counter)  # reads per label, within the label window
     label: str = ""                                   # the winning vote
-    seen: int = 0
-    missed: int = 0
+    seen: int = 0          # sightings counted: weak ones are not
+    missed: int = 0        # frames since the last sighting, weak ones included
+    last_seen: float = 0.0  # the clock on the last sighting, weak ones included
     confirmed: bool = False
 
 
@@ -419,7 +428,8 @@ class CardTracker:
 
         Also sets bound: one entry per detection, in the same order, giving the
         confirmed card its track belongs to, or None while that track is not
-        confirmed. A detection misread as another name is still bound to its card."""
+        confirmed or for a weak detection matched to no track. A detection misread
+        as another name, or a weak one, is still bound to its card."""
         self.frame += 1
         nominal_interval = 1 / self.cfg.nominal_fps
         if now is None:
@@ -816,28 +826,27 @@ class CardTracker:
 
     def _match(self, detections: list[Detection]) -> list[int]:
         """Hit each detection's track, starting new tracks for the unmatched, and age the rest.
-        Returns the track id of each detection, in detection order."""
-        # Greedy nearest-neighbour matching, closest pairs first.
+
+        A detection scoring at least start_confidence is strong: it is paired with the nearest track
+        in reach, or starts a new one. A weaker one is weak: it is paired only with a track no strong
+        detection hit this frame, nearest first, and then only sustains it (see _sustain); unpaired,
+        it starts no track. Returns the track id of each detection, in detection order, or 0 for a
+        weak detection paired with none."""
         det_tracks = [0] * len(detections)
-        pairs = []
-        for det_i, det in enumerate(detections):
-            for track_id, track in self.tracks.items():
-                dist = ((det.cx - track.cx) ** 2 + (det.cy - track.cy) ** 2) ** 0.5
-                if dist <= self.cfg.match_dist:
-                    pairs.append((dist, det_i, track_id))
-        pairs.sort()
-        used_dets: set[int] = set()
+        strong = [i for i, det in enumerate(detections) if det.conf >= self.cfg.start_confidence]
+        weak = [i for i, det in enumerate(detections) if det.conf < self.cfg.start_confidence]
         hit_tracks: set[int] = set()
-        for _, det_i, track_id in pairs:
-            if det_i in used_dets or track_id in hit_tracks:
-                continue
-            used_dets.add(det_i)
+        for det_i, track_id in self._nearest_pairs(detections, strong, hit_tracks):
             hit_tracks.add(track_id)
             det_tracks[det_i] = track_id
             self._hit(self.tracks[track_id], detections[det_i])
+        for det_i, track_id in self._nearest_pairs(detections, weak, hit_tracks):
+            hit_tracks.add(track_id)
+            det_tracks[det_i] = track_id
+            self._sustain(self.tracks[track_id], detections[det_i])
 
-        # Unmatched detections start new tracks, highest confidence first.
-        unmatched = set(range(len(detections))) - used_dets
+        # Unmatched strong detections start new tracks, highest confidence first.
+        unmatched = [det_i for det_i in strong if not det_tracks[det_i]]
         for det_i in sorted(unmatched, key=lambda i: -detections[i].conf):
             track = Track(self._next_id, detections[det_i].cx, detections[det_i].cy)
             self._next_id += 1
@@ -852,16 +861,52 @@ class CardTracker:
                 continue
             track = self.tracks[track_id]
             track.missed += 1
-            if self._reached(self.now - track.hits[-1].time, self.cfg.drop_seconds):
+            if self._reached(self.now - track.last_seen, self.cfg.drop_seconds):
                 del self.tracks[track_id]
                 self._card_of.pop(track_id, None)
                 self._dealt_backs.discard(track_id)
         return det_tracks
 
+    def _nearest_pairs(self, detections: list[Detection], det_indices: list[int],
+                       taken: set[int]) -> list[tuple[int, int]]:
+        """Greedy nearest-neighbour pairs (detection index, track id) of the detections at det_indices
+        and the tracks not in taken, closest first, one to one, each within match_dist."""
+        candidates = []
+        for det_i in det_indices:
+            det = detections[det_i]
+            for track_id, track in self.tracks.items():
+                if track_id in taken:
+                    continue
+                dist = ((det.cx - track.cx) ** 2 + (det.cy - track.cy) ** 2) ** 0.5
+                if dist <= self.cfg.match_dist:
+                    candidates.append((dist, det_i, track_id))
+        candidates.sort()
+        pairs: list[tuple[int, int]] = []
+        used_dets: set[int] = set()
+        used_tracks: set[int] = set()
+        for _, det_i, track_id in candidates:
+            if det_i in used_dets or track_id in used_tracks:
+                continue
+            used_dets.add(det_i)
+            used_tracks.add(track_id)
+            pairs.append((det_i, track_id))
+        return pairs
+
+    def _sustain(self, track: Track, det: Detection):
+        """A weak sighting: the track moves and is seen this frame, so it does not miss or drop.
+        It adds no Hit, so the name vote and the confirmation checks never see it."""
+        self._move(track, det)
+        track.missed = 0
+        track.last_seen = self.now
+
+    def _move(self, track: Track, det: Detection):
+        track.cx = 0.7 * track.cx + 0.3 * det.cx  # light smoothing against jitter
+        track.cy = 0.7 * track.cy + 0.3 * det.cy
+
     def _hit(self, track: Track, det: Detection):
         if track.seen:
-            track.cx = 0.7 * track.cx + 0.3 * det.cx  # light smoothing against jitter
-            track.cy = 0.7 * track.cy + 0.3 * det.cy
+            self._move(track, det)
+        track.last_seen = self.now
         track.hits.append(Hit(self.now, self._interval, det.conf, det.cx, det.cy, det.label))
         keep = self._history_seconds(track)
         while len(track.hits) > 1 and not self._within(track.hits[0].time, keep):
@@ -878,7 +923,7 @@ class CardTracker:
     def _history_seconds(self, track: Track) -> float | None:
         """How far back the track's sightings are still needed (None: all of them). The label window
         needs them, and so does the confirm window until the track is confirmed; with no confirm
-        window that is every sighting. 0: only the latest, which the drop check reads."""
+        window that is every sighting. 0: only the latest."""
         cfg = self.cfg
         if not track.confirmed and cfg.confirm_window_seconds is None:
             return None
