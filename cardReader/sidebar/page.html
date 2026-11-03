@@ -7,13 +7,22 @@
 <link rel="icon" href="data:,">  <!-- no icon, so the browser does not ask the server for one -->
 
 <style>
+  /* Inter, served by read.py's own server so the page works offline. One regular weight is
+     bundled; the browser thickens it for bold text. Until it loads, the system font shows. */
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("/Inter-Regular.woff2") format("woff2");
+  }
   /* Felt greens: card-table green behind the page, poker green for the sections. Every text
      colour keeps a contrast of at least 4.5:1 on the section green, so the coloured ones are
      pale tints of their hues (pink for red, mint for green) rather than the window's colours. */
   :root {
-    --panel: #00512C;
-    --card: #35654d;
-    --well: #003d21;      /* buttons and fields, a shade darker than the page */
+    --panel: #003F22;
+    --card: #2A523E;
+    --well: #002E19;      /* buttons and fields, a shade darker than the page */
     --line: rgba(255, 255, 255, .25);
     --text: #f2f2f2;
     --grey: #d2e4d8;
@@ -31,7 +40,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--panel); color: var(--text); }
-  body { font: 16px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { font: 16px/1.3 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main {
     display: grid;
     gap: 1rem;
@@ -60,7 +69,7 @@
   .favours-player { color: var(--green); }
   .favours-dealer { color: var(--red); }
   .favours-neither { color: var(--text); }
-  .figures { display: flex; gap: 2rem; margin-top: .6rem; font-size: 1.3rem; flex-wrap: wrap; }
+  .figures { display: flex; gap: .3rem 2rem; margin-top: .6rem; font-size: 1.3rem; flex-wrap: wrap; }
   .figures span { color: var(--grey); margin-right: .4rem; }
 
   #deck { grid-area: deck; container-type: inline-size; }
@@ -149,9 +158,9 @@
   }
   .hand .odds .label { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
   .hand .odds .value { font-size: 1.4rem; font-weight: 700; line-height: 1.1; color: var(--text); font-variant-numeric: tabular-nums; }
-  /* a small label naming a row of tiles, such as STAND, set before its first tile */
+  /* a small label naming a row of tiles, such as STAND or Odds were, set before its first tile */
   .hand .odds .group {
-    align-self: center; min-width: 3.5rem;
+    align-self: center; min-width: 3.5rem; white-space: nowrap;
     font-size: .75rem; font-weight: 700; letter-spacing: .06em; color: var(--grey);
   }
   .seat { font-weight: 700; color: var(--seat); overflow-wrap: anywhere; }
@@ -201,7 +210,7 @@
   .hand.player.outcome-lose .order { background: var(--dim); }
   .tag {
     margin-left: .4em; padding: 0 .35em; border: 1px solid currentColor; border-radius: .3em;
-    font-size: .7em; font-weight: 700; text-transform: uppercase; vertical-align: middle;
+    font-size: .7em; font-weight: 700; vertical-align: middle;
   }
   .tag.win { color: var(--badge); }
   .tag.push { color: var(--text); }
@@ -288,11 +297,11 @@
 </head>
 <body>
 <main>
-  <section id="count"><h2 id="countTitle">TRUE COUNT</h2><div id="countBody">waiting for read.py ...</div></section>
+  <section id="count"><h2 id="countTitle">TRUE COUNT</h2><div id="countBody">Waiting for read.py ...</div></section>
   <section id="deck"><h2>CARDS LEFT</h2><div id="deckBody"></div></section>
   <section id="seats"><h2 id="seatsTitle">HANDS</h2><div id="seatsBody"></div></section>
   <section id="keys">
-    <h2><button id="keysToggle" class="toggle" aria-expanded="true" aria-controls="keysNote keysBody" title="fold or open (K)">KEYS</button></h2>
+    <h2><button id="keysToggle" class="toggle" aria-expanded="true" aria-controls="keysNote keysBody" title="Fold or open (K)">KEYS</button></h2>
     <p id="keysNote" class="note">Press them in the video window, or use the buttons. Grey ones work in the window only. K folds this section.</p>
     <div id="keysBody" class="keylist"></div>
   </section>
@@ -323,7 +332,7 @@
     "low cards left \u00b7 favours dealer": "favours-dealer",
     "even deck": "favours-neither",
   };
-  const OUTCOME_TAG = { win: "win", push: "push", lose: "lost" };
+  const OUTCOME_TAG = { win: "Win", push: "Push", lose: "Lost" };
 
   let latest = null;
   let flash = null;          // the message currently shown in the status line
@@ -333,6 +342,12 @@
 
   function esc(text) {
     return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[c]);
+  }
+
+  // text with its first letter capitalised, for a label the snapshot sends in lower case
+  // because the window shares it, such as a key's action or the count cue
+  function sentence(text) {
+    return text.charAt(0).toUpperCase() + text.slice(1);
   }
 
   function isRed(label) {
@@ -348,19 +363,19 @@
     const tone = CUE_CLASS[count.cue];
     return `
       <div class="headline ${tone}"><span class="true">${esc(count.headline)}</span>
-        <span class="cue">${esc(count.cue)}</span></div>
+        <span class="cue">${esc(sentence(count.cue))}</span></div>
       <div class="figures">
-        <div><span>running</span>${esc(count.running)}</div>
-        <div><span>left</span>${count.cards_left}/${count.deck_size}</div>
-        <div><span>tens &amp; aces</span>${count.high_left}/${count.high_total}</div>
-        <div><span>aces</span>${count.aces_left}/${count.aces_total}</div>
+        <div><span>Running</span>${esc(count.running)}</div>
+        <div><span>Left</span>${count.cards_left}/${count.deck_size}</div>
+        <div><span>Tens &amp; aces</span>${count.high_left}/${count.high_total}</div>
+        <div><span>Aces</span>${count.aces_left}/${count.aces_total}</div>
       </div>`;
   }
 
   function renderDeck(grid, unrevealed) {
     const header = ["", ""].concat(["S", "H", "D", "C"].map((suit) =>
       `<span style="color: ${RED_SUITS.has(suit) ? "var(--red)" : "var(--text)"}">${SUIT[suit]}</span>`
-    ), [`<span style="color: var(--grey); font-size: .7em">left</span>`]);
+    ), [`<span style="color: var(--grey); font-size: .7em">Left</span>`]);
     let cells = header.map((html) => `<div>${html}</div>`).join("");
     // Every cell below the header is placed explicitly, so the shading strip can sit under its row.
     grid.forEach((row, i) => {
@@ -386,7 +401,7 @@
       cells += `<div class="left${row.left ? "" : " none"}" style="grid-area: ${line} / 7">${row.left}</div>`;
     });
     return `<div class="grid">${cells}</div>
-      <div class="unrevealed${unrevealed ? " some" : ""}">face down, never revealed: ${unrevealed}</div>`;
+      <div class="unrevealed${unrevealed ? " some" : ""}">Face down, never revealed: ${unrevealed}</div>`;
   }
 
   // A tile's hover text: its state, and with more than one deck its copies seen ("1 of 2 seen, pending").
@@ -405,7 +420,7 @@
   function renderSeats(snapshot) {
     let html = "";
     if (snapshot.edit_help.length) {
-      html += `<div class="edit"><b>EDIT ZONES</b> (in the video window)<br>${snapshot.edit_help.map(esc).join("<br>")}</div>`;
+      html += `<div class="edit"><b>EDIT ZONES</b> (in the video window)<br>${snapshot.edit_help.map((line) => esc(sentence(line))).join("<br>")}</div>`;
     }
     const playerLost = snapshot.hands.some((hand) => hand.kind === "player" && hand.outcome === "lose");
     for (const hand of snapshot.hands) {
@@ -413,12 +428,12 @@
       // a dealer or player seat can be renamed by clicking its name; OTHER cannot. Both hands
       // of a split seat rename the seat, so the field starts from its name without the part.
       const renamable = hand.kind === "other" ? ""
-        : ` data-seat="${esc(hand.seat)}" data-name="${esc(hand.name)}" title="click to rename"`;
+        : ` data-seat="${esc(hand.seat)}" data-name="${esc(hand.name)}" title="Click to rename"`;
       const title = hand.part ? `${hand.name} ${hand.part}` : hand.name;
       html += `<div class="${handClasses(hand, playerLost)}">
         <div class="seat"${renamable}>${esc(title)}</div>
         <div class="cards">${hand.cards.map(renderChip).join("")}</div>
-        <div class="total${empty ? " empty" : ""}">${esc(hand.total)}${outcomeTag(hand)}</div>
+        <div class="total${empty ? " empty" : ""}">${esc(sentence(hand.total))}${outcomeTag(hand)}</div>
         <div class="play">${splitButton(hand)}<div class="hint ${hand.hint || "none"}">${esc(hand.hint || "-")}</div></div>
         ${renderOdds(hand)}
       </div>`;
@@ -429,12 +444,14 @@
   // A hand's odds as rows of tiles across it. A player: the next card's totals for a live hand
   // (21, 20, 19, 18, BUST), else one BLACKJACK tile, then a STAND row (WIN, PUSH, LOSE) for a
   // live hand. The dealer: its final totals, BLACKJACK first while the hole card is down, then
-  // INSURANCE (TAKE or SKIP) while an ace shows. Keys are listed by hand, since an object lists
+  // INSURANCE (TAKE or SKIP) while an ace shows. A finished hand has no live odds; it shows
+  // instead an "Odds were" row (renderWas). Keys are listed by hand, since an object lists
   // "18" before "21".
   const NEXT_CARD = ["21", "20", "19", "18", "bust"];
   const DEALER_FINALS = ["blackjack", "21", "20", "19", "18", "17", "bust"];
   const STAND = ["win", "push", "lose"];
   function renderOdds(hand) {
+    if (hand.was) return renderWas(hand.was);
     if (hand.kind === "dealer") return renderDealerOdds(hand);
     let html = "";
     if (hand.odds) {
@@ -452,6 +469,15 @@
     let tiles = hand.odds ? percentTiles(hand.odds, DEALER_FINALS) : "";
     if (hand.insurance) tiles += textTile("INSURANCE", hand.insurance.toUpperCase());
     return tiles ? `<div class="odds">${tiles}</div>` : "";
+  }
+
+  // How likely a finished hand's result was: the result its last card made (the dealer: the final
+  // it reached from its up card), such as 21 8%, then for a settled player hand WIN, PUSH, or LOSE
+  // as the chance of that result when it stood.
+  function renderWas(was) {
+    let tiles = statTile(was.result.toUpperCase(), was.chance);
+    if (was.stand) tiles += statTile(was.stand.result.toUpperCase(), was.stand.chance);
+    return `<div class="odds"><span class="group">Odds were</span>${tiles}</div>`;
   }
 
   // One tile per key of odds that is present, in the order of keys.
@@ -486,8 +512,8 @@
   // A split button on a player's pair, a join button on each hand of a split seat, else nothing.
   function splitButton(hand) {
     const seat = esc(hand.seat);
-    if (hand.can_split) return `<button data-action="split_seat" data-seat="${seat}" title="split into two hands">split</button>`;
-    if (hand.part) return `<button data-action="join_seat" data-seat="${seat}" title="make one hand again">join</button>`;
+    if (hand.can_split) return `<button data-action="split_seat" data-seat="${seat}" title="Split into two hands">Split</button>`;
+    if (hand.part) return `<button data-action="join_seat" data-seat="${seat}" title="Make one hand again">Join</button>`;
     return "";
   }
 
@@ -506,14 +532,14 @@
 
   // The decks in the shoe; a click cycles 1, 2, 3 and the reader recounts the cards seen.
   function renderDecks(decks) {
-    return `<button class="key" data-action="cycle_decks" title="decks in the shoe: click for 1, 2, or 3">`
-      + `<span class="deckcount">${decks}</span><span class="action">deck${decks > 1 ? "s" : ""}</span></button>`;
+    return `<button class="key" data-action="cycle_decks" title="Decks in the shoe: click for 1, 2, or 3">`
+      + `<span class="deckcount">${decks}</span><span class="action">Deck${decks > 1 ? "s" : ""}</span></button>`;
   }
 
   // A button when the page has one, a set of buttons for 1-5 (with the current player count
   // filled in) and for < >, and a grey entry for a key that works in the window only.
   function renderKey(entry, players) {
-    const label = `<kbd>${esc(entry.key)}</kbd><span class="action">${esc(entry.label)}</span>`;
+    const label = `<kbd>${esc(entry.key)}</kbd><span class="action">${esc(sentence(entry.label))}</span>`;
     if (entry.buttons.length === 1) {
       return `<button class="key" data-action="${esc(entry.buttons[0].action)}">${label}</button>`;
     }
@@ -530,7 +556,7 @@
   // body: {action: "<name>"} plus any string fields the action takes
   // The name of the model the reader runs: its label in the dropdown, else its path.
   function modelName(model) {
-    if (!model.current) return "none (capture mode)";
+    if (!model.current) return "None (capture mode)";
     const choice = model.choices.find((option) => option.path === model.current);
     return choice ? choice.label : model.current;
   }
@@ -540,12 +566,12 @@
   function renderModel(model) {
     const options = model.choices.map((choice) => {
       const selected = choice.path === model.current ? " selected" : "";
-      return `<option value="${esc(choice.path)}"${selected}>${esc(choice.label)}</option>`;
+      return `<option value="${esc(choice.path)}"${selected}>${esc(sentence(choice.label))}</option>`;
     });
     if (!model.choices.some((choice) => choice.path === model.current)) {
       options.unshift(`<option value="" selected disabled>${esc(modelName(model))}</option>`);
     }
-    return `<label class="key picker"><span>model</span>`
+    return `<label class="key picker"><span>Model</span>`
       + `<select id="modelSelect">${options.join("")}</select></label>`;
   }
 
@@ -561,7 +587,7 @@
       const selected = choice.id === countSystem.current ? " selected" : "";
       return `<option value="${esc(choice.id)}"${selected}>${esc(choice.name)}</option>`;
     });
-    return `<label class="key picker"><span>count</span>`
+    return `<label class="key picker"><span>Count</span>`
       + `<select id="countSelect">${options.join("")}</select></label>`;
   }
 
@@ -570,7 +596,7 @@
     if (body.action === "quit" && !confirm("Quit the card reader?")) return;
     fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then((response) => {
-        if (!response.ok) showFlash({ text: "the reader did not take that button", seconds: 2 });
+        if (!response.ok) showFlash({ text: "The reader did not take that button", seconds: 2 });
       })
       .catch(() => { connected = false; })
       .finally(render);
@@ -578,16 +604,16 @@
 
   function renderStatus(snapshot) {
     const parts = [];
-    if (!connected) parts.push(`<span class="alert">not connected: is read.py --web running?</span>`);
+    if (!connected) parts.push(`<span class="alert">Not connected: is read.py --web running?</span>`);
     if (snapshot) {
       const t = snapshot.timing;
       if (snapshot.capture_mode) parts.push(`<span class="alert">CAPTURE MODE (no model)</span>`);
-      if (snapshot.no_signal) parts.push(`<span class="alert">no signal: press C to reconnect</span>`);
-      parts.push(`<span>model ${esc(modelName(snapshot.model))}</span>`);
+      if (snapshot.no_signal) parts.push(`<span class="alert">No signal: press C to reconnect</span>`);
+      parts.push(`<span>Model ${esc(modelName(snapshot.model))}</span>`);
       parts.push(`<span>${t.fps.toFixed(1)} fps</span>`);
-      parts.push(`<span>detect ${t.detect_ms.toFixed(1)} ms</span>`);
-      parts.push(`<span>prep ${esc(snapshot.preprocess)} ${t.preprocess_ms.toFixed(1)} ms</span>`);
-      if (snapshot.showing_raw) parts.push(`<span>showing raw</span>`);
+      parts.push(`<span>Detect ${t.detect_ms.toFixed(1)} ms</span>`);
+      parts.push(`<span>Prep ${esc(snapshot.preprocess)} ${t.preprocess_ms.toFixed(1)} ms</span>`);
+      if (snapshot.showing_raw) parts.push(`<span>Showing raw</span>`);
     }
     if (flash) parts.push(`<span class="flash">${esc(flash)}</span>`);
     return parts.join("");
@@ -615,7 +641,7 @@
   }
 
   function showFlash(message) {
-    flash = message.text;
+    flash = sentence(message.text);
     clearTimeout(flashTimer);
     flashTimer = setTimeout(() => { flash = null; render(); }, message.seconds * 1000);
   }
@@ -720,7 +746,7 @@
   document.getElementById("keysBody").addEventListener("change", (event) => {
     if (event.target.id === "modelSelect") {
       const choice = event.target.selectedOptions[0];
-      showFlash({ text: `loading ${choice.textContent} ...`, seconds: 30 });
+      showFlash({ text: `Loading ${choice.textContent} ...`, seconds: 30 });
       postAction({ action: "switch_model", path: choice.value });
     } else if (event.target.id === "countSelect") {
       postAction({ action: "switch_count", system: event.target.value });
@@ -756,7 +782,7 @@
     const input = document.createElement("input");
     input.maxLength = 16;
     input.value = original;
-    input.setAttribute("aria-label", `new name for ${original}`);
+    input.setAttribute("aria-label", `New name for ${original}`);
     let closed = false;
     const close = (save) => {
       if (closed) return;
