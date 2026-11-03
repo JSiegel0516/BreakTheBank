@@ -184,6 +184,67 @@ def test_covered_card_is_hidden_not_removed():
     assert [(c.order, c.label, c.hidden) for c in tr.round] == [(1, "KH", True), (2, "5C", False)]
 
 
+def weak_tracker(**overrides):
+    """A tracker that starts tracks only from boxes scoring 0.6 or more."""
+    return CardTracker(start_confidence=0.6, confirm_seconds=3 * FRAME, drop_seconds=3 * FRAME,
+                       round_end_seconds=100 * FRAME, **overrides)
+
+
+def test_weak_boxes_keep_a_track_started_strong_from_missing_or_being_dropped():
+    tr = weak_tracker()
+    run(tr, [det("KH", 50, 200, conf=0.7)], 3)
+    card = tr.round[0]
+    ev = run(tr, [det("KH", 56, 206, conf=0.5)], 20)        # far longer than drop_seconds, all weak
+    assert ev == [] and not card.hidden
+    assert [(t.missed, round(t.cx), round(t.cy)) for t in tr.tracks.values()] == [(0, 56, 206)]  # moved with them
+    assert tr.bound == [card]
+    assert [e.kind for e in run(tr, [], 3)] == ["hidden"]   # dropped drop_seconds after the last weak sighting
+
+
+def test_a_weak_box_with_no_track_in_reach_starts_none():
+    tr = weak_tracker(match_dist=20)
+    run(tr, [det("KH", 50, 200, conf=0.7)], 3)
+    ev = run(tr, [det("KH", 50, 200, conf=0.7), det("9D", 300, 200, conf=0.5)], 20)
+    assert ev == [] and labels(tr) == ["KH"] and len(tr.tracks) == 1
+    assert tr.bound == [tr.round[0], None]
+
+
+def test_a_weak_box_beside_a_track_a_strong_box_hit_starts_none():
+    tr = weak_tracker()
+    run(tr, [det("KH", 50, 200, conf=0.7)], 3)
+    run(tr, [det("KH", 50, 200, conf=0.7), det("KH", 55, 200, conf=0.5)], 20)
+    assert len(tr.tracks) == 1 and tr.bound == [tr.round[0], None]
+
+
+def test_weak_sightings_add_nothing_to_confirmation():
+    tr = weak_tracker()
+    tr.update([det("KH", 50, 200, conf=0.9)])
+    assert run(tr, [det("KH", 50, 200, conf=0.5)], 20) == []   # kept, but never confirmed by weak boxes alone
+    assert tr.update([det("KH", 50, 200, conf=0.9)]) == []
+    ev = tr.update([det("KH", 50, 200, conf=0.9)])             # the third strong sighting, as with no weak boxes
+    assert [(e.kind, e.card.label) for e in ev] == [("placed", "KH")]
+
+
+def test_confirm_confidence_averages_only_the_strong_sightings():
+    tr = weak_tracker(confirm_confidence=0.7)
+    for _ in range(10):
+        tr.update([det("KH", 50, 200, conf=0.65)])               # strong enough to track, too weak to confirm
+        tr.update([det("KH", 50, 200, conf=0.4)])
+    assert tr.round == []
+    tr = weak_tracker(confirm_confidence=0.7)
+    for _ in range(3):
+        tr.update([det("KH", 50, 200, conf=0.75)])
+        tr.update([det("KH", 50, 200, conf=0.4)])                # would pull the average below 0.7 if counted
+    assert labels(tr) == ["KH"]
+
+
+def test_weak_reads_do_not_sway_a_cards_name():
+    tr = weak_tracker(label_window_seconds=5 * FRAME)
+    run(tr, [det("6H", 50, 200, conf=0.9)], 3)
+    ev = run(tr, [det("9H", 50, 200, conf=0.5)], 20)
+    assert ev == [] and labels(tr) == ["6H"]
+
+
 def test_card_returning_keeps_its_number_and_is_not_recounted():
     tr = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=3 * FRAME, round_end_seconds=100 * FRAME)
     run(tr, [det("KH", 50, 200), det("5C", 300, 200)], 3)
@@ -1209,8 +1270,9 @@ def test_config_object_and_keyword_overrides_agree():
     class S:  # the fields settings.py provides
         CONFIRM_SECONDS, CONFIRM_WINDOW_SECONDS, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 0.01, 1.0, 0.8, 0.7
         STILL_DISTANCE, DROP_SECONDS, MATCH_DISTANCE, ROUND_END_SECONDS = 0.01, 3.0, 0.05, 9.0
-        LABEL_WINDOW_SECONDS, HIDDEN_SECONDS, COPY_HOLD_SECONDS = 4.5, 0, 0
+        LABEL_WINDOW_SECONDS, HIDDEN_SECONDS, COPY_HOLD_SECONDS, CONFIDENCE = 4.5, 0, 0, 0.6
     cfg = TrackerConfig.from_settings(S, 2000)
+    assert cfg.start_confidence == 0.6
     assert (cfg.still_distance, cfg.match_dist) == (20.0, 100.0)  # fractions of the width become pixels
     assert (cfg.confirm_seconds, cfg.confirm_window_seconds, cfg.drop_seconds) == (0.01, 1.0, 3.0)  # seconds kept
     assert (cfg.round_end_seconds, cfg.label_window_seconds) == (9.0, 4.5)

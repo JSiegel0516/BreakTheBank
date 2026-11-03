@@ -95,6 +95,20 @@ def test_boxes_take_the_colour_of_their_bound_card_and_g_hides_the_unmatched():
     assert ("G", "grey boxes") in KEY_LIST
 
 
+def test_an_unmatched_box_too_weak_to_start_a_track_is_not_drawn_but_a_bound_one_is():
+    W, H = 1280, 720
+    layout = SeatLayout(3, W, H)
+    frame = np.zeros((H, W, 3), np.uint8)
+    six = Card(1, "6H", 120, 130, 1)
+    weak = [Detection("6H", 0.5, 120, 130, (100, 100, 140, 160))]
+    edge = (130, 100)
+    hud = Hud(start_confidence=0.6)
+    empty = hud.draw(frame, [], [six], 30.0, layout, shoe_count(["6H"]))
+    assert (hud.draw(frame, weak, [six], 30.0, layout, shoe_count(["6H"]), bound=[None])[edge] == empty[edge]).all()
+    assert tuple(hud.draw(frame, weak, [six], 30.0, layout, shoe_count(["6H"]), bound=[six])[edge]) == RED
+    assert tuple(Hud().draw(frame, weak, [six], 30.0, layout, shoe_count(["6H"]), bound=[None])[edge]) == GREY
+
+
 @pytest.mark.parametrize("legend", [True, False])
 @pytest.mark.parametrize("editing", [False, True])
 @pytest.mark.parametrize("view", ["cards_left", "game"])

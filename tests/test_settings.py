@@ -45,6 +45,8 @@ def test_focus_defaults_are_the_eight_misread_cards_with_two_extra_copies_and_no
     ("PLAYERS", 6, "whole number from 1 to 5"),
     ("CONFIDENCE", 1.5, "number from 0 to 1"),
     ("CONFIRM_CONFIDENCE", -0.1, "number from 0 to 1"),
+    ("SUSTAIN_CONFIDENCE", -0.1, "number from 0 to 1"),
+    ("SUSTAIN_CONFIDENCE", "0.4", "number from 0 to 1"),
     ("MATCH_DISTANCE", 0, "fraction above 0 and at most 1"),
     ("VAL_FRACTION", 1.0, "fraction above 0 and below 1"),
     ("CAMERA_WIDTH", -1, "None or a whole number of 1 or more"),
@@ -92,6 +94,14 @@ def test_invalid_value_is_reported_with_its_name_and_allowed_range(name, value, 
 def test_confirm_time_cannot_exceed_the_window_it_is_counted_in():
     with pytest.raises(ValueError, match="CONFIRM_SECONDS = 0.5 must be at most CONFIRM_WINDOW_SECONDS = 0.4"):
         settings.validate(shipped(CONFIRM_WINDOW_SECONDS=0.4))
+
+
+def test_sustain_confidence_cannot_exceed_the_confidence_that_starts_a_track():
+    with pytest.raises(ValueError, match="SUSTAIN_CONFIDENCE = 0.7 must be at most CONFIDENCE = 0.6"):
+        settings.validate(shipped(SUSTAIN_CONFIDENCE=0.7))
+    with pytest.raises(ValueError, match="SUSTAIN_CONFIDENCE = 1.5: must be a number from 0 to 1"):
+        settings.validate(shipped(SUSTAIN_CONFIDENCE=1.5, CONFIDENCE=1.5))
+    settings.validate(shipped(SUSTAIN_CONFIDENCE=0.6))                  # equal: weak boxes are off
 
 
 def test_hidden_seconds_zero_is_allowed():

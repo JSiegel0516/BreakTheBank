@@ -11,7 +11,8 @@
     * every corner index the detector sees: a box in the card's colour when the
       tracker has matched it to a confirmed card, even on a frame that misreads
       its name; otherwise a thin grey box, not matched to a confirmed card yet
-      (key G hides these)
+      (key G hides these). An unmatched box too weak to start a track (below
+      Hud.start_confidence) is not drawn
     * a tag on each card of the round: its name, the rank followed by the
       suit's shape, or BACK for a face-down card. Key N (Hud.show_order, off
       at start) puts its placement number in a yellow badge before the name.
@@ -276,7 +277,10 @@ def _top_of_overlap(tags: list[tuple], rect: tuple) -> int | None:
 
 
 class Hud:
-    def __init__(self):
+    def __init__(self, start_confidence: float = 0.0):
+        """start_confidence: an unmatched box scoring below this is not drawn, as it can start no
+        track (TrackerConfig.start_confidence)."""
+        self.start_confidence = start_confidence
         self._message = ""
         self._message_until = 0.0
         self._unsent_flash: tuple[str, float] | None = None
@@ -309,8 +313,9 @@ class Hud:
         cards: every card of the round, hidden ones included, in placement order.
         bound: per detection, in the order of dets, the confirmed card it belongs to or None
         (CardTracker.bound). A bound box takes its card's colour even when this frame misreads
-        its name; any other box is thin grey, drawn only while show_unmatched is set. A
-        detection without an entry, or every detection when bound is None, is not bound.
+        its name; any other box is thin grey, drawn only while show_unmatched is set and only
+        when it scores at least start_confidence. A detection without an entry, or every
+        detection when bound is None, is not bound.
         editor: the zone editor, drawn with handles while it is active.
         dealt: the shoe's cards for the Cards Left view's grid and the count's cards left
         (None: a full shoe of count.decks decks).
@@ -338,7 +343,7 @@ class Hud:
             x1, y1, x2, y2 = map(int, det.box)
             if card is not None:
                 cv2.rectangle(view, (x1, y1), (x2, y2), card_colour(card.label), self.thick)
-            elif self.show_unmatched:
+            elif self.show_unmatched and det.conf >= self.start_confidence:
                 cv2.rectangle(view, (x1, y1), (x2, y2), GREY, 1)
 
         placed: list[tuple] = []

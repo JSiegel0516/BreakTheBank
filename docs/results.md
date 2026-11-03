@@ -280,3 +280,27 @@ What it shows:
 percentile stretch or the highlight curve again without new evidence, such as real
 overlit photos from the team's table. CLAHE stays as it was. It did best on the
 harshest haze (97.7%) but is worse than `off` everywhere else.
+
+## Weak boxes keeping tracks seen (`SUSTAIN_CONFIDENCE`)
+
+**Pending: no clips recorded yet.** This section will compare the reader with weak
+boxes off and on. Weak boxes are boxes scoring from `SUSTAIN_CONFIDENCE` up to
+`CONFIDENCE`; they keep a track seen but cannot start one or sway its name
+(see `docs/reading.md`, Weak boxes and `SUSTAIN_CONFIDENCE`). Each clip is read
+with the steps under Measuring double counting with two decks in
+`docs/reading.md`, then scored with `evaluate.py`.
+
+Settings for both runs: `CONFIDENCE` 0.6, `CONFIRM_CONFIDENCE` 0.7, `DROP_SECONDS`
+1.0, `INPUT_SIZE` 1280, `PREPROCESS` auto, the live model. Before: `SUSTAIN_CONFIDENCE`
+0.6 (off). After: `SUSTAIN_CONFIDENCE` 0.4.
+
+| Clip | Decks | Run | Extra | Missed | Wrong name |
+|---|---|---|---|---|---|
+| (pending) | 1 | before | | | |
+| | | after | | | |
+| (pending) | 2 | before | | | |
+| | | after | | | |
+
+Fill in the clip file names and the figures when the clips exist. If `extra`
+or `wrong name` rises with weak boxes on, raise `SUSTAIN_CONFIDENCE` or set it
+to `CONFIDENCE`.

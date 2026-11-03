@@ -76,7 +76,7 @@ view. The Cards Left view's colours are in the table above.
 | Red box or name | corner index, tags, sidebar | a confirmed heart or diamond (the suit colour, not an error) |
 | White box or name | same | a confirmed spade or club |
 | Amber box or name | same | a confirmed face-down card |
-| Thin grey box | corner index | a detection not matched to a confirmed card: it has not passed the [confirmation checks](#rules-the-tracker-assumes) yet, or it is away from every card (`G` hides these) |
+| Thin grey box | corner index | a detection not matched to a confirmed card: it has not passed the [confirmation checks](#rules-the-tracker-assumes) yet, or it is away from every card (`G` hides these). A box scoring below `CONFIDENCE` that matches no track is not drawn |
 | Yellow badge | sidebar, and tags after `N` | the card's placement number; the Game legend lists it only while `N` shows it on the tags |
 | Grey badge and name | tags, sidebar | a hidden card: covered right now, still in its hand until it is removed, and in the count (the tag's badge only after `N`) |
 | Magenta `?` | tags | a held copy: on the table with its number, not in the count yet (the Game legend's `copy held, not counted`) |
@@ -947,21 +947,39 @@ whether the change helps.
 7. To see where the spare tracks come from, play the clip again without
    `--no-display` and press `G`. Thin grey boxes are detections not yet matched
    to a card. A grey box that stays on a corner next to a confirmed card is a
-   second track forming there.
+   second track forming there. A box scoring below `CONFIDENCE` that matches no
+   track is not drawn: it cannot start one.
 
 Use the same clip and expected file for every comparison. A change that lowers
 `extra` without raising `missed` is a gain.
+
+### Weak boxes and `SUSTAIN_CONFIDENCE`
+
+The detector keeps boxes down to `SUSTAIN_CONFIDENCE` (0.4). Only a box scoring
+at least `CONFIDENCE` (0.6) can start a track. A weaker box can only keep a
+track it lands on seen: the track follows it and does not miss. It adds nothing
+to the card's name vote or to the confirmation checks, so a name is still
+decided by confident reads. A corner that scores 0.55 for a few frames then
+stays one track. Without this it was dropped after `DROP_SECONDS`: the card
+turned grey and came back, or its corner started a new track.
+
+To measure it, score one single-deck and one two-deck clip twice with the steps
+above. Read them once with `SUSTAIN_CONFIDENCE = CONFIDENCE`, which turns weak
+boxes off, and once with the default. Compare the `extra`, `missed`, and
+`wrong name` figures, and record them in `docs/results.md`.
 
 ## Tuning the reader
 
 All of these are in `settings.py`. Change one at a time and watch the effect.
 A value out of range (a fraction above 1, `CONFIRM_SECONDS` larger than
-`CONFIRM_WINDOW_SECONDS`, and so on) stops `read.py` at start-up with a message naming it.
+`CONFIRM_WINDOW_SECONDS`, `SUSTAIN_CONFIDENCE` above `CONFIDENCE`, and so on) stops `read.py` at start-up with a message naming it.
 
 | If you see this | Change | Why |
 |---|---|---|
-| Cards are missed or take a long time to appear | lower `CONFIDENCE` (e.g. 0.6 to 0.5) | the model accepts less certain boxes |
-| Wrong or phantom cards appear | raise `CONFIDENCE` (e.g. 0.6 to 0.7) | only confident boxes count |
+| Cards are missed or take a long time to appear | lower `CONFIDENCE` (e.g. 0.6 to 0.5) | less certain boxes can start a track |
+| Wrong or phantom cards appear | raise `CONFIDENCE` (e.g. 0.6 to 0.7) | only confident boxes start a track |
+| A card sitting still turns grey and comes back, or is placed twice | lower `SUSTAIN_CONFIDENCE` (e.g. 0.4 to 0.3) | weaker boxes keep its track seen |
+| A card stays on the table after it was picked up | raise `SUSTAIN_CONFIDENCE` towards `CONFIDENCE`; equal to it turns weak boxes off | fewer stray weak boxes keep a track seen |
 | Phantom or wrong cards get confirmed | raise `CONFIRM_CONFIDENCE` (0.7 to 0.8) or `CONFIRM_AGREEMENT` (0.8 to 0.9) | only consistent, confident reads count |
 | A flickering detection still gets confirmed | raise `CONFIRM_SECONDS` closer to `CONFIRM_WINDOW_SECONDS` (e.g. 0.6 s of 0.7 s) | it must be seen almost every frame |
 | A card is confirmed while still being slid | lower `STILL_DISTANCE` (0.006 to 0.004) | it must be stiller |
