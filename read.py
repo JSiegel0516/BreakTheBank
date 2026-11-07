@@ -12,8 +12,8 @@
 
 Per frame:  camera -> rotate -> preprocess -> detector -> tracker -> table (seats, hands, card count) -> overlay
 
-Every event (placed, hidden, returned, removed, renamed, duplicate, round over) is printed
-as it happens, and appended to --log as CSV if given. Without a trained model it runs
+Every event (placed, hidden, returned, removed, renamed, merged, duplicate, held, counted,
+round over) is printed as it happens, and appended to --log as CSV if given. Without a trained model it runs
 in capture mode: it shows the live feed and lets you press 's' to save frames
 for labelling.
 
@@ -377,7 +377,8 @@ def main():
 
     def load(weights: str):
         from cardReader.detector import Detector  # slow import, only paid when a model is used
-        return Detector(weights, args.imgsz, min(settings.SUSTAIN_CONFIDENCE, args.conf), args.device)
+        return Detector(weights, args.imgsz, min(settings.SUSTAIN_CONFIDENCE, args.conf), args.device,
+                        iou=settings.NMS_IOU)
 
     detector = None
     if Path(args.model).exists():

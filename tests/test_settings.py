@@ -48,6 +48,8 @@ def test_focus_defaults_are_the_eight_misread_cards_with_two_extra_copies_and_no
     ("SUSTAIN_CONFIDENCE", -0.1, "number from 0 to 1"),
     ("SUSTAIN_CONFIDENCE", "0.4", "number from 0 to 1"),
     ("MATCH_DISTANCE", 0, "fraction above 0 and at most 1"),
+    ("SAME_CARD_DISTANCE", 1.2, "fraction above 0 and at most 1"),
+    ("NMS_IOU", 1.5, "number from 0 to 1"),
     ("VAL_FRACTION", 1.0, "fraction above 0 and below 1"),
     ("CAMERA_WIDTH", -1, "None or a whole number of 1 or more"),
     ("SYNTHETIC_IMAGES", -5, "whole number of 0 or more"),
@@ -102,6 +104,12 @@ def test_sustain_confidence_cannot_exceed_the_confidence_that_starts_a_track():
     with pytest.raises(ValueError, match="SUSTAIN_CONFIDENCE = 1.5: must be a number from 0 to 1"):
         settings.validate(shipped(SUSTAIN_CONFIDENCE=1.5, CONFIDENCE=1.5))
     settings.validate(shipped(SUSTAIN_CONFIDENCE=0.6))                  # equal: weak boxes are off
+
+
+def test_same_card_distance_cannot_be_below_the_match_distance():
+    with pytest.raises(ValueError, match="SAME_CARD_DISTANCE = 0.02 must be at least MATCH_DISTANCE = 0.03"):
+        settings.validate(shipped(SAME_CARD_DISTANCE=0.02))
+    settings.validate(shipped(SAME_CARD_DISTANCE=0.03))                 # equal is allowed
 
 
 def test_hidden_seconds_zero_is_allowed():

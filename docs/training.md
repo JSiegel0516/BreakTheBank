@@ -405,6 +405,59 @@ into `models/cards/` and writes `models/cards/LIVE.txt` naming the run, which
 `read.py` prints at start-up. Commit `models/cards/` afterwards so everyone gets
 the new live model with `git pull`.
 
+### Which cards have the fewest examples
+
+Before choosing the cards to target, see how many examples of each the model
+actually trains on. With a built dataset (`python train.py --rebuild` makes
+one), run:
+
+```bash
+python train.py --class-counts              # the table below
+python train.py --class-counts --csv classCounts.csv   # and the same as a file
+```
+
+It reads the label files in `data/dataset` back and prints one row per card,
+the fewest real train boxes first:
+
+```text
+class photos boxes copies synthetic val
+2S        61   118    236        71  19 *
+QH        64   124    248        75  22 *
+...
+KS       102   211    422        80  40
+
+real train boxes 9870, in copies 19740, synthetic 3900, real val 1912
+median 186 real train boxes per class; * marks the classes below it
+fewest: 2S 118, QH 124, ...
+python benchmark.py --confusions --focus 2S,QH,...
+```
+
+The numbers above are only an illustration. The columns:
+
+- **photos**: real train photos holding the card. A focus copy multiplies a
+  whole photo, so it also multiplies every other card in it.
+- **boxes**: the card's corner indices (whole cards for `BACK`) in those photos.
+  This is the count that matters: it is what the model learns the card from.
+- **copies**: its boxes in the rotated and focus copies of those photos
+  (`TRAIN_ROTATED_COPIES`, `FOCUS_CLASSES`). They repeat the same pixels turned
+  or as they are, so they weight the card but add no new views of it.
+- **synthetic**: its boxes in the synthetic images, drawn from the card art.
+- **val**: its boxes in the real validation photos, the exam every model is
+  scored on. A card with few val boxes has a noisy score: one mistake is a
+  large share.
+
+A `*` marks the cards below the median. The last line is ready to paste: it
+runs the confusion benchmark with a focus table for the cards with the fewest
+examples, so their mistakes can be set against their counts. If the cards that
+are misread most are also the ones with the fewest boxes, more examples of them
+should help, and they belong in `FOCUS_CLASSES` (next section). If the misread
+cards have as many boxes as the rest, scarcity is not the cause: look at what
+they are read as instead (same-colour suits, 6 and 9, J and Q are the usual
+pairs), and at the box sizes and angles in the confusion CSV.
+
+Record the table in [results.md](results.md) when the data changes, so the
+counts can be compared from one export to the next.
+
 ### Targeting misread cards (model 6)
 
 A few cards cause most of the live model's mistakes: they are over-counted or

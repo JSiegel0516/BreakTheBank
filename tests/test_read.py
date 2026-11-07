@@ -48,14 +48,14 @@ def run_reader(monkeypatch, tmp_path, cam, keys, detect, *args, make_detector=No
     args: extra command-line arguments. Saved frames go to tmp_path / "frames". Every model load
     returns detect, unless make_detector is given: then each load calls make_detector(weights).
     The camera runs at the tracker's nominal rate: read n is captured at n * FRAME seconds.
-    Returns the arguments of every Detector built, in order."""
+    Returns the arguments of every Detector built, in order: the positional ones, then a dict of the keywords."""
     monkeypatch.setattr(read, "Camera", lambda *a: cam)
     monkeypatch.setattr(read, "capture_time", lambda camera: camera.reads * FRAME)
     detect.device_used = "mps"
     built = []
 
-    def build(weights, *a):
-        built.append((weights, *a))
+    def build(weights, *a, **kw):
+        built.append((weights, *a, kw))
         return make_detector(weights) if make_detector else detect
 
     detector = ModuleType("cardReader.detector")
@@ -80,6 +80,7 @@ def test_the_detector_keeps_boxes_down_to_the_sustain_floor_and_only_conf_starts
                                                                                           args, start, floor):
     monkeypatch.setattr(read.settings, "CONFIDENCE", 0.6)
     monkeypatch.setattr(read.settings, "SUSTAIN_CONFIDENCE", 0.4)
+    monkeypatch.setattr(read.settings, "NMS_IOU", 0.55)
     built = {}
     for cls in (read.CardTracker, read.Hud):
         init = cls.__init__
@@ -91,7 +92,8 @@ def test_the_detector_keeps_boxes_down_to_the_sustain_floor_and_only_conf_starts
         monkeypatch.setattr(cls, "__init__", watched_init)
     detectors = run_reader(monkeypatch, tmp_path, FakeCamera(), [ord("q")], lambda frame: [], *args)
 
-    assert [conf for _, _, conf, _ in detectors] == [floor]
+    assert [conf for _, _, conf, _, _ in detectors] == [floor]
+    assert [kw["iou"] for *_, kw in detectors] == [0.55]          # NMS_IOU reaches the detector
     assert built["CardTracker"].cfg.start_confidence == start
     assert built["Hud"].start_confidence == start
 

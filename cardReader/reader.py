@@ -51,8 +51,10 @@ round's first card logs nothing, since there is nothing to read again.
 Key U logs an undo row: the card taken back, with its number, name, seat, and
 position, and the running count after it. A merge logs a merge row: the card
 folded in, with its number, seat, and position, but the number of the card it
-joined in the card column. evaluate.py scores an undone card as never placed and
-a merged card as the card it joined.
+joined in the card column. The tracker's own merged event (a card renamed to the
+name of a card beside it, one card read twice) is printed with the running count
+and logged as the same merge row. evaluate.py scores an undone card as never
+placed and a merged card as the card it joined.
 """
 from __future__ import annotations
 
@@ -184,12 +186,18 @@ class Reader:
             card = event.card
             seat = self.table.seat_of(card) if card else None
             seat_text = f"({seat})" if seat else ""
-            count_text = f"count {self.count.running:+d}" if event.kind in ("placed", "renamed", "counted") else ""
+            counted = event.kind in ("placed", "renamed", "merged", "counted")
+            count_text = f"count {self.count.running:+d}" if counted else ""
             print(event, seat_text, count_text)
             if event.kind == "round_over":
                 self.table.clear_splits()
                 self.hud.flash("round over: table cleared")
-            self._log(event.kind, event.frame, card)
+            if event.kind == "merged":  # logged as the operator's merge is, so evaluate.py scores it the same way
+                self.hud.flash(f"#{card.order} {card.label} was #{event.into.order} {event.into.label} read twice: "
+                               "merged", 2.5)
+                self._log("merge", event.frame, card, card_text=str(event.into.order))
+            else:
+                self._log(event.kind, event.frame, card)
         return events
 
     def _log(self, kind: str, frame: int, card: Card | None = None, card_text: str | None = None):

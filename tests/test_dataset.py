@@ -193,3 +193,84 @@ def test_rotated_copies_skip_val_and_synthetic_images_and_leave_real_val_unchang
         assert plain_synthetic == {n for n in names[split] if n.startswith("synth_")}
     plain_val = (plain / "realVal.txt").read_text().replace(str(plain.resolve()), "")
     assert (turned / "realVal.txt").read_text().replace(str(turned.resolve()), "") == plain_val
+
+
+# train.py --class-counts: how many examples of each card the model trains on, by source.
+
+def counted_dataset(tmp_path):
+    """A built dataset: two real train photos (a: AS twice and 2S; b: KH), one real val photo (2S twice), a
+    focus copy of a (2S is a focus card; the fake jpg cannot be read, so no rotated copies), and a
+    synthetic AS in train and a synthetic KH in val written by hand."""
+    export(tmp_path / "raw", "ex", ["AS", "2S", "KH"],
+           {"train": {"a": [(0, 0.1, 0.1), (0, 0.9, 0.9), (1, 0.5, 0.5)], "b": [(2, 0.5, 0.5)]},
+            "valid": {"v": [(1, 0.5, 0.5), (1, 0.2, 0.2)]}})
+    out = tmp_path / "out"
+    dataset.build(out, tmp_path / "raw", tmp_path / "noart", tmp_path / "nobg", 0, 0.15,
+                  rotated_copies=(90,), focus_classes=("2S",), focus_copies=1)
+    (out / "labels" / "train" / "synth_000000.txt").write_text(f"{CLASS_TO_ID['AS']} 0.5 0.5 0.04 0.04\n")
+    (out / "labels" / "val" / "synth_000001.txt").write_text(f"{CLASS_TO_ID['KH']} 0.5 0.5 0.04 0.04\n")
+    return out
+
+
+def test_class_counts_tell_real_photos_from_copies_and_synthetic_images(tmp_path):
+    counts = {c.name: c for c in dataset.class_counts(counted_dataset(tmp_path))}
+    assert [c.name for c in dataset.class_counts(counted_dataset(tmp_path / "again"))] == CLASSES
+    assert (counts["AS"].photos, counts["AS"].boxes, counts["AS"].copies, counts["AS"].synthetic,
+            counts["AS"].val) == (1, 2, 2, 1, 0)
+    assert (counts["2S"].photos, counts["2S"].boxes, counts["2S"].copies, counts["2S"].val) == (1, 1, 1, 2)
+    assert (counts["KH"].photos, counts["KH"].boxes, counts["KH"].copies, counts["KH"].val) == (1, 1, 0, 0)
+    assert counts["KH"].synthetic == 0                    # the synthetic val image counts nowhere
+    assert all(c.boxes == 0 for name, c in counts.items() if name not in ("AS", "2S", "KH"))
+
+
+@pytest.mark.parametrize(("stem", "source"), [
+    ("e0_table_01", "real"), ("e12_r90_table_01", "copy"), ("e0_f2_r270_table_01", "copy"), ("e0_f1_table_01", "copy"),
+    ("synth_000007", "synthetic"), ("table_01", "real"), ("e0_rook", "real")])
+def test_a_dataset_files_source_is_read_from_its_name(stem, source):
+    assert dataset._source(stem) == source
+
+
+def test_class_count_table_lists_the_fewest_first_and_ends_with_a_ready_focus_list(tmp_path):
+    table = dataset.class_count_table(dataset.class_counts(counted_dataset(tmp_path)), fewest=2)
+    lines = table.splitlines()
+    assert lines[0].split() == ["class", "photos", "boxes", "copies", "synthetic", "val"]
+    assert lines[1].split() == ["10C", "0", "0", "0", "0", "0"]      # no boxes: first, in name order
+    assert lines[-6].split() == ["AS", "1", "2", "2", "1", "0"]      # the most boxes: last row of the table
+    assert "median 0 real train boxes per class" in table
+    assert "real train boxes 4, in copies 3, synthetic 1, real val 2" in table
+    assert lines[-2] == "fewest: 10C 0, 10D 0"
+    assert lines[-1] == "python benchmark.py --confusions --focus 10C,10D"
+
+
+def test_classes_below_the_median_are_marked(tmp_path):
+    counts = [dataset.ClassCount(name, 1, boxes, 0, 0, 0) for name, boxes in (("AS", 5), ("2S", 1), ("KH", 9))]
+    lines = dataset.class_count_table(counts).splitlines()
+    assert [line.split()[0] for line in lines[1:4]] == ["2S", "AS", "KH"]
+    assert lines[1].endswith("*") and not lines[2].endswith("*") and not lines[3].endswith("*")
+    assert "median 5 real train boxes" in "\n".join(lines)
+
+
+def test_train_class_counts_prints_the_table_writes_the_csv_and_stops(monkeypatch, tmp_path, capsys):
+    import sys
+
+    import train
+    out = counted_dataset(tmp_path)
+    monkeypatch.setattr(train.settings, "DATASET_DIR", str(out))
+    monkeypatch.setattr(train.dataset, "build", lambda *a, **k: pytest.fail("dataset rebuilt for a count"))
+    monkeypatch.setattr(sys, "argv", ["train.py", "--class-counts", "--csv", str(tmp_path / "counts.csv")])
+    train.main()
+    printed = capsys.readouterr().out
+    assert "python benchmark.py --confusions --focus" in printed and "written" in printed
+    rows = (tmp_path / "counts.csv").read_text().splitlines()
+    assert rows[0] == "class,photos,boxes,copies,synthetic,val" and "AS,1,2,2,1,0" in rows
+    assert len(rows) == 1 + len(CLASSES)
+
+
+def test_train_class_counts_without_a_dataset_says_to_rebuild(monkeypatch, tmp_path):
+    import sys
+
+    import train
+    monkeypatch.setattr(train.settings, "DATASET_DIR", str(tmp_path / "none"))
+    monkeypatch.setattr(sys, "argv", ["train.py", "--class-counts"])
+    with pytest.raises(SystemExit, match="run python train.py --rebuild first"):
+        train.main()

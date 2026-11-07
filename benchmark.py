@@ -448,7 +448,7 @@ def main():
         raise SystemExit(error) from None
 
     from cardReader.detector import Detector
-    detector = Detector(args.model, args.imgsz, settings.CONFIDENCE, args.device)
+    detector = Detector(args.model, args.imgsz, settings.CONFIDENCE, args.device, iou=settings.NMS_IOU)
     if args.confusions:
         list_confusions(args, detector)
         return

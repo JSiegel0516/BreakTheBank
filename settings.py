@@ -55,6 +55,12 @@ DROP_SECONDS = 1.0         # a card missing this long without a break becomes hi
 HIDDEN_SECONDS = 5.0       # a card hidden this long was picked up: removed from the round, still counted.
                            # 0 removes a card as soon as it is hidden.
 MATCH_DISTANCE = 0.03      # fraction of frame width; detections closer than this are the same corner
+SAME_CARD_DISTANCE = 0.12  # fraction of frame width; a face corner this close to a card of its name showing one
+                           # corner is that card's other corner, farther away a second copy (two or three decks).
+                           # Must exceed a card's diagonal in your frames: measure one corner index to the other in a
+                           # saved frame (key S). Widened on its own once face-down cards show the cards are bigger.
+NMS_IOU = 0.7              # boxes overlapping more than this share of their area are merged into the most confident
+                           # (non-maximum suppression). Lower (0.5) merges more stacked boxes on one corner index.
 LABEL_WINDOW_SECONDS = 1.5  # a card's name is the vote over its reads in the last this long, so a card
                             # turned face up (a hole card) changes from BACK to its name in about half that
 ROUND_END_SECONDS = 3.0    # no card visible for this long ends the round
@@ -114,13 +120,13 @@ def validate(config) -> None:
          "a tuple of different card names from deck.CLASSES, such as ('AD', 'BACK'), or () for none"),
         (("CAMERA_WIDTH", "CAMERA_HEIGHT"),
          lambda v: v is None or (_is_whole(v) and v >= 1), "None or a whole number of 1 or more"),
-        (("STILL_DISTANCE", "MATCH_DISTANCE"),
+        (("STILL_DISTANCE", "MATCH_DISTANCE", "SAME_CARD_DISTANCE"),
          lambda v: _is_number(v) and 0 < v <= 1, "a fraction above 0 and at most 1"),
         (("VAL_FRACTION",), lambda v: _is_number(v) and 0 < v < 1, "a fraction above 0 and below 1"),
         (("TRAIN_ROTATED_COPIES",),
          lambda v: isinstance(v, tuple) and all(_is_whole(d) and d in ROTATIONS for d in v) and len(set(v)) == len(v),
          "a tuple of different angles from 90, 180, 270, or () for none"),
-        (("CONFIDENCE", "SUSTAIN_CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT"),
+        (("CONFIDENCE", "SUSTAIN_CONFIDENCE", "CONFIRM_CONFIDENCE", "CONFIRM_AGREEMENT", "NMS_IOU"),
          lambda v: _is_number(v) and 0 <= v <= 1, "a number from 0 to 1"),
         (("PLAYERS",), lambda v: _is_whole(v) and 1 <= v <= MAX_PLAYERS, f"a whole number from 1 to {MAX_PLAYERS}"),
         (("DECKS",), lambda v: _is_whole(v) and 1 <= v <= MAX_DECKS, f"a whole number from 1 to {MAX_DECKS}"),
@@ -149,6 +155,10 @@ def validate(config) -> None:
     if _is_number(sustain) and _is_number(start) and sustain > start:
         problems.append(f"SUSTAIN_CONFIDENCE = {sustain} must be at most CONFIDENCE = {start}, "
                         "the score that starts a track")
+    same_card, match = config.SAME_CARD_DISTANCE, config.MATCH_DISTANCE
+    if _is_number(same_card) and _is_number(match) and same_card < match:
+        problems.append(f"SAME_CARD_DISTANCE = {same_card} must be at least MATCH_DISTANCE = {match}, "
+                        "the distance within which detections are one corner")
     dark, bright = config.PREPROCESS_DARK_BELOW, config.PREPROCESS_BRIGHT_ABOVE
     if _is_number(dark) and _is_number(bright) and dark >= bright:
         problems.append(f"PREPROCESS_DARK_BELOW = {dark} must be below PREPROCESS_BRIGHT_ABOVE = {bright}")

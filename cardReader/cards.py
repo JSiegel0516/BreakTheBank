@@ -3,10 +3,12 @@
     Detection   one box the detector drew in one frame
     Card        one physical card of the current round, with its placement number
     Event       something that changed: placed, hidden, returned, removed (hidden
-                too long, taken off the table), renamed, duplicate (a name
-                already counted in an earlier round), held (a second copy
-                placed beside a card of its name, not counted yet), counted (a
-                held copy counted at last), round_over
+                too long, taken off the table), renamed, merged (a card renamed
+                to the name of a card beside it was that card read twice: it is
+                folded into it and leaves the round), duplicate (a name already
+                counted in an earlier round), held (a second copy placed beside
+                a card of its name, not counted yet), counted (a held copy
+                counted at last), round_over
 
 detector.py makes Detections, tracker.py turns them into Cards and Events,
 table.py groups Cards into hands, hud.py draws all three.
@@ -41,14 +43,18 @@ class Card:
 
 @dataclass
 class Event:
-    # "placed" | "hidden" | "returned" | "removed" | "renamed" | "duplicate" | "held" | "counted" | "round_over"
+    # "placed" | "hidden" | "returned" | "removed" | "renamed" | "merged" | "duplicate" | "held" | "counted"
+    # | "round_over"
     kind: str
     card: Card | None
     frame: int
-    was: str | None = None  # renamed: the label before
+    was: str | None = None    # renamed: the label before
+    into: Card | None = None  # merged: the card this one was folded into, which keeps its number
 
     def __str__(self):
         if self.card is None:
             return f"[{self.frame:6d}] {self.kind}"
         s = f"[{self.frame:6d}] {self.kind:8s} #{self.card.order:<3d} {self.card.label}"
+        if self.into is not None:
+            return f"{s} into #{self.into.order} {self.into.label}"
         return f"{s} (was {self.was})" if self.was else s

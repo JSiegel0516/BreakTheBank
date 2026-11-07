@@ -19,11 +19,17 @@
     each of its rotated copies, as prefix + f<k>_ + its name (k from 1), so the
     model sees those cards more often. The copies are identical files; training's
     random augmentation makes each pass over them differ. They never go to val.
+  * class_counts reads a built dataset back and counts every card's boxes by
+    source (real photos, copies, synthetic images, real val), so the cards with
+    the fewest real examples can be found before choosing FOCUS_CLASSES
+    (train.py --class-counts).
 """
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -206,3 +212,80 @@ def add_rotated_copies(img: Path, lines: list[str], out: Path, prefix: str, rota
             turned.append(" ".join([cls, *(f"{v:.6f}" for v in new_box)]))
         (out / "labels" / "train" / (stem + ".txt")).write_text("\n".join(turned) + "\n")
     return len(rotations)
+
+
+@dataclass(frozen=True)
+class ClassCount:
+    """How often one card appears in a built dataset, in boxes: corner indices, or whole cards for BACK."""
+    name: str
+    photos: int     # real train photos holding it: what a focus copy multiplies, with every other card in them
+    boxes: int      # boxes in those photos
+    copies: int     # boxes in their rotated and focus copies
+    synthetic: int  # boxes in synthetic train images
+    val: int        # boxes in the real val photos, the exam
+
+
+def class_counts(dataset_dir: Path) -> list[ClassCount]:
+    """Count every class in a built dataset (dataset_dir/labels/train and val), in CLASSES order.
+
+    A train label file is a synthetic image (synth_), a rotated or focus copy (r<angle>_ or f<k>_
+    after the export prefix), or else a real photo. Val counts real photos only, the exam the models
+    are compared on. Raises FileNotFoundError when there is no built dataset."""
+    labels = dataset_dir / "labels"
+    if not (labels / "train").is_dir():
+        raise FileNotFoundError(f"no built dataset at {dataset_dir}")
+    fields = ("photos", "boxes", "copies", "synthetic", "val")
+    tallies = {name: dict.fromkeys(fields, 0) for name in CLASSES}
+    for split in ("train", "val"):
+        for label_path in sorted((labels / split).glob("*.txt")):
+            source = _source(label_path.stem)
+            if split == "val":
+                if source != "real":
+                    continue
+                field = "val"
+            else:
+                field = {"real": "boxes", "copy": "copies", "synthetic": "synthetic"}[source]
+            ids = [int(line.split()[0]) for line in label_path.read_text().splitlines() if line.strip()]
+            names = [CLASSES[i] for i in ids if 0 <= i < len(CLASSES)]
+            for name in names:
+                tallies[name][field] += 1
+            if field == "boxes":
+                for name in set(names):
+                    tallies[name]["photos"] += 1
+    return [ClassCount(name, **tallies[name]) for name in CLASSES]
+
+
+def _source(stem: str) -> str:
+    """Where a dataset file came from, by its name: synth_ images are synthetic; after the export
+    prefix (e<i>_), r<angle>_ and f<k>_ mark rotated and focus copies; anything else is a real photo."""
+    if stem.startswith("synth_"):
+        return "synthetic"
+    after_export = stem.split("_", 1)[1] if re.match(r"e\d+_", stem) else stem
+    return "copy" if re.match(r"[rf]\d+_", after_export) else "real"
+
+
+def class_count_table(counts: list[ClassCount], fewest: int = 8) -> str:
+    """The counts as text, the fewest real train boxes first. Classes below the median are marked *.
+    Ends with the totals, the median, and the `fewest` cards with the fewest real train boxes as a
+    ready `benchmark.py --confusions --focus` list, to set their count against their mistakes."""
+    ordered = sorted(counts, key=lambda c: (c.boxes, c.name))
+    boxes = [c.boxes for c in ordered]
+    middle = len(boxes) // 2
+    median = boxes[middle] if len(boxes) % 2 else (boxes[middle - 1] + boxes[middle]) / 2
+    rows = [["class", "photos", "boxes", "copies", "synthetic", "val", ""]]
+    for c in ordered:
+        rows.append([c.name, str(c.photos), str(c.boxes), str(c.copies), str(c.synthetic), str(c.val),
+                     "*" if c.boxes < median else ""])
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    lines = []
+    for row in rows:
+        cells = [cell.rjust(w) if i else cell.ljust(w) for i, (cell, w) in enumerate(zip(row, widths, strict=True))]
+        lines.append(" ".join(cells).rstrip())
+    totals = (f"real train boxes {sum(boxes)}, in copies {sum(c.copies for c in counts)}, synthetic "
+              f"{sum(c.synthetic for c in counts)}, real val {sum(c.val for c in counts)}")
+    few = ordered[:fewest]
+    return (
+        "\n".join(lines) + "\n\n" + totals
+        + f"\nmedian {median:g} real train boxes per class; * marks the classes below it\n"
+        + "fewest: " + ", ".join(f"{c.name} {c.boxes}" for c in few) + "\n"
+        + "python benchmark.py --confusions --focus " + ",".join(c.name for c in few) + "\n")

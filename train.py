@@ -8,6 +8,7 @@
     python train.py --promote models/n150  # make a finished run the live model read.py loads
     python train.py --check-data           # does data/raw match data/manifest.json (the shared folder)?
     python train.py --manifest             # rewrite data/manifest.json after adding or relabelling data
+    python train.py --class-counts         # which cards have the fewest examples in data/dataset? (--csv file too)
 
 Every run goes to models/<name>/ (--name, default cards). read.py loads
 models/cards/weights/best.pt, so train with --name and --promote the winner.
@@ -46,6 +47,9 @@ def main():
     ap.add_argument("--promote", metavar="RUN", help="copy RUN's best.pt and record to models/cards, then stop")
     ap.add_argument("--manifest", action="store_true", help="write data/manifest.json from data/raw, then stop")
     ap.add_argument("--check-data", action="store_true", help="compare data/raw with data/manifest.json, then stop")
+    ap.add_argument("--class-counts", action="store_true",
+                    help="count each card's boxes in the built dataset by source, fewest first, then stop")
+    ap.add_argument("--csv", metavar="FILE", help="with --class-counts: also write the counts to this CSV file")
     args = ap.parse_args()
     try:
         settings.validate(settings)
@@ -69,6 +73,20 @@ def main():
         return
 
     data_dir = ROOT / settings.DATASET_DIR
+    if args.class_counts:
+        try:
+            counts = dataset.class_counts(data_dir)
+        except FileNotFoundError:
+            raise SystemExit(f"no built dataset at {data_dir}: run python train.py --rebuild first") from None
+        print(dataset.class_count_table(counts))
+        if args.csv:
+            import csv
+            with open(args.csv, "w", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerow(["class", "photos", "boxes", "copies", "synthetic", "val"])
+                writer.writerows([c.name, c.photos, c.boxes, c.copies, c.synthetic, c.val] for c in counts)
+            print("written", args.csv)
+        return
     if args.rebuild or not (data_dir / "data.yaml").exists():
         if provenance.check_manifest(ROOT / "data" / "raw", manifest):
             print(f"warning: data/raw differs from {settings.MANIFEST_FILE} (above). Training anyway;"

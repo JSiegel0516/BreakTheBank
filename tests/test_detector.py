@@ -32,4 +32,13 @@ def test_detector_warms_up_reports_its_device_and_merges_boxes_across_names(monk
     assert [(d.label, d.conf, d.cx, d.cy, d.box) for d in dets] == [("9H", 0.8, 20.0, 40.0, (10.0, 20.0, 30.0, 60.0))]
     for _, kw in detector.model.calls:
         assert kw["agnostic_nms"] is True
-        assert (kw["imgsz"], kw["conf"], kw["device"]) == (640, 0.5, None)
+        assert (kw["imgsz"], kw["conf"], kw["device"], kw["iou"]) == (640, 0.5, None, 0.7)
+
+
+def test_the_nms_overlap_is_passed_to_every_predict(monkeypatch):
+    ultralytics = ModuleType("ultralytics")
+    ultralytics.YOLO = FakeYOLO
+    monkeypatch.setitem(sys.modules, "ultralytics", ultralytics)
+    detector = Detector("x.pt", imgsz=640, conf=0.5, iou=0.5)
+    detector(np.zeros((360, 640, 3), np.uint8))
+    assert [kw["iou"] for _, kw in detector.model.calls] == [0.5, 0.5]

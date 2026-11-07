@@ -11,6 +11,7 @@ python evaluate.py --log round1.csv --expected round1Expected.csv   # score a lo
 python benchmark.py --limit 20   # does preprocessing help the model in dim or bright light?
 python benchmark.py --confusions # which names does the model get wrong, and on what boxes?
 python benchmark.py --confusions --focus AD,9S   # and what were these cards read as?
+python train.py --class-counts   # which cards have the fewest training examples?
 ```
 
 ## Quick start

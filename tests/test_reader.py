@@ -612,3 +612,22 @@ def test_the_end_of_a_round_clears_every_split(tmp_path):
     while "round_over" not in kinds and r.tracker.frame < 200:
         kinds = [e.kind for e in r.process(frame(), [])]
     assert "round_over" in kinds and r.table.splits == {}
+
+
+def test_a_merged_card_is_printed_with_the_count_logged_as_a_merge_row_and_flashed(tmp_path, capsys):
+    buf = io.StringIO()
+    tracker = CardTracker(confirm_seconds=2 * FRAME, drop_seconds=5 * FRAME, match_dist=20, decks=2)
+    r = Reader(tracker, SeatLayout(3, W, H), Hud(), tmp_path / "seats.json", tmp_path / "frames",
+               log=csv.writer(buf))
+    x, y = map(float, r.layout.seats[1].polygon.mean(axis=0))  # inside P1
+    top, bottom = Detection("2S", 0.9, x, y), Detection("2S", 0.9, x + 30, y + 40)
+    for _ in range(3):
+        r.process(frame(), [top, Detection("2C", 0.9, bottom.cx, bottom.cy)])  # the bottom corner reads 2C
+    assert [c.label for c in tracker.round] == ["2S", "2C"] and r.count.running == 2
+    events = [e.kind for _ in range(8) for e in r.process(frame(), [top, bottom])]
+    assert events == ["merged"]
+    assert "merged   #2   2C into #1 2S (P1) count +1" in capsys.readouterr().out
+    assert r.hud._message == "#2 2C was #1 2S read twice: merged"
+    row = list(csv.reader(io.StringIO(buf.getvalue())))[-1]
+    assert len(row) == len(LOG_HEADER) and row[2:7] == ["merge", "2", "1", "P1", "1"]
+    assert [c.label for c in tracker.round] == ["2S"] and r.count.running == 1

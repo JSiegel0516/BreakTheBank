@@ -66,7 +66,7 @@ def test_with_times_given_a_short_time_is_not_rounded_away():
 
 def test_two_decks_with_times_given_a_short_copy_hold_still_waits():
     tr = CardTracker(confirm_seconds=0.001, drop_seconds=1, match_dist=20, decks=2, copy_hold_seconds=0.01)
-    first = [det("KH", 50, 200), det("KH", 80, 200)]    # both corners of one card
+    first = [det("KH", 50, 200), det("KH", 80, 240)]    # both corners of one card, diagonal as corners are
     hand = [*first, det("KH", 110, 200)]                 # and a second KH beside it
     run_timed(tr, [], 2, 0.001)
     assert [e.kind for e in run_timed(tr, first, 1, 0.001)] == ["placed"]
@@ -1270,10 +1270,10 @@ def test_config_object_and_keyword_overrides_agree():
     class S:  # the fields settings.py provides
         CONFIRM_SECONDS, CONFIRM_WINDOW_SECONDS, CONFIRM_AGREEMENT, CONFIRM_CONFIDENCE = 0.01, 1.0, 0.8, 0.7
         STILL_DISTANCE, DROP_SECONDS, MATCH_DISTANCE, ROUND_END_SECONDS = 0.01, 3.0, 0.05, 9.0
-        LABEL_WINDOW_SECONDS, HIDDEN_SECONDS, COPY_HOLD_SECONDS, CONFIDENCE = 4.5, 0, 0, 0.6
+        LABEL_WINDOW_SECONDS, HIDDEN_SECONDS, COPY_HOLD_SECONDS, CONFIDENCE, SAME_CARD_DISTANCE = 4.5, 0, 0, 0.6, 0.1
     cfg = TrackerConfig.from_settings(S, 2000)
     assert cfg.start_confidence == 0.6
-    assert (cfg.still_distance, cfg.match_dist) == (20.0, 100.0)  # fractions of the width become pixels
+    assert (cfg.still_distance, cfg.match_dist, cfg.same_card_dist) == (20.0, 100.0, 200.0)  # fractions become pixels
     assert (cfg.confirm_seconds, cfg.confirm_window_seconds, cfg.drop_seconds) == (0.01, 1.0, 3.0)  # seconds kept
     assert (cfg.round_end_seconds, cfg.label_window_seconds) == (9.0, 4.5)
     assert (cfg.hidden_seconds, cfg.copy_hold_seconds) == (0, 0)
@@ -1344,3 +1344,346 @@ def test_cards_keep_their_numbers_across_a_quarter_turn():
     assert events == []
     assert [(c.order, c.label) for c in tr.round] == [(1, "KH"), (2, "BACK")]
     assert tr.shoe_seen == ["KH"] and tr.shoe_unrevealed == 1
+
+
+# One card read twice: a corner misread for a while, then corrected, or read as another suit for good.
+
+def misread_corner(label, wrong, cx=900, cy=500):
+    """A card's two corner indices with the bottom one reading `wrong`."""
+    top, bottom = corners(label, cx, cy)
+    return [top, det(wrong, bottom.cx, bottom.cy)]
+
+
+@pytest.mark.parametrize("decks", [1, 2])
+def test_a_corner_misread_as_another_suit_then_corrected_is_merged_back_into_its_card(decks):
+    tr = real_tracker()
+    tr.cfg.decks = decks
+    run(tr, misread_corner("2S", "2C"), 12)              # the bottom corner reads 2C for a second
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2S"), (2, "2C")]
+    ev = run(tr, corners("2S", 900, 500), 36)
+    assert [(e.kind, e.card.order, e.into.order) for e in ev] == [("merged", 2, 1)]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2S")] and tr.shoe_seen == ["2S"]
+    assert tr.bound == [tr.round[0], tr.round[0]]
+    assert shoe_count(tr.shoe_seen, decks=decks).running == 1
+
+
+@pytest.mark.parametrize("decks", [1, 2])
+def test_a_corner_misread_as_another_rank_then_corrected_is_merged_back_into_its_card(decks):
+    tr = real_tracker()
+    tr.cfg.decks = decks
+    run(tr, misread_corner("QH", "JH"), 12)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "QH"), (2, "JH")]
+    ev = run(tr, corners("QH", 900, 500), 36)
+    assert [(e.kind, e.card.order, e.into.order) for e in ev] == [("merged", 2, 1)]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "QH")] and tr.shoe_seen == ["QH"]
+
+
+def test_the_card_placed_first_keeps_its_number_when_it_is_the_one_renamed():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    top, bottom = corners("2S", 900, 500)
+    run(tr, [det("2C", top.cx, top.cy), bottom], 12)     # the top corner, confirmed first, reads 2C
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C"), (2, "2S")]
+    ev = run(tr, corners("2S", 900, 500), 36)
+    assert [(e.kind, e.card.order, e.was, e.into and e.into.order) for e in ev] == [
+        ("renamed", 1, "2C", None), ("merged", 2, None, 1)]
+    assert [(c.order, c.label, c.counted) for c in tr.round] == [(1, "2S", True)] and tr.shoe_seen == ["2S"]
+
+
+def test_two_decks_a_real_second_copy_misread_then_corrected_stays_a_second_card():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("2S", 900, 500), 30)                 # both corners of the first 2S in view
+    run(tr, [*corners("2S", 900, 500), *corners("2C", 950, 500)], 12)
+    ev = run(tr, [*corners("2S", 900, 500), *corners("2S", 950, 500)], 36)
+    assert [(e.kind, e.card.order) for e in ev] == [("renamed", 2), ("held", 2), ("counted", 2)]  # as if placed
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2S"), (2, "2S")] and tr.shoe_seen == ["2S", "2S"]
+
+
+def test_a_renamed_card_is_not_merged_into_a_far_card_of_its_new_name():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, [*corners("2S", 400, 300), *corners("2C", 1400, 300)], 12)
+    ev = run(tr, [*corners("2S", 400, 300), *corners("2S", 1400, 300)], 36)   # 1000 px apart: two cards
+    assert [(e.kind, e.card.order) for e in ev] == [("renamed", 2)]
+    assert tr.shoe_seen == ["2S", "2S"] and len(tr.round) == 2
+
+
+def test_two_decks_a_hidden_card_takes_a_renamed_card_at_any_distance():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("KH", 900, 500), 30)
+    run(tr, [], 20)                                      # picked up: hidden
+    assert tr.round[0].hidden
+    run(tr, corners("KD", 1400, 500), 12)                # put down far away and misread
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH"), (2, "KD")]
+    ev = run(tr, corners("KH", 1400, 500), 36)
+    assert [(e.kind, e.card.order) for e in ev] == [("merged", 2), ("returned", 1)]
+    assert [(c.order, c.label, c.hidden) for c in tr.round] == [(1, "KH", False)] and tr.shoe_seen == ["KH"]
+
+
+def test_a_revealed_hole_card_is_never_folded_into_a_neighbour_of_its_name():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    top, bottom = corners("QH", 1030, 300)
+    run(tr, [det("BACK", 900, 300), top], 30)            # the up card shows one corner only
+    run(tr, [*corners("QH", 900, 300), top], 120)        # the hole card is a QH too
+    assert [(c.order, c.label) for c in tr.round] == [(1, "QH"), (2, "QH")]
+    assert tr.shoe_seen == ["QH", "QH"]
+
+
+def test_two_decks_a_card_renamed_beside_a_card_showing_both_corners_is_held_as_a_placed_one_would_be():
+    tr = real_tracker()
+    tr.cfg.decks, tr.cfg.copy_hold_seconds = 2, 50 * FRAME
+    run(tr, corners("KH", 900, 500), 30)
+    stray = det("KD", 1000, 420)                         # a third box 100 px off, misread
+    run(tr, [*corners("KH", 900, 500), stray], 12)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KH"), (2, "KD")]
+    ev = run(tr, [*corners("KH", 900, 500), det("KH", 1000, 420)], 36)
+    assert [(e.kind, e.card.order) for e in ev] == [("renamed", 2), ("held", 2)]
+    assert tr.round[1].held and tr.shoe_seen == ["KH"]
+
+
+# The cards' size, measured from the cards themselves.
+
+def test_the_corner_span_is_measured_from_cards_showing_both_corners():
+    tr = real_tracker()
+    run(tr, corners("KS", 400, 300), 10)
+    assert tr.corner_span is None                        # too few frames of a card with both corners
+    run(tr, corners("KS", 400, 300), 20)
+    assert tr.corner_span == pytest.approx((90 ** 2 + 160 ** 2) ** 0.5)
+    tr.new_shoe()
+    assert tr.corner_span is not None                    # the camera did not move
+
+
+def test_two_boxes_on_one_corner_do_not_measure_a_span():
+    tr = real_tracker()
+    run(tr, [det("KS", 400, 300), det("KD", 415, 300)], 30)
+    assert len(tr.round) == 1 and tr.corner_span is None
+
+
+@pytest.mark.parametrize("decks", [1, 2])
+def test_a_corner_read_as_the_wrong_suit_joins_its_card_once_the_span_is_known(decks):
+    tr = real_tracker()
+    tr.cfg.decks = decks
+    table = corners("KS", 400, 300)
+    run(tr, table, 24)                                   # teaches the span
+    ev = run(tr, [*table, *misread_corner("2S", "2C")], 48)   # the bottom corner reads 2C for good
+    assert [(e.kind, e.card.label) for e in ev] == [("placed", "2S")]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KS"), (2, "2S")] and tr.shoe_seen == ["KS", "2S"]
+    assert tr.bound[2:] == [tr.round[1], tr.round[1]]
+
+
+def test_a_card_whose_corners_read_two_suits_keeps_its_name_when_a_corner_is_missed():
+    tr = real_tracker()
+    table = corners("KS", 400, 300)
+    run(tr, table, 24)
+    hand = misread_corner("2S", "2C")
+    run(tr, [*table, *hand], 24)
+    card = tr.round[1]
+    names = set()
+    for i in range(60):
+        run(tr, [*table, *hand] if i % 3 else [*table, hand[1]], 1)  # the 2S corner missed every third frame
+        names.add(card.label)
+    assert names == {"2S"} and tr.shoe_seen == ["KS", "2S"]
+
+
+def test_a_pair_fanned_in_one_hand_stays_two_cards_with_the_span_known():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    table = corners("KS", 400, 300)
+    run(tr, table, 24)
+    eight_c = det("8C", 900 - 45 + 50, 500 - 80)          # fanned 50 px over the 8S, one corner showing
+    run(tr, [*table, *corners("8S", 900, 500), eight_c], 36)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KS"), (2, "8S"), (3, "8C")]
+    assert tr.shoe_seen == ["KS", "8S", "8C"]
+
+
+def test_two_decks_a_copy_much_nearer_a_lone_corner_than_a_span_is_a_second_copy_not_the_other_corner():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    table = corners("KS", 400, 300)
+    run(tr, table, 24)
+    lone = det("2S", 855, 420)                           # a 2S whose other corner is covered
+    run(tr, [*table, lone], 36)
+    ev = run(tr, [*table, lone, det("2S", 905, 420)], 36)   # a second 2S fanned 50 px over it
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 3), ("held", 3), ("counted", 3)]
+    assert tr.shoe_seen == ["KS", "2S", "2S"]
+
+
+def test_without_a_span_a_copy_near_a_lone_corner_still_joins_as_before():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    lone = det("2S", 855, 420)
+    run(tr, [lone], 36)
+    ev = run(tr, [lone, det("2S", 905, 420)], 36)
+    assert ev == [] and tr.shoe_seen == ["2S"]
+
+
+def big_card(label, cx, cy):
+    """The corners of a 180 x 260 px card: a camera close to the table. Its diagonal, 316 px, is beyond
+    four match distances (230 px at 1920 wide)."""
+    return [det(label, cx - 90, cy - 130), det(label, cx + 90, cy + 130)]
+
+
+def back_box(cx, cy, w, h):
+    return Detection(BACK, 0.9, cx, cy, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
+
+
+def test_two_decks_a_card_bigger_than_the_same_card_distance_is_two_copies_unless_the_setting_is_raised():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, big_card("2S", 900, 500), 36)
+    assert tr.shoe_seen == ["2S", "2S"] and len(tr.round) == 2
+    tr = real_tracker()
+    tr.cfg.decks, tr.cfg.same_card_dist = 2, 0.18 * 1920
+    run(tr, big_card("2S", 900, 500), 36)
+    assert tr.shoe_seen == ["2S"] and len(tr.round) == 1
+
+
+def test_two_decks_a_face_down_card_widens_the_same_card_distance_for_bigger_cards():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    assert tr.same_card_dist() == pytest.approx(0.12 * 1920)
+    run(tr, [back_box(400, 300, 180, 260)], 24)         # the hole card shows how big the cards are
+    assert tr.card_diagonal == pytest.approx((180 ** 2 + 260 ** 2) ** 0.5)
+    assert tr.same_card_dist() == pytest.approx(1.2 * tr.card_diagonal)
+    run(tr, [back_box(400, 300, 180, 260), *big_card("2S", 900, 500)], 36)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "BACK"), (2, "2S")] and tr.shoe_seen == ["2S"]
+
+
+def test_face_down_boxes_without_a_size_measure_nothing():
+    tr = real_tracker()
+    run(tr, [det("BACK", 400, 300)], 30)
+    assert tr.card_diagonal is None and tr.same_card_dist() == pytest.approx(0.12 * 1920)
+
+
+def test_the_same_card_distance_turns_with_the_frame():
+    tr = CardTracker(match_dist=20, same_card_dist=100)
+    tr.rotate(1, 1920, 1080)
+    assert (tr.cfg.match_dist, tr.cfg.same_card_dist) == (pytest.approx(11.25), pytest.approx(56.25))
+    tr = CardTracker(match_dist=20)
+    tr.rotate(1, 1920, 1080)
+    assert tr.cfg.same_card_dist is None and tr.same_card_dist() == pytest.approx(45)
+
+
+# A box on a card's body: its pips read as an index. Two decks unless said otherwise.
+
+def on_body(label, cx, cy, along=0.5, across=0.0):
+    """A box on the body of a card centred on (cx, cy): `along` of the way from its top-left corner index
+    to its bottom-right one, and `across` of that distance to the side of the line between them."""
+    top, bottom = corners(label, cx, cy)
+    dx, dy = bottom.cx - top.cx, bottom.cy - top.cy
+    return det(label, top.cx + along * dx + across * dy, top.cy + along * dy - across * dx)
+
+
+def pips(label, cx, cy):
+    """Boxes on the two pips of a 2 centred on (cx, cy): mid-width, a quarter and three quarters down."""
+    return [det(label, cx, cy - 40), det(label, cx, cy + 40)]
+
+
+@pytest.mark.parametrize("read_as", ["2C", "2S"])
+def test_two_decks_a_box_on_a_cards_body_reading_its_rank_joins_the_card(read_as):
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    ev = run(tr, [*corners("2C", 900, 500), on_body(read_as, 900, 500)], 36)
+    assert [(e.kind, e.card.label) for e in ev] == [("placed", "2C")]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C")] and tr.shoe_seen == ["2C"]
+    assert tr.bound == [tr.round[0]] * 3
+
+
+def test_two_decks_boxes_on_a_twos_pips_join_it():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, [*corners("2C", 900, 500), *pips("2C", 900, 500)], 36)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C")] and tr.shoe_seen == ["2C"]
+    assert tr.bound == [tr.round[0]] * 4
+
+
+def test_two_decks_a_pip_box_confirmed_before_the_second_corner_joins_once_the_corner_shows():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    top, bottom = corners("2C", 900, 500)
+    pip = on_body("2C", 900, 500)
+    run(tr, [top, pip], 12)                              # no span known: the pip is taken for the second corner
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C")]
+    ev = run(tr, [top, pip, bottom], 36)                 # the real corner still joins: the pip lies between
+    assert ev == []
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C")] and tr.shoe_seen == ["2C"]
+    assert tr.bound == [tr.round[0]] * 3
+
+
+def test_two_decks_a_pip_box_placed_as_a_copy_is_folded_into_its_card_once_both_corners_show():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    table = corners("KS", 400, 300)
+    run(tr, table, 24)                                   # the span is known
+    top, bottom = corners("2C", 900, 500)
+    pip = on_body("2C", 900, 500)
+    ev = run(tr, [*table, top, pip], 12)                 # half a span from the corner: a copy, held
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 2), ("placed", 3), ("held", 3)]
+    ev = run(tr, [*table, top, pip, bottom], 36)
+    assert [(e.kind, e.card.order, e.into.order) for e in ev] == [("merged", 3, 2)]
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KS"), (2, "2C")] and tr.shoe_seen == ["KS", "2C"]
+
+
+def test_two_decks_a_counted_pip_card_is_folded_too():
+    tr = real_tracker()
+    tr.cfg.decks, tr.cfg.copy_hold_seconds = 2, 0       # no hold: the copy is counted at once
+    table = corners("KS", 400, 300)
+    run(tr, table, 24)
+    top, bottom = corners("2C", 900, 500)
+    pip = on_body("2C", 900, 500)
+    run(tr, [*table, top, pip], 12)
+    assert tr.shoe_seen == ["KS", "2C", "2C"]
+    ev = run(tr, [*table, top, pip, bottom], 36)
+    assert [(e.kind, e.card.order) for e in ev] == [("merged", 3)] and tr.shoe_seen == ["KS", "2C"]
+
+
+def test_a_box_of_another_rank_on_a_cards_body_is_a_card_of_its_own():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, [*corners("2C", 900, 500), on_body("7D", 900, 500)], 36)   # a card fanned diagonally over it
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C"), (2, "7D")] and tr.shoe_seen == ["2C", "7D"]
+
+
+def test_two_decks_a_same_rank_box_beside_the_body_line_is_a_copy():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("2C", 900, 500), 30)
+    ev = run(tr, [*corners("2C", 900, 500), on_body("2C", 900, 500, along=0.5, across=0.3)], 36)
+    assert [(e.kind, e.card.order) for e in ev] == [("placed", 2), ("held", 2), ("counted", 2)]
+    assert tr.shoe_seen == ["2C", "2C"]
+
+
+@pytest.mark.parametrize(("dx", "dy"), [(50, 0), (80, 0), (0, 80)])
+def test_two_decks_a_copy_fanned_straight_over_a_card_stays_a_second_card(dx, dy):
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    table = corners("KS", 400, 300)
+    run(tr, table, 24)                                   # the span is known: a copy fanned 80 px down puts the
+    run(tr, [*table, *corners("2C", 900, 500)], 30)      # first card's far corner where a pip would be otherwise
+    run(tr, [*table, *corners("2C", 900, 500), *corners("2C", 900 + dx, 500 + dy)], 36)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "KS"), (2, "2C"), (3, "2C")]
+    assert tr.shoe_seen == ["KS", "2C", "2C"]
+
+
+def test_two_decks_a_same_rank_copy_fanned_diagonally_by_half_a_card_is_placed_from_its_far_corner():
+    tr = real_tracker()
+    tr.cfg.decks = 2
+    run(tr, corners("2C", 900, 500), 30)
+    run(tr, [*corners("2C", 900, 500), *corners("2C", 945, 580)], 36)  # its near corner lands mid-card
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C"), (2, "2C")] and tr.shoe_seen == ["2C", "2C"]
+    assert tr.bound == [tr.round[0]] * 3 + [tr.round[1]]  # the near corner joined card 1; the far one is card 2
+
+
+def test_one_deck_a_box_on_a_cards_body_reading_another_suit_joins_it():
+    tr = real_tracker()
+    run(tr, [*corners("2C", 900, 500), on_body("2S", 900, 500)], 36)
+    assert [(c.order, c.label) for c in tr.round] == [(1, "2C")] and tr.shoe_seen == ["2C"]
+
+
+def test_a_card_carrying_a_pip_box_does_not_measure_a_span():
+    tr = real_tracker()
+    run(tr, [*corners("2C", 900, 500), on_body("2C", 900, 500)], 40)
+    assert tr.corner_span is None

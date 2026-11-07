@@ -304,3 +304,22 @@ Settings for both runs: `CONFIDENCE` 0.6, `CONFIRM_CONFIDENCE` 0.7, `DROP_SECOND
 Fill in the clip file names and the figures when the clips exist. If `extra`
 or `wrong name` rises with weak boxes on, raise `SUSTAIN_CONFIDENCE` or set it
 to `CONFIDENCE`.
+
+## Examples per card in the training data
+
+**Pending: run on the model 5 data.** `python train.py --class-counts` (see
+[training.md](training.md#which-cards-have-the-fewest-examples)) counts each
+card's boxes in the built dataset by source. Record the table here after
+`python train.py --rebuild` on the exports in `data/manifest.json`, then set the
+cards with the fewest real boxes against their rows in
+`python benchmark.py --confusions --focus <those cards>`:
+
+| Card | Real train photos | Real train boxes | Boxes in copies | Synthetic boxes | Real val boxes | Wrong names on val (confusions) |
+|---|---|---|---|---|---|---|
+| (pending) | | | | | | |
+
+What to conclude: if the most misread cards (`2S`, `QH`, and the eight in
+`FOCUS_CLASSES`) sit at the bottom of the real-boxes column, they are short of
+examples and the focus copies, or new photos of them, should help. If they sit
+in the middle, their mistakes come from looks (same-colour suits, 6/9, J/Q),
+not scarcity, and more copies of the same photos will not move them.

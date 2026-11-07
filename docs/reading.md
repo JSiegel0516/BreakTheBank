@@ -163,6 +163,16 @@ on the table but not in the count yet. A `counted` line, with the running count,
 follows once both were seen together for `COPY_HOLD_SECONDS` (1.5 s), or as soon
 as the first copy is removed or renamed. A copy that leaves the table first is never counted.
 
+A `merged` line, as in `merged   #2   2C into #1 2S`, means one card was read
+twice: a corner of card 1 was misread for a moment (a 2S read as 2C, a QH read
+as JH), confirmed as a card of its own, and then corrected itself to card 1's
+name; or a box on card 1's pips (the two large pips of a 2 can be read as an
+index) that was confirmed before card 1's second corner and so looked like a
+second copy. Card 2 is folded into card 1 as `M 2 Enter 1 Enter` would fold it: it
+leaves the hand, its copy leaves the count, and the running count on the line
+is the count after. Number 2 is not used again this round. The log holds a
+`merge` row for it, the same row the `M` key writes.
+
 To fix a misread while the round is still open, press `X` to rescan the round.
 The reader forgets every card of this round and takes this round's names back
 out of the count, then reads the cards on the table again, numbered from 1.
@@ -425,13 +435,38 @@ deck, and aces out of 4 per deck. The odds row draws from every copy left.
 
 With more than one deck a card can really appear twice. Each card may be
 counted once per deck; one more read of it is a `duplicate`. Two corners of
-one card still join into one card when they are close: up to four times
-`MATCH_DISTANCE` apart, about a card's diagonal. A card of the same name
-farther away is a second copy. A card that is covered or moved comes back as
-the same card, wherever it lands. Once it has been removed (`HIDDEN_SECONDS`),
-it is placed again as a new copy and counted while copies are left.
+one card still join into one card when they are close: up to
+`SAME_CARD_DISTANCE` apart (12% of the frame width, about 230 px at 1920 wide,
+more than a card's diagonal from 50 to 80 cm up). A card of the same name
+farther away is a second copy. If your camera is closer and a card's diagonal
+is longer than that, every card is read as two copies: measure one corner
+index to the other in a saved frame (`S`) and raise `SAME_CARD_DISTANCE` above
+it. The reader also measures face-down cards as it sees them and widens the
+distance on its own to 1.2 times their diagonal, so after the first hole card
+even oversize cards join their own corners. A card that is covered or moved
+comes back as the same card, wherever it lands. Once it has been removed
+(`HIDDEN_SECONDS`), it is placed again as a new copy and counted while copies
+are left.
 
-A second copy placed within four `MATCH_DISTANCE`s of a card of its name is
+A corner misread for a moment does not count twice. A 2S whose bottom corner
+reads 2C for a second is confirmed as two cards, 2S and 2C, and the count
+moves for both; when the vote on that corner corrects itself to 2S, card 2 is
+folded back into card 1 and printed as `merged` (see the terminal events
+above). A corner misread for good is handled once the reader has measured how
+far apart a card's two corners lie, from the cards it has seen with both in
+view (about a second of one card): a 2C corner about that far from a 2S
+showing one corner is the 2S's other corner, joins it, and the card keeps the
+name 2S. Until then it is a second card, 2C.
+
+A box on a card's own body does not count either. The two large pips of a 2
+(and the one of an ace) are sometimes read as a corner index of that rank. A
+box of the card's rank lying between its two corners, on the middle half of
+the line between them, is a box on the card and joins it, whatever suit it
+reads; a card of another rank fanned over it is not touched. If that box was
+confirmed before the card's second corner and placed as a copy, it is folded
+back into the card as soon as both corners show, and prints as `merged`.
+
+A second copy placed within `SAME_CARD_DISTANCE` of a card of its name is
 held: it gets its number but stays out of the count, and its tag shows a
 magenta `?` after its name. It is counted once both cards have been seen
 together for `COPY_HOLD_SECONDS` (1.5 s), so one card whose corner is read twice
@@ -800,30 +835,52 @@ doubles in single deck.
   card's corner indices, stops a stray misread from adding a duplicate, and means
   a card is counted once per shoe even if it leaves and comes back. A new card
   under a name counted in an earlier round prints as `duplicate`.
+- **A second box on one corner is that corner.** A sighting within half a
+  `MATCH_DISTANCE` (about 29 px at 1920 wide) of a card's corner joins that
+  card whatever name it reads, with any number of decks.
 - **Two or three decks.** Two sightings of the same face are the same card only
-  within four `MATCH_DISTANCE`s of each other; farther apart they are two copies.
-  A card has two corner indices, so it joins at most two such sightings in view:
-  a third one close by is a second copy, and two of a card fanned in one hand stay
-  two cards. A hole card turned over still joins its own card. Three rules keep
-  one physical card from being counted twice:
+  within `SAME_CARD_DISTANCE` of each other (12% of the frame width, or 1.2
+  times the diagonal of the face-down cards seen, whichever is more); farther
+  apart they are two copies. A card has two corner indices, so it joins at most
+  two such sightings in view: a third one close by is a second copy, and two of
+  a card fanned in one hand stay two cards. A hole card turned over still joins
+  its own card. These rules keep one physical card from being counted twice:
 
   | Rule | A new sighting joins | Stops |
   |---|---|---|
-  | Same corner | the card with a sighting within half a `MATCH_DISTANCE` (about 29 px at 1920 wide), whatever name it reads | a second box, or a misread box, on one corner becoming a copy |
+  | Same corner | the card with a sighting within half a `MATCH_DISTANCE`, whatever name it reads | a second box, or a misread box, on one corner becoming a copy |
+  | On the card | a card of its rank showing both corners, when it lies on the card's body: between a quarter and three quarters of the way along the line between the corners and within 15% of that length to either side | a box on a card's pips (a 2's two large pips read as an index) becoming a copy |
   | Stale tracks | a card whose corner was lost: a sighting that missed this frame no longer counts toward the two | a corner picked up again after a nudge becoming a copy |
   | Out of sight | a card of its name that is covered, or missed on every corner this frame, at any distance | a card slid or moved across the table becoming a copy |
+  | Corner span | a card of its name showing one corner only if it lies at least two thirds of a card's corner span from it; nearer, it is placed as a second copy | a second copy fanned over a card whose far corner is covered being folded into it |
+  | Other suit | a card of its rank reading another suit, showing one corner, about a corner span away; the card keeps its name | one corner read as the wrong suit for good being counted as a card of its own |
+  | Read twice | on a rename: the card of its new name it would have joined under that name; the card placed later is folded into the first and prints as `merged` | a corner misread for a moment, then corrected, staying a second card |
 
-  Copies fanned 50 px apart stay apart. The costs: beside a card already showing
-  both corners, a stray misread of its name can place a phantom copy, once it
-  passes the confirmation checks; and a second copy confirmed while the first
-  is covered joins the first, so it is missed.
-  A second copy within four `MATCH_DISTANCE`s of a card of its name is held:
+  The corner span is the distance between a card's two corner indices,
+  measured from the cards the reader has seen with both corners in view (the
+  median, after about a second of one card). The last two rules wait for it,
+  and allow a third either way for a tilted camera. A revealed hole card is
+  never folded into a neighbour. The on-the-card rule also works the other
+  way round: a card whose every corner lies on the body of a card of its rank
+  showing both corners was a box on that card's pips, confirmed before the
+  card's second corner and placed as a copy; it is folded into the card and
+  prints as `merged`, held or counted. A card showing two boxes takes a third
+  when one of the two lies between the other and the new one: the pip came
+  into view before the corner. Once the span is known, both of these also
+  need the card's corners to be about a span apart, so a copy of the same
+  rank fanned along a card's diagonal, whose far corner lands well beyond a
+  span, stays a card of its own. Copies fanned 50 px apart stay apart. The
+  costs: beside a card already showing both corners, a stray misread of its
+  name can place a phantom copy, once it passes the confirmation checks; and a
+  second copy confirmed while the first is covered joins the first, so it is
+  missed.
+  A second copy within `SAME_CARD_DISTANCE` of a card of its name is held:
   numbered, printed as `held`, tagged with a magenta `?`, and left out of the
   count until both are seen together for `COPY_HOLD_SECONDS` (1.5 s),
   when it prints as `counted`. If the first copy is removed or renamed first, the
   held copy takes over its count. A rescan or the end of the round drops a held copy like
-  any other card of the round; a rename holds it again only beside a card of its
-  new name.
+  any other card of the round; a card renamed beside a card of its new name is
+  held as a card placed there would be.
   Each card is counted once per deck, and one more copy prints as `duplicate`
   (see [Decks in the shoe](#decks-in-the-shoe)).
 - **Covered is not removed, at first.** A card that disappears for
@@ -847,7 +904,10 @@ doubles in single deck.
 - **A card's name can change, its number cannot.** The name is a vote over the
   reads in the last `LABEL_WINDOW_SECONDS` (1.5 s). A misread that corrects itself is
   renamed in place, and prints as `renamed`. The count follows the new name, and
-  a name stays counted while any card of the round still holds it.
+  a name stays counted while any card of the round still holds it. A change of
+  suit alone needs two thirds of the reads, so a card whose two corners read
+  two suits keeps one name instead of flipping whenever a corner is missed;
+  the suit changes neither the hand nor the count.
 - **A hole card turned face up keeps its number.** The face-down box is drawn
   around the whole card, but the face-up boxes are its corner indices, away from
   the centre. A new face-up corner that is not near any card yet joins the nearest
@@ -943,7 +1003,11 @@ whether the change helps.
    the log for the first card of that round placed twice under one name. The
    running count line shows how much the extras moved the count. A `held` row
    for that card, with no `counted` row after it, means the hold kept it out of
-   the count.
+   the count. A `merge` row with no `undo` or key press behind it is the
+   reader's own: a card placed under a misread name and folded back into its
+   card once the name corrected itself (`merged` in the terminal). It is not
+   an extra; the card before it, placed under the wrong name, shows what the
+   corner read at first.
 7. To see where the spare tracks come from, play the clip again without
    `--no-display` and press `G`. Thin grey boxes are detections not yet matched
    to a card. A grey box that stays on a corner next to a confirmed card is a
@@ -992,6 +1056,9 @@ A value out of range (a fraction above 1, `CONFIRM_SECONDS` larger than
 | The next round starts too slowly after a sweep | lower `ROUND_END_SECONDS` | the empty table is noticed sooner |
 | Cards land in the wrong seat | press `1` to `5` for the right player count, then `E` to drag the zones over the real seats | the template only approximates a table |
 | One card gets two numbers when nudged | raise `MATCH_DISTANCE` (e.g. 0.03 to 0.05) | a moved corner is still matched to the same card |
+| Two or three decks: every card is read as two copies, both corners numbered | raise `SAME_CARD_DISTANCE` (0.12 to 0.18) above a card's diagonal in your frames; the camera is close to the table | the two corners of one card are allowed to lie farther apart |
+| Two or three decks: a second copy dealt beside a card is folded into it | lower `SAME_CARD_DISTANCE` towards a card's diagonal | a copy farther away than a card's corners can be is a card of its own |
+| Two boxes stack on one corner index | lower `NMS_IOU` (0.7 to 0.5) | boxes overlapping less are still merged into the most confident |
 | Two or three decks: one card is still counted twice | raise `COPY_HOLD_SECONDS` (e.g. 1.5 s to 3 s) | a second read of a card must last longer beside it before it counts |
 | Two or three decks: a real second copy counts too late | lower `COPY_HOLD_SECONDS` (e.g. 1.5 s to 0.5 s); 0 counts at once | a copy beside a card of its name is counted sooner |
 | A turned-over hole card keeps saying BACK too long | lower `LABEL_WINDOW_SECONDS` (1.5 s to 1 s) | the name vote forgets old reads sooner |
@@ -1044,6 +1111,20 @@ however fast the camera.
   removed (`HIDDEN_SECONDS`) counts as another copy while copies are left. A
   second copy confirmed while the first is covered joins it and is not counted.
   Two copies dealt within half a `MATCH_DISTANCE` of each other may merge into one.
+  A card bigger than `SAME_CARD_DISTANCE` is two copies until a face-down card
+  has shown how big the cards are, or the setting is raised.
+- **A corner misread for good** (one corner of a 2S always read as 2C) is a
+  second card until the reader has measured a card's corner span, which needs
+  a card to show both corners for about a second; then it joins its card. A
+  card of the same rank in another suit fanned over a card whose far corner is
+  covered, at about a corner span from it, would be taken for that corner.
+- **Two cards of one rank fanned diagonally by about half a card** put the top
+  card's near corner on the bottom card's body, where a box on the bottom
+  card's pips would be; that corner joins the bottom card, and the top card is
+  placed from its far corner alone. Fanned straight to the side or straight
+  down they are untouched. Before the corner span is measured, a pair of one
+  rank fanned along the diagonal by about two thirds of a card can merge into
+  one card; once it is, the far corner lands beyond a span and they stay two.
 - **Splits** must be marked by hand (`Shift+1` to `Shift+5` or the page), at most
   two hands per seat. The `--log` CSV records the seat, not the hand, so
   `evaluate.py` scores a split seat as one hand.
@@ -1058,6 +1139,9 @@ however fast the camera.
   face-down card, whose name is a vote between its `BACK` box and those corners,
   so it can be renamed to the new card's name and counted under it.
 - **Same-colour suits** are the most common confusion (see [Results](results.md)).
+  The tracker merges a corner that corrects itself and joins one that does not
+  once it knows the corner span, but a card with only one corner in view that
+  reads the wrong suit stays under that suit until the model reads it right.
 - **No frame tiling.** A 4K frame is shrunk to `INPUT_SIZE` before detection, so
   very small indices at a large table may be lost.
 - **The validation set includes synthetic images**, which makes the full score
