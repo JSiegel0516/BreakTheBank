@@ -50,11 +50,12 @@ def reader(tmp_path):
 
 MODEL = {"current": "models/cards/weights/best.pt",
          "choices": [{"path": "models/cards/weights/best.pt", "label": "cards (live: model_5)"}]}
+CAMERA = {"current": 1, "label": "cam 1", "choices": [0, 1, 2, 3, 4, 5]}
 
 
 def snapshot_of(reader, flash=None):
     return build_snapshot(reader, fps=12.345, stage_ms={"detect": 31.26, "preprocess": 0.44}, no_signal=False,
-                          capture_mode=False, showing_raw=True, flash=flash, model=MODEL)
+                          capture_mode=False, showing_raw=True, flash=flash, model=MODEL, camera=CAMERA)
 
 
 def test_snapshot_holds_the_count_grid_hands_and_status(reader):
@@ -112,6 +113,9 @@ def test_snapshot_holds_the_count_grid_hands_and_status(reader):
     assert (keys["1-5"]["group"], keys["G"]["group"], keys["E"]["group"]) == ("table", "overlay", "window")
     assert (snapshot["preprocess"], snapshot["showing_raw"], snapshot["no_signal"]) == ("off", True, False)
     assert snapshot["model"] == MODEL
+    assert snapshot["camera"] == CAMERA
+    assert keys["C Shift+C"]["buttons"] == [{"action": "reconnect", "text": "c"},
+                                            {"action": "next_camera", "text": "C"}]
     assert snapshot["flash"] == {"text": "new round: numbering restarts at 1", "seconds": 1.5}
     assert snapshot["timing"] == {"fps": 12.3, "detect_ms": 31.3, "preprocess_ms": 0.4}
     assert json.loads(json.dumps(snapshot)) == snapshot
@@ -299,7 +303,7 @@ def test_every_button_presses_a_key_the_reader_handles():
     assert ACTION_KEYS["players_3"] == ord("3") and ACTION_KEYS["new_shoe"] == ord("R")
     assert set(ACTION_KEYS) == {f"players_{n}" for n in range(1, 6)} | {
         "placement_numbers", "grey_boxes", "new_round", "rescan", "undo", "merge", "new_shoe", "reconnect",
-        "preprocess", "raw_or_enhanced", "turn_left", "turn_right", "quit"}
+        "next_camera", "preprocess", "raw_or_enhanced", "turn_left", "turn_right", "quit"}
     assert set(BUTTONS) <= {key for key, _ in KEY_LIST}
 
 

@@ -21,23 +21,37 @@ FRAME = 1 / TrackerConfig.nominal_fps  # one frame at the tracker's nominal rate
 
 
 class FakeCamera:
-    """A live camera sending flat frames of grey `level`. From read `stale_from` on it is stale until reopened."""
+    """A live camera number 0 sending flat frames of grey `level`. From read `stale_from` on it is stale
+    until reopened. switch() opens only the numbers in `opens`, taking the size `sizes` gives (else its own)."""
 
-    is_file, size = False, (640, 360)
+    is_file, size, source = False, (640, 360), 0
 
-    def __init__(self, level=0, stale_from=None):
+    def __init__(self, level=0, stale_from=None, opens=(1, 2, 3), sizes=None):
         self.level, self.stale_from = level, stale_from
         self.reads, self.stale, self.reopened = 0, False, 0
+        self.opens, self.sizes, self.tried = set(opens), sizes or {}, []
 
     def read(self):
         self.reads += 1
         self.stale = self.stale or self.reads == self.stale_from
-        return True, np.full((360, 640, 3), self.level, np.uint8)
+        width, height = self.size
+        return True, np.full((height, width, 3), self.level, np.uint8)
 
     def reopen(self):
         self.reopened += 1
         self.stale = False
         return True
+
+    def switch(self, index):
+        self.tried.append(index)
+        if index not in self.opens:
+            return False
+        self.source, self.size = index, self.sizes.get(index, self.size)
+        return True
+
+    @property
+    def label(self):
+        return f"cam {self.source}"
 
     def release(self):
         pass
@@ -661,3 +675,84 @@ def test_the_start_up_model_is_freed_after_switching_away(monkeypatch, tmp_path)
     assert len(refs) == 2                                           # the start-up model, then model_1
     assert alive[1] == [True]                                       # before the switch: the start-up model runs
     assert alive[-1] == [False, True]                               # after it: only model_1 is still held
+
+
+def watch_camera_switches(monkeypatch):
+    """Record the bottom bar's camera label on every draw, each new round, and the reader."""
+    labels, rounds, readers = [], [], []
+    draw, new_round, process = read.Hud.draw, read.Reader.new_round, read.Reader.process
+
+    def watched_draw(self, *args, **kw):
+        labels.append(kw["camera"])
+        return draw(self, *args, **kw)
+
+    def watched_new_round(self):
+        rounds.append(len(labels))
+        return new_round(self)
+
+    def watched_process(self, *args):
+        readers[:] = [self]
+        return process(self, *args)
+
+    monkeypatch.setattr(read.Hud, "draw", watched_draw)
+    monkeypatch.setattr(read.Reader, "new_round", watched_new_round)
+    monkeypatch.setattr(read.Reader, "process", watched_process)
+    return labels, rounds, readers
+
+
+def test_shift_c_switches_to_the_next_camera_that_opens_and_starts_a_new_round(monkeypatch, capsys, tmp_path):
+    labels, rounds, _ = watch_camera_switches(monkeypatch)
+    cam = FakeCamera(opens={2})
+    keys = [255] * 3 + [ord("C")] + [255] * 2 + [ord("q")]
+    run_reader(monkeypatch, tmp_path, cam, keys, lambda frame: [])
+
+    assert cam.tried == [1, 2] and cam.source == 2          # 1 does not open, so 2 is next
+    assert labels[:4] == ["cam 0"] * 4 and labels[-1] == "cam 2"
+    assert rounds == [4]                                     # one new round, at the switch
+    assert "switched to camera 2 at 640x360" in capsys.readouterr().out
+
+
+def test_shift_c_with_no_other_camera_keeps_the_current_one(monkeypatch, capsys, tmp_path):
+    labels, rounds, _ = watch_camera_switches(monkeypatch)
+    cam = FakeCamera(opens=())
+    run_reader(monkeypatch, tmp_path, cam, [255, ord("C"), 255, ord("q")], lambda frame: [])
+
+    assert cam.tried == [1, 2, 3, 4, 5] and cam.source == 0   # every other number, wrapping stops at 0
+    assert set(labels) == {"cam 0"} and rounds == []
+    assert "no other camera found" in capsys.readouterr().out
+
+
+def test_a_camera_of_another_size_reloads_the_zones_and_rescales_the_tracker(monkeypatch, tmp_path):
+    _, _, readers = watch_camera_switches(monkeypatch)
+    monkeypatch.setattr(read.settings, "DECKS", 2)
+    cam = FakeCamera(sizes={1: (1280, 720)})
+    run_reader(monkeypatch, tmp_path, cam, [255, ord("C"), 255, 255, ord("q")], lambda frame: [], "--conf", "0.7")
+
+    reader = readers[0]
+    assert (reader.layout.width, reader.layout.height, reader.layout.players) == (1280, 720, 3)
+    assert reader.tracker.cfg.match_dist == pytest.approx(read.settings.MATCH_DISTANCE * 1280)
+    assert reader.tracker.cfg.still_distance == pytest.approx(read.settings.STILL_DISTANCE * 1280)
+    assert (reader.tracker.cfg.decks, reader.tracker.cfg.start_confidence) == (2, 0.7)   # kept from before
+
+
+def test_the_page_camera_dropdown_and_next_button_switch_cameras_and_press_no_key(monkeypatch, tmp_path):
+    posts = {2: [{"action": "switch_camera", "index": "3"}], 3: [{"action": "switch_camera", "index": "4"}],
+             4: [{"action": "switch_camera", "index": "9"}], 5: ["next_camera"], 7: ["quit"]}
+    server, handled, cam = run_with_page(monkeypatch, tmp_path, posts, [255] * 10)
+
+    assert handled == [ord("q")]                             # the button's C is read.py's, like the key
+    assert cam.tried == [3, 4, 4, 5, 0, 1]                   # after 3: 4 fails twice, next tries 4, 5, 0, then 1
+    cameras = [snapshot["camera"]["current"] for snapshot in server.published]
+    assert cameras[0] == 0 and 3 in cameras and cameras[-1] == 1
+    assert server.published[-1]["camera"] == {"current": 1, "label": "cam 1", "choices": [0, 1, 2, 3, 4, 5]}
+    flashes = [snapshot["flash"]["text"] for snapshot in server.published if snapshot["flash"]]
+    assert flashes == ["camera 4 not found", "no camera '9': choose 0 to 5"]
+
+
+def test_a_video_file_has_no_other_cameras(tmp_path):
+    video = SimpleNamespace(is_file=True, source=str(tmp_path / "round1.mp4"), label="file")
+    hud = Hud()
+    assert read.next_camera(video, None, hud) is False
+    assert hud.pop_flash()[0] == "a video file has no other cameras"
+    assert read.switch_camera(video, None, hud, "1") is False
+    assert read.camera_snapshot(video) == {"current": None, "label": "file", "choices": [0, 1, 2, 3, 4, 5]}

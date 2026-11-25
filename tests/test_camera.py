@@ -133,6 +133,38 @@ def test_a_stopped_pump_cannot_publish_a_frame_that_arrives_late(captures):
         assert cam.age >= fresh_before and cam.stale              # ... nor make it look fresh
 
 
+def test_switch_opens_the_new_camera_before_releasing_the_old_and_keeps_the_size(captures):
+    opened, open_capture = captures
+    with Camera(0, 1920, 1080) as cam:
+        assert cam.read()[0] and cam.label == "cam 0"
+        open_capture.next_live = False                            # the new camera opens but has not sent yet
+        assert cam.switch(2) is True
+        assert len(opened) == 2 and not opened[0].live            # the old one is released
+        assert opened[1].sizes == {cv2.CAP_PROP_FRAME_WIDTH: 1920, cv2.CAP_PROP_FRAME_HEIGHT: 1080}
+        assert cam.source == 2 and cam.label == "cam 2"
+        assert cam.read() == (False, None)                        # no old frame passed off as the new camera's
+        opened[1].live = True
+        assert wait_until(lambda: cam.read()[0])
+
+
+def test_a_switch_that_cannot_open_keeps_the_current_camera_running(captures):
+    opened, open_capture = captures
+    with Camera(0) as cam:
+        open_capture.next_opens = False
+        assert cam.switch(3) is False
+        assert cam.source == 0 and opened[0].live and cam.cap is opened[0]
+        assert cam.read()[0]
+
+
+def test_label_names_a_video_file_or_a_stream(captures, tmp_path):
+    video = tmp_path / "round1.mp4"
+    video.touch()
+    with Camera(str(video)) as cam:
+        assert cam.label == "file"
+    with Camera("rtsp://table.local/stream") as cam:
+        assert cam.label == "stream"
+
+
 def test_video_file_is_never_stale(captures, tmp_path):
     video = tmp_path / "round1.mp4"
     video.touch()

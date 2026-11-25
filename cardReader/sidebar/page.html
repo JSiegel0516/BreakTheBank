@@ -638,6 +638,22 @@
       + `<select id="countSelect">${options.join("")}</select></label>`;
   }
 
+  // A dropdown of the camera numbers the reader can switch to, with the one it reads selected.
+  // A video file or stream shows as an extra first entry; a video file cannot switch, so its
+  // dropdown is disabled.
+  function renderCamera(camera) {
+    const options = camera.choices.map((index) => {
+      const selected = index === camera.current ? " selected" : "";
+      return `<option value="${index}"${selected}>Camera ${index}</option>`;
+    });
+    if (camera.current === null) {
+      options.unshift(`<option value="" selected disabled>${esc(sentence(camera.label))}</option>`);
+    }
+    const disabled = camera.label === "file" ? " disabled" : "";
+    return `<label class="key picker"><span>Camera</span>`
+      + `<select id="cameraSelect"${disabled}>${options.join("")}</select></label>`;
+  }
+
   // body: {action: "<name>"} plus any string fields the action takes
   function postAction(body) {
     if (body.action === "quit" && !confirm("Quit the card reader?")) return;
@@ -685,7 +701,7 @@
     if (!renaming) setHtml("seatsBody", renderSeats(latest));  // rewriting would drop the name being typed
     if (merging) return;  // rewriting would drop the numbers being typed
     setHtml("keysBody", renderModel(latest.model) + renderCountSystem(latest.count_system)
-      + renderKeys(latest.keys, latest.players, latest.decks));
+      + renderCamera(latest.camera) + renderKeys(latest.keys, latest.players, latest.decks));
   }
 
   function showFlash(message) {
@@ -825,6 +841,8 @@
   // Choosing a model asks the reader to load it. The dropdown goes back to the model the
   // reader runs until the reader reports the new one, which takes as long as loading it.
   // Choosing a counting system asks the reader to recount in it, which it does at once.
+  // Choosing a camera asks the reader to open it; a camera that does not open flashes and
+  // the dropdown goes back to the camera in use.
   document.getElementById("keysBody").addEventListener("change", (event) => {
     if (event.target.id === "modelSelect") {
       const choice = event.target.selectedOptions[0];
@@ -832,6 +850,8 @@
       postAction({ action: "switch_model", path: choice.value });
     } else if (event.target.id === "countSelect") {
       postAction({ action: "switch_count", system: event.target.value });
+    } else if (event.target.id === "cameraSelect") {
+      postAction({ action: "switch_camera", index: event.target.value });
     } else {
       return;
     }

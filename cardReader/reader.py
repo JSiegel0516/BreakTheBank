@@ -240,9 +240,7 @@ class Reader:
             self.hud.view = "game" if self.hud.view == "cards_left" else "cards_left"
             self.hud.flash(f"{VIEWS[self.hud.view]} view")
         elif k == ord("r"):
-            self.tracker.new_round()
-            self.table.clear_splits()
-            print("--- new round ---")
+            self.new_round()
             self.hud.flash("new round: numbering restarts at 1")
         elif k == ord("x"):
             placed_this_round = self.tracker.rescan()
@@ -278,6 +276,12 @@ class Reader:
         elif k == ord("<"):
             self.turn(-1, frame.shape[1], frame.shape[0])
         return True
+
+    def new_round(self):
+        """Start a new round (key R): numbering restarts at 1, the shoe count is kept, splits are cleared."""
+        self.tracker.new_round()
+        self.table.clear_splits()
+        print("--- new round ---")
 
     def undo_last(self) -> Card | None:
         """Take back the card placed last this round (key U, see CardTracker.undo_last): recount,

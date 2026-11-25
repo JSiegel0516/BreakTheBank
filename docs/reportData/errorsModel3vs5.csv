@@ -1,0 +1,13 @@
+model,error_type,corner_angle,corners
+3,missed,upright,38
+3,missed,diagonal,32
+3,missed,sideways,23
+3,wrong_name,upright,10
+3,wrong_name,diagonal,6
+3,wrong_name,sideways,2
+5,missed,upright,30
+5,missed,diagonal,23
+5,missed,sideways,10
+5,wrong_name,upright,10
+5,wrong_name,diagonal,3
+5,wrong_name,sideways,4
