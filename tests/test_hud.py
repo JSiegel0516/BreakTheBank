@@ -199,6 +199,7 @@ def test_status_shows_fps_timings_the_preprocess_mode_and_a_raw_display():
     assert status_text(29.7, {"preprocess": 3.96}, False, "clahe") == "29.7 fps  detect 0.0 ms  prep clahe 4.0 ms"
     assert status_text(29.7, None, False, "gamma", showing_raw=True).endswith("prep gamma 0.0 ms  showing raw")
     assert status_text(0.0, None, True).startswith("CAPTURE MODE (no model)")
+    assert status_text(29.7, None, False, camera="cam 1") == "cam 1  29.7 fps  detect 0.0 ms  prep off 0.0 ms"
 
 
 def test_the_mode_and_raw_display_change_the_bottom_bar():
@@ -220,7 +221,7 @@ def test_no_signal_message_is_drawn_over_the_video_and_c_is_listed(W, H):
     centre = (slice(H // 3, 2 * H // 3), slice(W // 4, 3 * W // 4))
     assert (live[centre] != lost[centre]).any()
     assert frame.sum() == 0
-    assert ("C", "reconnect camera") in KEY_LIST
+    assert ("C Shift+C", "camera: retry, next") in KEY_LIST
 
 
 def test_count_cue_says_which_cards_are_left_and_whom_that_favours():

@@ -16,6 +16,7 @@ Reader.split_seat and Reader.join_seat; they stand in for keys Shift+1-5, which
 have no button in the keys list. Choosing a model posts "switch_model" with its
 weights path, which read.LiveDetector loads. Choosing a counting system posts
 "switch_count" with its COUNT_SYSTEMS id, which read.py passes to Reader.set_count_system.
+Choosing a camera posts "switch_camera" with its number as "index", for read.switch_camera.
 The decks button posts "cycle_decks", for Reader.cycle_decks; there is no key for it.
 The merge button opens two number fields on the page and posts "merge" with "from"
 (the card to fold in) and "to" (the card it joins), which read.py passes to
@@ -60,7 +61,7 @@ BUTTONS = {
     "U": [("undo", "u")],
     "M": [("merge", "m")],
     "Shift+R": [("new_shoe", "R")],
-    "C": [("reconnect", "c")],
+    "C Shift+C": [("reconnect", "c"), ("next_camera", "C")],
     "P": [("preprocess", "p")],
     "Shift+V": [("raw_or_enhanced", "V")],
     "< >": [("turn_left", "<"), ("turn_right", ">")],
@@ -73,13 +74,14 @@ KEY_GROUPS = {
     f"Shift+1-{MAX_PLAYERS}": "table",
     "G": "overlay", "N": "overlay",
     "P": "image", "Shift+V": "image", "< >": "image",
-    "C": "camera", "Q": "camera",
+    "C Shift+C": "camera", "Q": "camera",
     "E": "window", "V": "window", "L": "window", "S": "window",
 }
 
 
 def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no_signal: bool,
-                   capture_mode: bool, showing_raw: bool, flash: tuple[str, float] | None, model: dict) -> dict:
+                   capture_mode: bool, showing_raw: bool, flash: tuple[str, float] | None, model: dict,
+                   camera: dict) -> dict:
     """The dashboard's view of reader (its tracker, layout, count, and modes) this frame.
 
     count: the true count as "headline" with its "cue" (hud.count_cue), the running count,
@@ -98,6 +100,8 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
     flash: Hud.pop_flash(), a message (text, seconds) flashed since the last snapshot, or None.
     model: the model dropdown, {"current": weights path or None, "choices": [{"path", "label"}]}
     (read.LiveDetector.snapshot), passed through as it is.
+    camera: the camera dropdown, {"current": camera number or None, "label", "choices": [numbers]}
+    (read.camera_snapshot), passed through as it is.
     """
     count = reader.count
     dealt = DealtCards.from_tracker(reader.tracker)
@@ -132,6 +136,7 @@ def build_snapshot(reader: Reader, *, fps: float, stage_ms: dict[str, float], no
         "showing_raw": showing_raw,
         "capture_mode": capture_mode,
         "model": model,
+        "camera": camera,
         "no_signal": no_signal,
         "flash": {"text": flash[0], "seconds": flash[1]} if flash else None,
         "timing": {

@@ -7,6 +7,9 @@ Video files are read one frame at a time so nothing is skipped.
 
 rotate() turns a frame by quarter turns, for a camera mounted at an angle
 (CAMERA_ROTATION in settings.py, keys < and > in read.py).
+
+Camera.switch() moves a running live source to another device number (Shift+C and the
+page's camera dropdown in read.py), opening the new device before letting go of the old.
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ import numpy as np
 
 # clockwise quarter turns -> cv2.rotate code
 ROTATE_CODES = {1: cv2.ROTATE_90_CLOCKWISE, 2: cv2.ROTATE_180, 3: cv2.ROTATE_90_COUNTERCLOCKWISE}
+MAX_CAMERA_INDEX = 5  # device numbers 0 to this are the cameras read.py can switch between
 
 class Camera:
     """One video source: a device index, a video file path, or a stream URL.
@@ -125,6 +129,33 @@ class Camera:
         if not self.is_file:
             self._start_pump()
         return True
+
+    def switch(self, index: int) -> bool:
+        """Replace the source with camera number `index`, with the same requested width and height.
+
+        The new device is opened before the current one is released, so False (it cannot be
+        opened) leaves the current source running untouched. After True, read() returns
+        (False, None) until the new device sends its first frame, so the old camera's last
+        frame is never shown as the new one's, and the source goes stale if none comes."""
+        cap = cv2.VideoCapture(index)
+        if not cap.isOpened():
+            cap.release()
+            return False
+        self._stop_pump()
+        self.cap.release()
+        self.source, self.cap, self.is_file = index, cap, False
+        with self._lock:
+            self._frame, self._ok = None, False
+        self._request_size()
+        self._start_pump()
+        return True
+
+    @property
+    def label(self) -> str:
+        """Short name of the source for the bottom bar: "cam 1", "file", or "stream"."""
+        if self.is_file:
+            return "file"
+        return f"cam {self.source}" if isinstance(self.source, int) else "stream"
 
     @property
     def size(self) -> tuple[int, int]:

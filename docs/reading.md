@@ -20,7 +20,7 @@ sidebar on the right so nothing covers the table (drawn by `cardReader/hud.py`):
 | Thin grey boxes | detections not matched to a confirmed card: a card not confirmed yet, or a stray box away from every card. `G` hides them |
 | Sidebar, bottom | the legend for the current view, then every key (`L` hides it) |
 | `camera turned to 90 degrees: CAMERA_ROTATION = 90 keeps it` | `<` or `>` turned the view a quarter turn (see [Setting up the camera](#setting-up-the-camera)) |
-| Bottom bar | the main keys, frames per second, the milliseconds per frame spent detecting, and the preprocess mode with its milliseconds (`showing raw` when `Shift+V` shows the raw camera frame) |
+| Bottom bar | the main keys, the source (`cam 1`, or `file` or `stream`), frames per second, the milliseconds per frame spent detecting, and the preprocess mode with its milliseconds (`showing raw` when `Shift+V` shows the raw camera frame) |
 | `no signal: press C to reconnect` | the camera has sent no new frame for two seconds (see [Camera disconnects](#camera-disconnects)) |
 
 The number is the placement order within the round: 1 is the first card
@@ -105,6 +105,7 @@ The bottom bar lists the main keys; the legend lists them all.
 | `Shift+R` | new shoe: after a reshuffle, the count goes back to 0 | yes |
 | `S` | save the current frame to `data/raw/frames/` for labelling | no |
 | `C` | reconnect the camera: reopen the same source after a cable or power interruption | yes |
+| `Shift+C` | next camera: switch to the next camera number that opens, from 0 to 5 and round again; a new round starts and the count is kept (see [Switching cameras](#switching-cameras)) | yes, and a `Camera` dropdown |
 | `P` | next preprocess mode: off, gamma, clahe, auto (see [Dim or washed-out tables](#dim-or-washed-out-tables)) | yes |
 | `Shift+V` | show the raw camera frame, or the preprocessed frame the detector gets | yes |
 | `<` / `>` | turn the view a quarter turn anticlockwise / clockwise; the message names the `CAMERA_ROTATION` that keeps it (see [Setting up the camera](#setting-up-the-camera)) | yes, one each |
@@ -263,7 +264,7 @@ grey-green at 0, and brown below, deeper for bigger values:
 | Cards Left | the largest part of the page: one row per rank with its value in the counting system, a mini card per suit, and how many of that rank are left. Unseen cards are white. A card counted this round has a yellow slash and border. A card counted in an earlier round has a red cross on a darkened tile. A duplicate is ringed in magenta. With two or three decks a card with copies left is dimmed from the left by the share seen, and its hover text says so (`KH: 1 of 2 seen, locked`); the column on the right counts copies. Below it: the face-down cards never revealed |
 | Hands | one line per seat: its name (click it to rename the seat, see below), its cards in placement order (a numbered badge, then the rank and suit), its total, and for a player seat a [tip](#tips): the play the unseen cards favour, how strongly, and its lead in hundredths of a bet, or a bet tip on an empty seat. A covered card is greyed out. A player holding a pair has a `Split` button; a split seat has two lines, `<name> 1` and `<name> 2`, each with a `Join` button. Lines glow and gain tags as hands finish (see Outcome cues below). A row of tiles under a hand gives its odds from the unseen cards (see Odds row below) |
 | Edit zones | while `E` is on, the mouse controls for the zones, which the window no longer has room for |
-| Keys | first a `Model` dropdown and a `Count` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `U`, `M`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
+| Keys | first a `Model`, a `Count`, and a `Camera` dropdown (see below), then every key, as a button where the page has one (see the Page button column under [Keys](#keys)); the current number of players is filled in. The keys sit in five rows: table (`1-5`, `R`, `X`, `U`, `M`, `Shift+R`, `Shift+1-5`, then the decks button, see [Decks in the shoe](#decks-in-the-shoe)), overlay (`G`, `N`), image (`P`, `Shift+V`, `< >`), camera (`C Shift+C`, `Q`), and window only (`E`, `V`, `L`, `S`). Each key sits above what it does; `1-5` and `< >` have their buttons below. A row wraps onto more lines when the page is narrow. `E`, `V`, `L`, and `S` are grey: they work in the window only. `Shift+1-5` is grey too, since its buttons are on the Hands lines instead. The arrow after `KEYS` folds the section to its title (see below) |
 | Status line | the model running, frames per second, detect and preprocess milliseconds, the preprocess mode, `Showing raw`, `No signal`, and the messages the window flashes, with a capital first letter (`New round`, `Camera turned ...`) |
 
 The page needs no reload. It changes within a frame of the reader, and a message
@@ -386,6 +387,10 @@ card seen this shoe in it at once. The terminal prints
 window flash `counting with Uston APC`. The count title, the running and true
 counts, the grid's value column and shading, and the `--log` running count all
 follow. The window has no key for it. The next start uses `COUNT_SYSTEM` again.
+
+**Switching cameras.** The `Camera` dropdown lists `Camera 0` to `Camera 5`, with
+the one in use selected; choosing one opens it, as `Shift+C` does for the next
+camera (see [Switching cameras](#switching-cameras)).
 
 **Changing the decks.** The decks button ends the table row of the Keys
 section; see [Decks in the shoe](#decks-in-the-shoe).
@@ -547,9 +552,32 @@ and opens the same `--source` again at the same width and height. The terminal
 and the window say whether it worked; if not, press `C` again. A camera can
 open and still send no picture: the no-signal message then stays until a new
 frame arrives, and `C` can be pressed again. `C` never
-switches to another camera number. If the numbers have changed (an iPhone
-joining or leaving can swap them), quit and run `python read.py --list-cameras`.
+switches to another camera number; `Shift+C` does (see below). If the numbers
+have changed (an iPhone joining or leaving can swap them), press `Shift+C` until
+the right picture shows, or quit and run `python read.py --list-cameras`.
 A recorded video never shows no signal; it simply ends.
+
+#### Switching cameras
+
+Press `Shift+C` to switch to the next camera number that opens, counting up
+from the one in use to 5 and then from 0. On the page, the next camera button
+does the same, and the `Camera` dropdown switches straight to the number chosen.
+The bottom bar names the camera in use (`cam 1`), and the terminal prints
+`switched to camera 1 at 1920x1080`.
+
+- The new camera is opened before the old one is let go. If it does not open,
+  the old one keeps running and the window flashes `camera 3 not found`, or
+  `no other camera found` when `Shift+C` finds none.
+- Each number that does not open pauses the video for a moment while it is tried.
+- A switch starts a new round, as `R` does. The count is kept, and cards
+  already counted are not counted again when the new camera sees them.
+- A camera of another resolution gets the zones saved for the player count at
+  its size (zones are saved as fractions of the frame), else the template.
+  `CAMERA_WIDTH`, `CAMERA_HEIGHT`, and the view's turn (`< >`) carry over.
+- The next start uses `--source` (or `CAMERA_SOURCE`) again. Set it to the
+  camera number you settled on.
+- A recorded video (`--source clip.mp4`) has no other cameras: `Shift+C` only
+  flashes, and the dropdown is greyed out.
 
 #### Dim or washed-out tables
 

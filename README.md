@@ -35,6 +35,7 @@ the labelled photos from the team's shared folder (see [data/README.md](data/REA
    If a card is misread, press `X` before the round ends to read the round again; earlier
    rounds stay counted. Press `Shift+R` after a reshuffle to reset the count, `Q` to quit. If the window says
    `no signal`, reconnect the camera's cable or wake the phone and press `C` to reopen it.
+   Press `Shift+C` to switch to the next camera; a new round starts and the count is kept.
    In a dim room or under uneven light, press `P` to cycle the preprocess modes (off, gamma,
    clahe, auto) and `Shift+V` to compare with the raw camera frame. See
    [Dim or washed-out tables](docs/reading.md#dim-or-washed-out-tables); glare that turns a
@@ -131,8 +132,8 @@ BreakTheBank/                 (the folder git clone creates)
 │   ├── test_tracker.py       placement order, hidden cards, rounds, shoes, renaming
 │   ├── test_table.py         hands per seat
 │   ├── test_reader.py        events, logging, keys
-│   ├── test_read.py          stage timings, no signal, reconnect, and page buttons in the main loop
-│   ├── test_camera.py        stale detection and reopening with a faked capture
+│   ├── test_read.py          stage timings, no signal, reconnect, camera switching, and page buttons in the main loop
+│   ├── test_camera.py        stale detection, reopening, and switching cameras with a faked capture
 │   ├── test_preprocess.py    the preprocess modes: shape, auto's branches, colour kept
 │   ├── test_evaluate.py      scoring a log: missed, extra, wrong names, the count
 │   ├── test_benchmark.py     benchmark scoring, the level x mode loop, and the confusion listing with a faked detector

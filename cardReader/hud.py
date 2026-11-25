@@ -51,7 +51,7 @@
       placement badge only while key N shows it on the video. The Cards Left
       legend gives each count value's ranks, so a system with more values has a
       longer legend; it is left out when it does not fit below the grid.
-    * bottom bar: the main keys, fps, detect milliseconds, the preprocess mode
+    * bottom bar: the main keys, the source ("cam 1"), fps, detect milliseconds, the preprocess mode
       and its milliseconds ("showing raw" when the raw camera frame is shown,
       key Shift+V), and short messages such as "new round"
     * "no signal: press C to reconnect" across the video when the camera has
@@ -103,7 +103,7 @@ KEY_LIST = [(f"1-{MAX_PLAYERS}", "players"), ("R", "new round"), ("X", "rescan r
             ("M", "merge cards"), ("Shift+R", "new shoe"), (f"Shift+1-{MAX_PLAYERS}", "split seat"),
             ("G", "grey boxes"), ("N", "placement numbers"),
             ("P", "preprocess mode"), ("Shift+V", "raw or enhanced"), ("< >", "turn view"),
-            ("C", "reconnect camera"), ("Q", "quit"), ("E", "edit zones"), ("V", "switch view"),
+            ("C Shift+C", "camera: retry, next"), ("Q", "quit"), ("E", "edit zones"), ("V", "switch view"),
             ("L", "hide legend"), ("S", "save frame")]
 SPLIT_KEYS = "!@#$%"  # Shift+1 to Shift+5 on a US layout: split or join P1 to P5
 EDIT_HELP = ["drag a corner: reshape", "drag a +: add a corner", "right-click a corner: remove it",
@@ -241,13 +241,16 @@ def _rank_list(ranks: list[str]) -> str:
 
 
 def status_text(fps: float, stage_ms: dict[str, float] | None, capture_mode: bool,
-                preprocess: str = "off", showing_raw: bool = False) -> str:
-    """The right end of the bottom bar: fps, the smoothed detect milliseconds, the preprocess
-    mode and its milliseconds, and "showing raw" when the window shows the raw camera frame
-    instead of the preprocessed one the detector gets."""
+                preprocess: str = "off", showing_raw: bool = False, camera: str = "") -> str:
+    """The right end of the bottom bar: the source's label (Camera.label, such as "cam 1") when
+    given, fps, the smoothed detect milliseconds, the preprocess mode and its milliseconds, and
+    "showing raw" when the window shows the raw camera frame instead of the preprocessed one the
+    detector gets."""
     stage_ms = stage_ms or {}
     detect_ms, preprocess_ms = stage_ms.get("detect", 0.0), stage_ms.get("preprocess", 0.0)
     status = f"{fps:4.1f} fps  detect {detect_ms:.1f} ms  prep {preprocess} {preprocess_ms:.1f} ms"
+    if camera:
+        status = f"{camera}  {status}"
     if showing_raw:
         status += "  showing raw"
     if capture_mode:
@@ -307,7 +310,7 @@ class Hud:
              preprocess: str = "off", showing_raw: bool = False,
              bound: list[Card | None] | None = None, sidebar: bool = True,
              seat_names: dict[str, str] | None = None,
-             splits: dict[str, tuple[int, int]] | None = None) -> np.ndarray:
+             splits: dict[str, tuple[int, int]] | None = None, camera: str = "") -> np.ndarray:
         """Return the frame with the overlay, plus the sidebar on its right. The frame is not changed.
 
         cards: every card of the round, hidden ones included, in placement order.
@@ -327,7 +330,8 @@ class Hud:
         seat_names: display names by seat id (Reader.seat_names) for the Game view and the zone
         labels on the video; a seat without one shows its id (DEALER for the dealer).
         splits: the split seats (Reader.table.splits), each shown as two hands in the Game view.
-        A split whose seed card has left its seat is dropped from it, as Table.hands does."""
+        A split whose seed card has left its seat is dropped from it, as Table.hands does.
+        camera: the source's label (Camera.label), shown first in the bottom bar's status."""
         view = frame.copy()
         W = view.shape[1]
         self.s = min(max(W / 1600, 0.6), 2.5)  # 1.2 at 1080p, 2.4 at 4K
@@ -352,7 +356,7 @@ class Hud:
             placed.append(self._card_tag(view, card, box, placed))
         if no_signal:
             self._no_signal(view)
-        status = status_text(fps, stage_ms, capture_mode, preprocess, showing_raw)
+        status = status_text(fps, stage_ms, capture_mode, preprocess, showing_raw, camera)
         if not sidebar:
             self._bottom_bar(view, status, capture_mode, W)
             return view

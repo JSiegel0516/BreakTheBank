@@ -68,7 +68,7 @@ Keys: 1-5 number of players | Shift+1-5 split or join the pair of P1-P5 (! @ # $
       r new round | x rescan this round (fix a misread) | Shift+R new shoe (count back to 0)
       u undo the card placed last | m merge one card into another: m 4 Enter 2 Enter folds #4 into #2
       s save frame to data/raw/frames
-      c reconnect the camera | p preprocess mode (off, gamma, clahe, auto)
+      c reconnect the camera | Shift+C next camera | p preprocess mode (off, gamma, clahe, auto)
       Shift+V show the raw camera frame or the preprocessed one
       < > turn the view a quarter turn anticlockwise or clockwise | q quit
 
@@ -90,6 +90,13 @@ If a live camera sends no new frame for two seconds (a cable pulled, the phone
 locked), the window says "no signal" over the last frame and the tracker waits: the
 time without a signal is left off its clock. Press c to reopen the same source.
 
+Shift+C (or the page's next camera button) switches to the next camera number that opens,
+from 0 to MAX_CAMERA_INDEX in cardReader/camera.py, wrapping around; the page's camera
+dropdown switches to the number chosen. Each number tried that does not open pauses the
+video for a moment. A switch starts a new round and keeps the count, as R does, and a new
+frame size reloads the seat zones. The bottom bar names the source: "cam 1", "file", or
+"stream". A video file has no other cameras to switch to.
+
 The bottom bar shows the fps, the smoothed detect milliseconds, and the preprocess
 mode with its milliseconds. On quit the average milliseconds per stage are printed: read (the newest
 camera frame), preprocess, detect, and draw (the overlay and the window).
@@ -110,6 +117,7 @@ import csv
 import time
 from collections import deque
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
@@ -117,7 +125,7 @@ import numpy as np
 
 import settings
 from cardReader.blackjack import COUNT_SYSTEMS
-from cardReader.camera import Camera, parse_source, rotate, snapshot_cameras
+from cardReader.camera import MAX_CAMERA_INDEX, Camera, parse_source, rotate, snapshot_cameras
 from cardReader.hud import DealtCards, Hud
 from cardReader.preprocess import MODES, PreprocessConfig, enhance
 from cardReader.provenance import available_models, live_model
@@ -230,6 +238,68 @@ def reconnect(cam: Camera, hud: Hud, source):
         hud.flash("reconnect failed: press C to try again", 2.5)
 
 
+def _camera_switched(cam: Camera, reader: Reader):
+    """After cam switched device: start a new round, keeping the count, and fit the seat zones and the
+    tracker's distances to the new frame size if it changed. The cards in view are read afresh."""
+    reader.new_round()
+    W, H = cam.size
+    width, height = (H, W) if reader.rotation % 2 else (W, H)
+    layout = reader.layout
+    if (layout.width, layout.height) != (width, height):
+        saved = SeatLayout.load(reader.seats_file, width, height, layout.players)
+        reader.set_layout(saved or SeatLayout(layout.players, width, height))
+        kept = reader.tracker.cfg
+        reader.tracker.cfg = replace(TrackerConfig.from_settings(settings, width),
+                                     decks=kept.decks, start_confidence=kept.start_confidence)
+    print(f"switched to camera {cam.source} at {W}x{H}")
+
+
+def next_camera(cam: Camera, reader: Reader, hud: Hud) -> bool:
+    """Switch to the next camera number after the current one that opens, wrapping from MAX_CAMERA_INDEX
+    to 0 (Shift+C). Each number that fails to open pauses the loop while it is tried. Returns False, with
+    a flash and the current camera kept, when no other camera opens or the source is a video file."""
+    if cam.is_file:
+        hud.flash("a video file has no other cameras", 2.5)
+        return False
+    current = cam.source if isinstance(cam.source, int) else -1
+    for step in range(1, MAX_CAMERA_INDEX + 2):
+        index = (current + step) % (MAX_CAMERA_INDEX + 1)
+        if index != current and cam.switch(index):
+            _camera_switched(cam, reader)
+            return True
+    print("no other camera found")
+    hud.flash("no other camera found", 2.5)
+    return False
+
+
+def switch_camera(cam: Camera, reader: Reader, hud: Hud, requested: str) -> bool:
+    """Switch to camera number `requested` (the page's camera dropdown, a number from 0 to MAX_CAMERA_INDEX
+    as text). Returns False, with a flash and the current camera kept, for a video file, a number out of
+    range, or a camera that does not open. Choosing the current camera does nothing."""
+    if cam.is_file:
+        hud.flash("a video file has no other cameras", 2.5)
+        return False
+    if not requested.isdigit() or int(requested) > MAX_CAMERA_INDEX:
+        hud.flash(f"no camera {requested!r}: choose 0 to {MAX_CAMERA_INDEX}", 2.5)
+        return False
+    index = int(requested)
+    if index == cam.source:
+        return False
+    if not cam.switch(index):
+        print(f"could not open camera {index}")
+        hud.flash(f"camera {index} not found", 2.5)
+        return False
+    _camera_switched(cam, reader)
+    return True
+
+
+def camera_snapshot(cam: Camera) -> dict:
+    """The page's camera dropdown: the current camera number (None for a video file or stream), the
+    source's bottom-bar label, and every number that can be chosen."""
+    current = cam.source if isinstance(cam.source, int) and not cam.is_file else None
+    return {"current": current, "label": cam.label, "choices": list(range(MAX_CAMERA_INDEX + 1))}
+
+
 class LiveDetector:
     """The detector read.py runs, and the models the page can switch it to.
 
@@ -287,12 +357,13 @@ def _project_path(path: Path) -> str:
     return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
 
 
-def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetector) -> list[int]:
+def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetector, cam: Camera) -> list[int]:
     """The key codes for the page's button actions, in order, to be pressed one per frame.
 
     merge (with "from" and "to", card numbers), rename_seat (with "seat" and "name"), split_seat and
     join_seat (with "seat"), switch_model (with "path"), switch_count (with "system", a COUNT_SYSTEMS id),
-    and cycle_decks are done straight away and press no key. An unknown action name is printed and skipped."""
+    switch_camera (with "index", a camera number), and cycle_decks are done straight away and press
+    no key. An unknown action name is printed and skipped."""
     keys = []
     for action in actions:
         name = action["action"]
@@ -310,6 +381,8 @@ def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetecto
             models.switch(action.get("path", ""), reader.hud)
         elif name == "switch_count":
             reader.set_count_system(action.get("system", ""))
+        elif name == "switch_camera":
+            switch_camera(cam, reader, reader.hud, action.get("index", ""))
         elif name == "cycle_decks":
             reader.cycle_decks()
         else:
@@ -317,12 +390,16 @@ def page_keys(actions: list[dict[str, str]], reader: Reader, models: LiveDetecto
     return keys
 
 
-def press_key(key: int, reader: Reader, cam: Camera, hud: Hud, source, frame: np.ndarray) -> bool:
+def press_key(key: int, reader: Reader, cam: Camera, hud: Hud, frame: np.ndarray) -> bool:
     """Act on one key code, from the window or a page button. Returns False when the reader should quit.
 
-    C reconnects a live camera here, since read.py owns the camera; every other key goes to Reader.handle_key."""
+    C reconnects a live camera and Shift+C switches to the next camera here, since read.py owns the
+    camera; every other key goes to Reader.handle_key."""
     if key == ord("c") and not cam.is_file:
-        reconnect(cam, hud, source)
+        reconnect(cam, hud, cam.source)
+        return True
+    if key == ord("C"):
+        next_camera(cam, reader, hud)
         return True
     return reader.handle_key(key, frame)
 
@@ -443,18 +520,19 @@ def main():
                 if not ok and not cam.stale:
                     time.sleep(0.01)  # a live source still starting up
                     continue
-                if not ok:
-                    frame = np.zeros((H, W, 3), np.uint8)  # it never sent a frame: say so over black
+                if not ok:  # it never sent a frame: say so over black, at the size of the camera now in use
+                    width, height = cam.size
+                    frame = np.zeros((height, width, 3), np.uint8)
                 frame = rotate(frame, reader.rotation)
 
                 # A stale camera repeats its last frame: nothing new to detect, so the tracker is left
                 # alone, and its clock waits too, so no card times out over the gap.
                 no_signal = cam.stale
                 if no_signal and not signal_lost:
-                    print(f"no signal from source {args.source}: press C in the window to reconnect")
+                    print(f"no signal from source {cam.source}: press C in the window to reconnect")
                     lost_at = captured
                 elif signal_lost and not no_signal:
-                    print(f"signal back from source {args.source}")
+                    print(f"signal back from source {cam.source}")
                     offline_seconds += captured - lost_at
                 signal_lost = no_signal
 
@@ -489,21 +567,22 @@ def main():
                                                 stage_ms=timer.smoothed, no_signal=no_signal,
                                                 preprocess=reader.preprocess, showing_raw=showing_raw,
                                                 sidebar=server is None, seat_names=reader.seat_names,
-                                                splits=reader.table.splits))
+                                                splits=reader.table.splits, camera=cam.label))
                     key = wait_key_draining_mouse(EDIT_MOUSE_MS) if reader.editor.active else cv2.waitKey(1)
                     window_key = key & 0xFF
                     timer.lap("draw", start)
                 if server:
                     server.publish(build_snapshot(reader, fps=fps, stage_ms=timer.smoothed, no_signal=no_signal,
                                                   capture_mode=models.detector is None, showing_raw=showing_raw,
-                                                  flash=hud.pop_flash(), model=models.snapshot()))
-                    pending_keys.extend(page_keys(server.drain_actions(), reader, models))
+                                                  flash=hud.pop_flash(), model=models.snapshot(),
+                                                  camera=camera_snapshot(cam)))
+                    pending_keys.extend(page_keys(server.drain_actions(), reader, models, cam))
                 if window_key != NO_KEY:
                     pending_keys.append(window_key)
                 # One key per frame: the next one gets the frame a turn leaves behind, and each key's
                 # message is published before the next key can replace it. The frame is turned but
                 # not preprocessed, so S saves what the camera sent.
-                if pending_keys and not press_key(pending_keys.popleft(), reader, cam, hud, args.source, frame):
+                if pending_keys and not press_key(pending_keys.popleft(), reader, cam, hud, frame):
                     break
         finally:
             cam.release()
