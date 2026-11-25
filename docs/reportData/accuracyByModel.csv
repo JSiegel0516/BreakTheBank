@@ -1,0 +1,6 @@
+model,run_name,model_size,training_round,real_photos,rotated_copies,synthetic_images,train_images,val_images,epochs_run,best_epoch,train_hours,hardware,optimizer,real_precision,real_recall,real_map50,real_map50_95,detect_ms_per_frame,weights_mb
+1,model_1_2026-09-17,nano,prototype,,0,,574,78,40,40,0.41,Apple Silicon GPU (MPS),AdamW,0.018,0.057,0.008,0.004,,5.6
+2,model_2_2026-10-13,nano,1,1002,0,2000,2488,514,100,94,4.54,Apple M4 Pro GPU,AdamW,0.948,0.942,0.969,0.501,,5.6
+3,model_3_2026-10-14_n150,nano,2,1854,0,2000,3221,633,110,90,6.12,Apple M4 Pro GPU,AdamW,0.97,0.979,0.981,0.626,8.0,5.6
+4,model_4_2026-10-15_s150,small,2,1854,0,2000,3221,633,102,82,9.6,Apple M4 Pro GPU,AdamW,0.972,0.98,0.981,0.637,15.8,19.3
+5,model_5_2026-10-31_n150rot,nano,3,1854,3068,2000,6289,633,75,55,1.65,NVIDIA GPU (Windows),SGD,0.977,0.984,0.984,0.63,,5.6

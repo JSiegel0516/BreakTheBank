@@ -1,5 +1,10 @@
 # BreakTheBank
 
+> **Report data:** model results for the final report are tables in
+> [docs/reportData/](docs/reportData/README.md): `accuracyByModel.csv` (real-photo scores for models 1-5),
+> `trainingCurves.csv` (per-epoch scores, models 3-5), and `errorsModel3vs5.csv` (missed and misnamed
+> corners by angle).
+
 A camera looks down at a blackjack table. The card reader, the component in this
 repository, recognises every card and reports them in the order they are placed,
 with each seat's hand and the card count (Hi-Lo, Hi-Opt II, or Uston APC).
